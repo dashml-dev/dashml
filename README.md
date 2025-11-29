@@ -14,29 +14,60 @@ DashML is a meta-language that describes data visualizations as abstractions. Li
 pip install -r requirements.txt
 ```
 
-### 2. Run the Streamlit transformer
+### 2. Run the standalone demo
 
 ```bash
 streamlit run app.py
 ```
 
-### 3. See it in action
+### 3. Or see integration example
 
-The app will:
-- Load the DashML spec from `dashml_example.yaml`
-- Read data from `data/example.csv`
-- Render interactive charts in Streamlit
+```bash
+streamlit run example_integration.py
+```
 
 ## Project Structure
 
 ```
 dashml-playground/
-├── app.py                  # Python → Streamlit transformer
-├── dashml_example.yaml     # Example DashML spec
+├── dashml/                      # DashML core library
+│   ├── __init__.py             # Package exports
+│   ├── transformer.py          # Platform-agnostic DashML parser
+│   └── streamlit_renderer.py   # Streamlit-specific renderer
+├── app.py                       # Standalone Streamlit demo
+├── example_integration.py       # Integration example
+├── dashml_example.yaml          # Example DashML spec
 ├── data/
-│   └── example.csv         # Sample dataset
-└── requirements.txt        # Dependencies
+│   └── example.csv              # Sample dataset
+└── requirements.txt             # Dependencies
 ```
+
+## Usage in Your Own Streamlit App
+
+### Simple integration (full dashboard):
+
+```python
+from dashml import DashMLTransformer, StreamlitRenderer
+
+transformer = DashMLTransformer("my_dashboard.yaml")
+renderer = StreamlitRenderer(transformer)
+renderer.render_dashboard()
+```
+
+### Advanced integration (specific charts):
+
+```python
+from dashml import DashMLTransformer, StreamlitRenderer
+
+transformer = DashMLTransformer("my_dashboard.yaml")
+transformer.load_data()
+renderer = StreamlitRenderer(transformer)
+
+# Render specific chart by ID
+renderer.render_chart_by_id("sales_by_country")
+```
+
+See `example_integration.py` for a complete working example.
 
 ## DashML Spec Example
 
