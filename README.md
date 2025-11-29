@@ -6,40 +6,69 @@
 
 DashML is a meta-language that describes data visualizations as abstractions. Like HTML for web pages, DashML provides a unified way to describe dashboards that can be transformed into different platforms (Streamlit, PowerBI, Looker, etc.).
 
+**One spec, multiple platforms:**
+- ✅ Python/Streamlit - Server-side dashboards
+- ✅ JavaScript/Plotly - Client-side web dashboards
+- 🚧 PowerBI, Looker - Coming soon
+
 ## Quick Start
 
-### 1. Install dependencies
+### Python/Streamlit
+
+#### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Run the standalone demo
+#### 2. Run the standalone demo
 
 ```bash
 streamlit run app.py
 ```
 
-### 3. Or see integration example
+#### 3. Or see integration example
 
 ```bash
 streamlit run example_integration.py
 ```
 
+### JavaScript/Plotly
+
+#### 1. Start local server
+
+```bash
+python -m http.server 8000
+# or
+npx http-server -p 8000
+```
+
+#### 2. Open in browser
+
+- Standalone demo: `http://localhost:8000/index.html`
+- Integration example: `http://localhost:8000/example_integration.html`
+
 ## Project Structure
 
 ```
 dashml-playground/
-├── dashml/                      # DashML core library
-│   ├── __init__.py             # Package exports
-│   ├── transformer.py          # Platform-agnostic DashML parser
-│   └── streamlit_renderer.py   # Streamlit-specific renderer
-├── app.py                       # Standalone Streamlit demo
-├── example_integration.py       # Integration example
-├── dashml_example.yaml          # Example DashML spec
+├── dashml/                       # Python library
+│   ├── __init__.py              # Package exports
+│   ├── transformer.py           # Platform-agnostic DashML parser
+│   └── streamlit_renderer.py    # Streamlit-specific renderer
+├── js/                           # JavaScript library
+│   ├── dashml.js                # Platform-agnostic DashML parser
+│   └── dashml-plotly.js         # Plotly-specific renderer
+├── app.py                        # Streamlit standalone demo
+├── example_integration.py        # Streamlit integration example
+├── index.html                    # Plotly standalone demo
+├── example_integration.html      # Plotly integration example
+├── dashml_example.yaml           # Example DashML spec
 ├── data/
-│   └── example.csv              # Sample dataset
-└── requirements.txt             # Dependencies
+│   └── example.csv               # Sample dataset
+├── requirements.txt              # Python dependencies
+├── USAGE.md                      # Python integration guide
+└── JS_USAGE.md                   # JavaScript integration guide
 ```
 
 ## Usage in Your Own Streamlit App
@@ -68,6 +97,23 @@ renderer.render_chart_by_id("sales_by_country")
 ```
 
 See `example_integration.py` for a complete working example.
+
+### JavaScript Usage
+
+```javascript
+// Simple full dashboard
+const transformer = await DashMLTransformer.fromYAML('dashboard.yaml');
+const renderer = new DashMLPlotlyRenderer(transformer);
+await renderer.renderDashboard({ containerId: 'my-div' });
+
+// Specific charts
+const transformer = await DashMLTransformer.fromYAML('dashboard.yaml');
+await transformer.loadData();
+const renderer = new DashMLPlotlyRenderer(transformer);
+renderer.renderChartById('sales_by_country', 'chart1');
+```
+
+See `example_integration.html` for a complete working example.
 
 ## DashML Spec Example
 
