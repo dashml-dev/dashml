@@ -7,7 +7,8 @@ from typing import Dict, Any
 class DashMLTransformer:
     """
     Core DashML transformer - platform agnostic.
-    Loads and parses DashML specs and data.
+    Loads and parses DashML specs (.dashml files) and data.
+    Note: .dashml files use YAML syntax.
     """
     
     def __init__(self, dashml_path: str):

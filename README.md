@@ -63,7 +63,7 @@ dashml-playground/
 ├── example_integration.py        # Streamlit integration example
 ├── index.html                    # Plotly standalone demo
 ├── example_integration.html      # Plotly integration example
-├── dashml_example.yaml           # Example DashML spec
+├── dashml_example.dashml         # Example DashML spec
 ├── data/
 │   └── example.csv               # Sample dataset
 ├── requirements.txt              # Python dependencies
@@ -78,7 +78,7 @@ dashml-playground/
 ```python
 from dashml import DashMLTransformer, StreamlitRenderer
 
-transformer = DashMLTransformer("my_dashboard.yaml")
+transformer = DashMLTransformer("my_dashboard.dashml")
 renderer = StreamlitRenderer(transformer)
 renderer.render_dashboard()
 ```
@@ -88,7 +88,7 @@ renderer.render_dashboard()
 ```python
 from dashml import DashMLTransformer, StreamlitRenderer
 
-transformer = DashMLTransformer("my_dashboard.yaml")
+transformer = DashMLTransformer("my_dashboard.dashml")
 transformer.load_data()
 renderer = StreamlitRenderer(transformer)
 
@@ -102,12 +102,12 @@ See `example_integration.py` for a complete working example.
 
 ```javascript
 // Simple full dashboard
-const transformer = await DashMLTransformer.fromYAML('dashboard.yaml');
+const transformer = await DashMLTransformer.fromYAML('dashboard.dashml');
 const renderer = new DashMLPlotlyRenderer(transformer);
 await renderer.renderDashboard({ containerId: 'my-div' });
 
 // Specific charts
-const transformer = await DashMLTransformer.fromYAML('dashboard.yaml');
+const transformer = await DashMLTransformer.fromYAML('dashboard.dashml');
 await transformer.loadData();
 const renderer = new DashMLPlotlyRenderer(transformer);
 renderer.renderChartById('sales_by_country', 'chart1');
@@ -116,6 +116,8 @@ renderer.renderChartById('sales_by_country', 'chart1');
 See `example_integration.html` for a complete working example.
 
 ## DashML Spec Example
+
+**File: `dashboard.dashml`**
 
 ```yaml
 version: 0.000000001
@@ -133,6 +135,8 @@ charts:
     y: "sales"
     agg: "sum"
 ```
+
+**Note:** `.dashml` files use YAML syntax under the hood, making them both human and machine-readable.
 
 ## The DashML Manifesto
 

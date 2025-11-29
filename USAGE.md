@@ -43,7 +43,7 @@ from dashml import DashMLTransformer, StreamlitRenderer
 
 st.title("My App")
 
-transformer = DashMLTransformer("dashboard.yaml")
+transformer = DashMLTransformer("dashboard.dashml")
 renderer = StreamlitRenderer(transformer)
 renderer.render_dashboard()
 ```
@@ -62,7 +62,7 @@ with tab1:
     st.write("Your existing app content...")
 
 with tab2:
-    transformer = DashMLTransformer("analytics.yaml")
+    transformer = DashMLTransformer("analytics.dashml")
     renderer = StreamlitRenderer(transformer)
     renderer.render_dashboard(show_title=False)
 ```
@@ -77,7 +77,7 @@ from dashml import DashMLTransformer, StreamlitRenderer
 
 st.title("Sales Dashboard")
 
-transformer = DashMLTransformer("sales.yaml")
+transformer = DashMLTransformer("sales.dashml")
 transformer.load_data()  # Load once
 renderer = StreamlitRenderer(transformer)
 
@@ -103,11 +103,11 @@ from dashml import DashMLTransformer, StreamlitRenderer
 st.sidebar.selectbox("Department", ["Sales", "Marketing", "Operations"])
 
 if department == "Sales":
-    transformer = DashMLTransformer("dashboards/sales.yaml")
+    transformer = DashMLTransformer("dashboards/sales.dashml")
 elif department == "Marketing":
-    transformer = DashMLTransformer("dashboards/marketing.yaml")
+    transformer = DashMLTransformer("dashboards/marketing.dashml")
 else:
-    transformer = DashMLTransformer("dashboards/operations.yaml")
+    transformer = DashMLTransformer("dashboards/operations.dashml")
 
 renderer = StreamlitRenderer(transformer)
 renderer.render_dashboard()
@@ -132,7 +132,7 @@ col3.metric("Growth", "+12%")
 st.divider()
 
 # DashML charts
-transformer = DashMLTransformer("executive.yaml")
+transformer = DashMLTransformer("executive.dashml")
 transformer.load_data()
 renderer = StreamlitRenderer(transformer)
 

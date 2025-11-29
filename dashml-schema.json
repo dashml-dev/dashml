@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dashml.dev/schema/v0.1.json",
+  "title": "DashML Specification",
+  "description": "Schema for DashML dashboard specification files (.dashml)",
+  "type": "object",
+  "required": ["version", "data", "charts"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "DashML specification version",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "examples": ["0.000000001"]
+    },
+    "title": {
+      "type": "string",
+      "description": "Dashboard title"
+    },
+    "data": {
+      "type": "object",
+      "description": "Data source configuration",
+      "required": ["type", "path"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Type of data source",
+          "enum": ["csv", "json", "sql", "api"]
+        },
+        "path": {
+          "type": "string",
+          "description": "Path or URL to the data source"
+        },
+        "query": {
+          "type": "string",
+          "description": "SQL query (for SQL data sources)"
+        },
+        "connection": {
+          "type": "string",
+          "description": "Database connection string (for SQL data sources)"
+        }
+      }
+    },
+    "charts": {
+      "type": "array",
+      "description": "Array of chart specifications",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "x", "y"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique chart identifier",
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          },
+          "type": {
+            "type": "string",
+            "description": "Chart type",
+            "enum": ["bar", "line", "scatter", "pie", "area", "histogram"]
+          },
+          "title": {
+            "type": "string",
+            "description": "Chart title"
+          },
+          "x": {
+            "type": "string",
+            "description": "Column name for X axis"
+          },
+          "y": {
+            "type": "string",
+            "description": "Column name for Y axis"
+          },
+          "agg": {
+            "type": "string",
+            "description": "Aggregation function",
+            "enum": ["sum", "mean", "count", "min", "max", "median"],
+            "default": "sum"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter expression"
+          },
+          "color": {
+            "type": "string",
+            "description": "Color scheme or specific color"
+          }
+        }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "description": "Global dashboard filters",
+      "additionalProperties": true
+    },
+    "theme": {
+      "type": "object",
+      "description": "Dashboard theme configuration",
+      "properties": {
+        "colorScheme": {
+          "type": "string",
+          "enum": ["light", "dark", "auto"]
+        },
+        "primaryColor": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        }
+      }
+    }
+  }
+}
+

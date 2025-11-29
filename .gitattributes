@@ -1,0 +1,4 @@
+# DashML file format
+*.dashml linguist-language=YAML
+*.dashml text
+

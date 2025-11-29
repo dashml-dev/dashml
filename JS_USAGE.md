@@ -23,7 +23,7 @@
 
 <script>
 async function loadDashboard() {
-    const transformer = await DashMLTransformer.fromYAML('dashboard.yaml');
+    const transformer = await DashMLTransformer.fromYAML('dashboard.dashml');
     const renderer = new DashMLPlotlyRenderer(transformer);
     
     await renderer.renderDashboard({
@@ -46,7 +46,7 @@ loadDashboard();
 
 <script>
 async function init() {
-    const transformer = await DashMLTransformer.fromYAML('sales.yaml');
+    const transformer = await DashMLTransformer.fromYAML('sales.dashml');
     const renderer = new DashMLPlotlyRenderer(transformer);
     
     await renderer.renderDashboard({
@@ -83,7 +83,7 @@ async function showTab(tab) {
     
     // Load DashML when analytics tab is shown
     if (tab === 'analytics' && !dashmlRenderer) {
-        const transformer = await DashMLTransformer.fromYAML('analytics.yaml');
+        const transformer = await DashMLTransformer.fromYAML('analytics.dashml');
         dashmlRenderer = new DashMLPlotlyRenderer(transformer);
         await dashmlRenderer.renderDashboard({
             containerId: 'analytics-tab'
@@ -111,7 +111,7 @@ async function showTab(tab) {
 
 <script>
 async function loadCharts() {
-    const transformer = await DashMLTransformer.fromYAML('sales.yaml');
+    const transformer = await DashMLTransformer.fromYAML('sales.dashml');
     await transformer.loadData();
     const renderer = new DashMLPlotlyRenderer(transformer);
     
@@ -140,7 +140,7 @@ loadCharts();
 let transformer, renderer;
 
 async function init() {
-    transformer = await DashMLTransformer.fromYAML('dashboard.yaml');
+    transformer = await DashMLTransformer.fromYAML('dashboard.dashml');
     await transformer.loadData();
     renderer = new DashMLPlotlyRenderer(transformer);
     
@@ -176,7 +176,7 @@ init();
 
 <script>
 async function loadDepartment(dept) {
-    const transformer = await DashMLTransformer.fromYAML(`dashboards/${dept}.yaml`);
+    const transformer = await DashMLTransformer.fromYAML(`dashboards/${dept}.dashml`);
     const renderer = new DashMLPlotlyRenderer(transformer);
     
     await renderer.renderDashboard({
@@ -200,7 +200,7 @@ loadDepartment('sales');
 
 <script>
 async function loadCustom() {
-    const transformer = await DashMLTransformer.fromYAML('dashboard.yaml');
+    const transformer = await DashMLTransformer.fromYAML('dashboard.dashml');
     await transformer.loadData();
     const renderer = new DashMLPlotlyRenderer(transformer);
     
@@ -252,8 +252,8 @@ loadCustom();
 **Platform-agnostic transformer**
 
 ```javascript
-// Static method - load from YAML file
-const transformer = await DashMLTransformer.fromYAML('dashboard.yaml');
+// Static method - load from DashML file
+const transformer = await DashMLTransformer.fromYAML('dashboard.dashml');
 
 // Or create from spec object
 const transformer = new DashMLTransformer(specObject);

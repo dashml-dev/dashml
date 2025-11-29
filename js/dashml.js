@@ -1,6 +1,7 @@
 /**
  * DashML Core Transformer - Platform Agnostic
- * Parses DashML specs and handles data operations
+ * Parses DashML specs (.dashml files) and handles data operations
+ * Note: .dashml files use YAML syntax
  */
 class DashMLTransformer {
     constructor(spec) {
@@ -8,10 +9,10 @@ class DashMLTransformer {
         this.data = null;
     }
 
-    static async fromYAML(yamlPath) {
-        const response = await fetch(yamlPath);
-        const yamlText = await response.text();
-        const spec = jsyaml.load(yamlText);
+    static async fromYAML(dashmlPath) {
+        const response = await fetch(dashmlPath);
+        const dashmlText = await response.text();
+        const spec = jsyaml.load(dashmlText);
         return new DashMLTransformer(spec);
     }
 

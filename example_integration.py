@@ -28,7 +28,7 @@ with tab2:
     st.header("Embedded DashML Dashboard")
     
     try:
-        transformer = DashMLTransformer("dashml_example.yaml")
+        transformer = DashMLTransformer("dashml_example.dashml")
         renderer = StreamlitRenderer(transformer)
         renderer.render_dashboard(show_title=False, show_sidebar=False)
     except Exception as e:
@@ -39,7 +39,7 @@ with tab3:
     st.write("You can embed specific charts from DashML into your app:")
     
     try:
-        transformer = DashMLTransformer("dashml_example.yaml")
+        transformer = DashMLTransformer("dashml_example.dashml")
         transformer.load_data()
         renderer = StreamlitRenderer(transformer)
         

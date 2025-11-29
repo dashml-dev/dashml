@@ -279,7 +279,7 @@ renderer.renderChartById('sales_over_time', 'chart2');</pre>
         
         async function loadFullDashboard() {
             try {
-                const transformer = await DashMLTransformer.fromYAML('dashml_example.yaml');
+                const transformer = await DashMLTransformer.fromYAML('dashml_example.dashml');
                 const renderer = new DashMLPlotlyRenderer(transformer);
                 await renderer.renderDashboard({
                     containerId: 'dashml-full',
@@ -294,7 +294,7 @@ renderer.renderChartById('sales_over_time', 'chart2');</pre>
         
         async function loadEmbeddedCharts() {
             try {
-                const transformer = await DashMLTransformer.fromYAML('dashml_example.yaml');
+                const transformer = await DashMLTransformer.fromYAML('dashml_example.dashml');
                 await transformer.loadData();
                 const renderer = new DashMLPlotlyRenderer(transformer);
                 

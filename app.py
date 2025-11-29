@@ -9,7 +9,7 @@ def main() -> None:
         layout="wide"
     )
     
-    dashml_path = st.sidebar.text_input("DashML file", "dashml_example.yaml")
+    dashml_path = st.sidebar.text_input("DashML file", "dashml_example.dashml")
     
     try:
         transformer = DashMLTransformer(dashml_path)

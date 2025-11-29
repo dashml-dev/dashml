@@ -60,7 +60,7 @@ npx http-server -p 8000
 
 ## 📝 The DashML Spec
 
-Here's your `dashml_example.yaml`:
+Here's your `dashml_example.dashml`:
 
 ```yaml
 version: 0.000000001
@@ -105,7 +105,7 @@ date,country,sales,product
 
 ### 2. Add a new chart
 
-Edit `dashml_example.yaml`:
+Edit `dashml_example.dashml`:
 
 ```yaml
 charts:
@@ -138,7 +138,7 @@ charts:
 ### Key Talking Points
 
 1. **"One spec, multiple platforms"**
-   - Show `dashml_example.yaml`
+   - Show `dashml_example.dashml`
    - Demo in Streamlit
    - Demo in browser
    - Same data, same spec, different renderers!
@@ -234,7 +234,7 @@ charts:
 ## 🚨 Common Issues
 
 ### CORS Errors (JavaScript)
-If you get CORS errors loading YAML/CSV:
+If you get CORS errors loading .dashml/CSV files:
 - Always use a local server (not `file://`)
 - Run: `python -m http.server 8000`
 
@@ -246,7 +246,7 @@ If imports fail:
 
 ### Charts Not Rendering
 - Check browser console (F12)
-- Verify YAML syntax
+- Verify DashML syntax (YAML format)
 - Check data file paths are correct
 
 ---
