@@ -1,0 +1,110 @@
+╔══════════════════════════════════════════════════════════════════╗
+║                  DashML - Quick Start Guide                      ║
+║              (New Microkernel Architecture)                      ║
+╚══════════════════════════════════════════════════════════════════╝
+
+📦 INSTALLATION
+─────────────────────────────────────────────────────────────────────
+  pip install -r requirements.txt
+
+
+🚀 RUN EVERYTHING AT ONCE
+─────────────────────────────────────────────────────────────────────
+  ./run_all.sh
+
+  Opens:
+    • Streamlit:  http://localhost:8501
+    • Plotly:     http://localhost:8000/generated_dashboard.html
+
+
+🐍 RUN STREAMLIT ONLY (New Architecture)
+─────────────────────────────────────────────────────────────────────
+  streamlit run app_new.py
+
+  Opens: http://localhost:8501
+
+
+📊 RUN PLOTLY ONLY (New Architecture)
+─────────────────────────────────────────────────────────────────────
+  # Step 1: Generate HTML from .dashml
+  python dashml_cli.py generate dashml_example.dashml -b plotly -o dashboard.html
+
+  # Step 2: Serve it
+  python -m http.server 8000
+
+  # Step 3: Open browser
+  http://localhost:8000/dashboard.html
+
+
+🧪 TEST THE ARCHITECTURE
+─────────────────────────────────────────────────────────────────────
+  python test_new_architecture.py
+
+  Verifies:
+    ✓ Core never loads data
+    ✓ IR contains only semantics
+    ✓ Backends handle all data access
+
+
+🛠️  CLI COMMANDS
+─────────────────────────────────────────────────────────────────────
+  Validate:
+    python dashml_cli.py validate dashml_example.dashml
+
+  Compile to IR (JSON):
+    python dashml_cli.py compile dashml_example.dashml
+
+  Generate Streamlit code:
+    python dashml_cli.py generate dashboard.dashml -b streamlit -o app.py
+
+  Generate Plotly HTML:
+    python dashml_cli.py generate dashboard.dashml -b plotly -o dash.html
+
+  Dev mode (hot reload):
+    python dashml_cli.py dev dashboard.dashml -b plotly
+
+
+🏗️  ARCHITECTURE
+─────────────────────────────────────────────────────────────────────
+  .dashml → Compiler → IR → Backend → Platform
+
+  Core (Microkernel):
+    • Parses .dashml files
+    • Builds IR (semantic model)
+    • NEVER loads data
+
+  Backends (Plugins):
+    • Read IR
+    • Generate code
+    • Load and visualize data
+
+
+📖 MORE INFO
+─────────────────────────────────────────────────────────────────────
+  RUNNING.md        - Detailed run instructions
+  ARCHITECTURE.md   - Complete architecture documentation
+  NEW_ARCHITECTURE.md - Migration guide
+  README_NEW.md     - Full project README
+
+
+🎯 FOR YOUR THESIS
+─────────────────────────────────────────────────────────────────────
+  Demo this:
+    1. Show .dashml file
+    2. Compile to IR: python dashml_cli.py compile dashboard.dashml
+    3. Run Streamlit: streamlit run app_new.py
+    4. Generate Plotly: python dashml_cli.py generate dashboard.dashml -b plotly
+    5. Same spec → Multiple platforms!
+
+
+💡 KEY INSIGHT
+─────────────────────────────────────────────────────────────────────
+  DashML NEVER touches data!
+  It only describes WHAT to query.
+  Backends execute the queries.
+
+
+═══════════════════════════════════════════════════════════════════════
+Ready to go! Start with: ./run_all.sh
+═══════════════════════════════════════════════════════════════════════
+
