@@ -7,7 +7,7 @@ data:
 
 charts:
   - id: "sales_by_country"
-    type: "pie"
+    type: "bar"
     title: "Sales by country"
     x: "country"
     y: "sales"

@@ -1,18 +1,22 @@
 #!/bin/bash
 
-echo "🚀 Starting DashML Demo Server..."
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║  🚀 DashML Development Server with Auto-reload          ║"
+echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
-echo "Python/Streamlit demos:"
-echo "  → streamlit run app.py"
-echo "  → streamlit run example_integration.py"
+echo "📦 Starting server with file watching..."
 echo ""
-echo "JavaScript/Plotly demos:"
-echo "  → http://localhost:8000/index.html"
-echo "  → http://localhost:8000/example_integration.html"
+echo "🌐 JavaScript/Plotly (with auto-reload):"
+echo "   → http://localhost:8000/index.html"
+echo "   → http://localhost:8000/example_integration.html"
 echo ""
-echo "Starting HTTP server on port 8000..."
-echo "Press Ctrl+C to stop"
+echo "🐍 Python/Streamlit (run in separate terminal):"
+echo "   → streamlit run app.py"
+echo "   → streamlit run example_integration.py"
+echo ""
+echo "💡 Edit any .dashml file and see instant updates!"
+echo "   Press Ctrl+C to stop"
 echo ""
 
-python3 -m http.server 8000
+python3 watch.py
 

@@ -1,4 +1,5 @@
 streamlit
 pyyaml
 pandas
+watchdog
 

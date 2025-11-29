@@ -9,6 +9,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
     <script src="js/dashml.js"></script>
     <script src="js/dashml-plotly.js"></script>
+    <script src="js/auto-reload.js"></script>
     
     <style>
         * {
@@ -260,6 +261,7 @@ renderer.renderChartById('sales_over_time', 'chart2');</pre>
     
     <script>
         let currentTab = 0;
+        let autoReloader;
         
         function switchTab(index) {
             const tabs = document.querySelectorAll('.tab');
@@ -304,6 +306,26 @@ renderer.renderChartById('sales_over_time', 'chart2');</pre>
                 console.error('Error loading charts:', error);
             }
         }
+        
+        // Auto-reload support
+        async function reloadCurrentTab() {
+            if (currentTab === 1) {
+                await loadFullDashboard();
+            } else if (currentTab === 2) {
+                await loadEmbeddedCharts();
+            }
+            showReloadNotification();
+        }
+        
+        // Initialize auto-reload
+        window.addEventListener('DOMContentLoaded', () => {
+            autoReloader = new DashMLAutoReload({
+                dashmlPath: 'dashml_example.dashml',
+                pollInterval: 1000,
+                onReload: reloadCurrentTab
+            });
+            autoReloader.start();
+        });
     </script>
 </body>
 </html>

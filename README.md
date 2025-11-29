@@ -13,29 +13,33 @@ DashML is a meta-language that describes data visualizations as abstractions. Li
 
 ## Quick Start
 
-### Python/Streamlit
+### Option 1: Development with Auto-reload ⚡ (Recommended)
 
-#### 1. Install dependencies
-
+**For JavaScript/Plotly:**
 ```bash
+# Install dependencies
 pip install -r requirements.txt
+
+# Start dev server with auto-reload
+python watch.py
 ```
 
-#### 2. Run the standalone demo
+Then open:
+- http://localhost:8000/index.html
+- http://localhost:8000/example_integration.html
 
+**Edit any `.dashml` file and see changes instantly!** ✨
+
+**For Python/Streamlit:**
 ```bash
 streamlit run app.py
 ```
 
-#### 3. Or see integration example
+Streamlit has auto-reload built-in! Edit `.dashml` files and see instant updates.
 
-```bash
-streamlit run example_integration.py
-```
+---
 
-### JavaScript/Plotly
-
-#### 1. Start local server
+### Option 2: Simple Static Server
 
 ```bash
 python -m http.server 8000
@@ -43,10 +47,9 @@ python -m http.server 8000
 npx http-server -p 8000
 ```
 
-#### 2. Open in browser
+Then open: http://localhost:8000/index.html
 
-- Standalone demo: `http://localhost:8000/index.html`
-- Integration example: `http://localhost:8000/example_integration.html`
+_(No auto-reload, manual refresh needed)_
 
 ## Project Structure
 
