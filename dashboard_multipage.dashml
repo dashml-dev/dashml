@@ -1,0 +1,48 @@
+version: 0.000000001
+title: "Sales Analytics Dashboard"
+style: "styles/dracula.dmls"
+
+data:
+  type: csv
+  path: "data/example.csv"
+
+pages:
+  - id: "overview"
+    title: "📊 Overview"
+    description: "High-level sales metrics and KPIs"
+    charts:
+      - id: "total_sales_by_country"
+        type: "bar"
+        title: "Total Sales by Country"
+        x: "country"
+        y: "sales"
+        agg: "sum"
+
+  - id: "trends"
+    title: "📈 Trends"
+    description: "Sales trends and patterns over time"
+    charts:
+      - id: "sales_over_time"
+        type: "line"
+        title: "Sales Over Time"
+        x: "date"
+        y: "sales"
+        agg: "sum"
+
+      - id: "average_sales_trend"
+        type: "line"
+        title: "Average Daily Sales"
+        x: "date"
+        y: "sales"
+        agg: "mean"
+
+  - id: "detailed"
+    title: "🔍 Detailed Analysis"
+    description: "In-depth breakdown and analysis"
+    charts:
+      - id: "sales_count_by_country"
+        type: "bar"
+        title: "Number of Transactions by Country"
+        x: "country"
+        y: "sales"
+        agg: "count"

@@ -1,0 +1,13 @@
+version: 0.000000001
+
+colors:
+  background: "#272822"
+  primary: "#66d9ef"
+  text: "#f8f8f2"
+  buttons: "#a6e22e"
+  secondary:
+    - "#a6e22e"  # Green
+    - "#e6db74"  # Yellow
+    - "#fd971f"  # Orange
+    - "#f92672"  # Red/Pink
+    - "#ae81ff"  # Purple
