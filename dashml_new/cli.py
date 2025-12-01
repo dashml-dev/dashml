@@ -11,12 +11,14 @@ from core import DashMLEngine, ValidationError, DashMLWatcher
 from transformers import TransformerRegistry
 from transformers.streamlit import StreamlitTransformer
 from transformers.plotly import PlotlyTransformer
+from transformers.observable import ObservablePlotTransformer
 
 
 def register_builtin_transformers():
     """Register built-in transformers"""
     TransformerRegistry.register(StreamlitTransformer)
     TransformerRegistry.register(PlotlyTransformer)
+    TransformerRegistry.register(ObservablePlotTransformer)
 
 
 def build_command(args):
@@ -62,6 +64,13 @@ def build_command(args):
         return 1
 
     print(f"✓ Code generated successfully")
+
+    # Display warnings if any
+    warnings = transformer.get_warnings()
+    if warnings:
+        print(f"\n⚠ Transformer warnings:")
+        for warning in warnings:
+            print(f"  - {warning}")
 
     # Write output
     if output_path:
@@ -155,6 +164,13 @@ def watch_command(args):
             # Generate code
             code = transformer.build(spec)
             print(f"✓ Code generated ({len(code)} chars)")
+
+            # Display warnings if any
+            warnings = transformer.get_warnings()
+            if warnings:
+                print(f"⚠ Transformer warnings:")
+                for warning in warnings:
+                    print(f"  - {warning}")
 
             # Write output
             Path(output_path).write_text(code, encoding="utf-8")

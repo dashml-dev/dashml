@@ -18,6 +18,13 @@ pages:
         y: "sales"
         agg: "sum"
 
+      - id: "country_sales_breakdown"
+        type: "pie"
+        title: "Market Share by Country"
+        x: "country"
+        y: "sales"
+        agg: "sum"
+
   - id: "trends"
     title: "📈 Trends"
     description: "Sales trends and patterns over time"
@@ -46,3 +53,10 @@ pages:
         x: "country"
         y: "sales"
         agg: "count"
+
+      - id: "sales_scatter"
+        type: "scatter"
+        title: "Sales Distribution Over Time"
+        x: "date"
+        y: "sales"
+        agg: "mean"

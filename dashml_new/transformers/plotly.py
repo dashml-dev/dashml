@@ -10,6 +10,10 @@ from .base import Transformer, TransformerError
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec
 
+# Chart type categorization by data requirements
+CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
+CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data points
+
 
 class PlotlyTransformer(Transformer):
     """
@@ -30,12 +34,31 @@ class PlotlyTransformer(Transformer):
         Generate Plotly HTML from DashML spec.
         """
         try:
+            self.clear_warnings()  # Clear warnings from previous builds
+
             title = spec.get("title", "DashML Dashboard")
             data_spec = spec["data"]
 
             # --- NEW: Load Styles ---
             colors = self._load_colors(spec.get("style"))
             # ------------------------
+
+            # Warn about unsupported color fields
+            if colors.get("buttons"):
+                self.warn("'buttons' color is not currently used by Plotly transformer")
+
+            # Check for unsupported chart types
+            all_charts = []
+            if "pages" in spec:
+                for page in spec["pages"]:
+                    all_charts.extend(page.get("charts", []))
+            else:
+                all_charts = spec.get("charts", [])
+
+            for chart in all_charts:
+                chart_type = chart.get("type")
+                if chart_type in ["stacked_bar", "grouped_bar"]:
+                    self.warn(f"'{chart_type}' requires a grouping column - not yet fully supported")
 
             html_parts = []
 
@@ -58,13 +81,15 @@ class PlotlyTransformer(Transformer):
             else:
                 # Legacy: single page with chart selector
                 charts = spec.get("charts", [])
+                html_parts.append('    <div class="card">')
 
                 # Chart selector
                 if len(charts) > 1:
                     html_parts.append(self._generate_chart_selector(charts))
 
                 # Chart container
-                html_parts.append('    <div id="chart"></div>')
+                html_parts.append('      <div id="chart"></div>')
+                html_parts.append('    </div>')
                 html_parts.append('  </div>')
 
                 # JavaScript
@@ -85,7 +110,7 @@ class PlotlyTransformer(Transformer):
         """Load colors from style file or return defaults"""
         defaults = {
             "background": "#f5f5f5",  # Page background
-            "container": "#ffffff",   # Content container
+            "card": "#ffffff",        # Card background
             "text": "#333333",        # Main text
             "primary": "#1f77b4",     # Primary color (active tabs)
             "secondary": []
@@ -104,7 +129,7 @@ class PlotlyTransformer(Transformer):
                     # Merge with defaults
                     return {
                         "background": loaded.get("background", defaults["background"]),
-                        "container": loaded.get("background", defaults["container"]), # If dark mode, container often same as bg
+                        "card": loaded.get("card", loaded.get("background", defaults["card"])),
                         "text": loaded.get("text", defaults["text"]),
                         "primary": loaded.get("primary", defaults["primary"]),
                         "secondary": loaded.get("secondary", [])
@@ -117,7 +142,7 @@ class PlotlyTransformer(Transformer):
     def _generate_html_header(self, title: str, colors: Dict[str, str]) -> str:
         """Generate HTML header with dynamic CSS based on theme"""
         bg = colors["background"]
-        container_bg = colors["container"]
+        card_bg = colors["card"]
         text = colors["text"]
         primary = colors["primary"]
 
@@ -143,10 +168,15 @@ class PlotlyTransformer(Transformer):
     .container {{
       max-width: 1200px;
       margin: 0 auto;
-      background-color: {container_bg};
+      background-color: {bg};
+      padding: 0;
+    }}
+    .card {{
+      background-color: {card_bg};
       padding: 30px;
       border-radius: 8px;
       box-shadow: {shadow};
+      margin-bottom: 20px;
     }}
     h1 {{
       margin-top: 0;
@@ -164,7 +194,7 @@ class PlotlyTransformer(Transformer):
       font-size: 14px;
       border: 1px solid #ddd;
       border-radius: 4px;
-      background-color: {container_bg};
+      background-color: {card_bg};
       color: {text};
     }}
     label {{
@@ -335,9 +365,21 @@ class PlotlyTransformer(Transformer):
             plot_call = "Plotly.newPlot('chart-' + chart.id, [trace], layout, { responsive: true });"
 
         return f'''    function renderChart(chart) {{
-      const aggregated = aggregateData(window.dashmlData, chart.x, chart.y, chart.agg || 'sum');
-      const xValues = aggregated.map(d => d.x);
-      const yValues = aggregated.map(d => d.y);
+      // Chart types that need aggregation vs raw data
+      const chartsNeedAggregation = new Set(['bar', 'line', 'area', 'pie', 'stacked_bar', 'grouped_bar']);
+      const chartsUseRawData = new Set(['histogram', 'scatter']);
+
+      let xValues, yValues;
+      if (chartsUseRawData.has(chart.type)) {{
+        // Use raw data for histogram and scatter
+        xValues = window.dashmlData.map(d => d[chart.x]);
+        yValues = window.dashmlData.map(d => d[chart.y]);
+      }} else {{
+        // Aggregate data for other chart types
+        const aggregated = aggregateData(window.dashmlData, chart.x, chart.y, chart.agg || 'sum');
+        xValues = aggregated.map(d => d.x);
+        yValues = aggregated.map(d => d.y);
+      }}
 
       let trace;
       switch (chart.type) {{
@@ -351,7 +393,18 @@ class PlotlyTransformer(Transformer):
           trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: {{ size: 10, color: theme.primary }} }};
           break;
         case 'pie':
-          trace = {{ labels: xValues, values: yValues, type: 'pie' }};
+          trace = {{ labels: xValues, values: yValues, type: 'pie', marker: {{ colors: theme.secondary }} }};
+          break;
+        case 'area':
+          trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
+          break;
+        case 'histogram':
+          trace = {{ x: xValues, type: 'histogram', marker: {{ color: theme.primary }} }};
+          break;
+        case 'stacked_bar':
+        case 'grouped_bar':
+          console.warn(chart.type + ' requires grouping column - not yet fully supported');
+          trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -406,7 +459,9 @@ class PlotlyTransformer(Transformer):
 
             for chart in page.get("charts", []):
                 chart_id = chart["id"]
-                container_parts.append(f'      <div id="chart-{chart_id}" class="chart-container"></div>')
+                container_parts.append(f'      <div class="card">')
+                container_parts.append(f'        <div id="chart-{chart_id}"></div>')
+                container_parts.append(f'      </div>')
 
             container_parts.append('    </div>')
             containers.append("\n".join(container_parts))
@@ -448,7 +503,18 @@ class PlotlyTransformer(Transformer):
           trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: {{ color: theme.primary }} }};
           break;
         case 'pie':
-          trace = {{ labels: xValues, values: yValues, type: 'pie' }};
+          trace = {{ labels: xValues, values: yValues, type: 'pie', marker: {{ colors: theme.secondary }} }};
+          break;
+        case 'area':
+          trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
+          break;
+        case 'histogram':
+          trace = {{ x: xValues, type: 'histogram', marker: {{ color: theme.primary }} }};
+          break;
+        case 'stacked_bar':
+        case 'grouped_bar':
+          console.warn(chart.type + ' requires grouping column - not yet fully supported');
+          trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};

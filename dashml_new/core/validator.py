@@ -17,8 +17,8 @@ class DashMLValidator:
     """
 
     REQUIRED_TOP_LEVEL = ["version", "data"]
-    SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie"]
-    SUPPORTED_DATA_TYPES = ["csv", "json", "sql"]
+    SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie", "area", "histogram", "stacked_bar", "grouped_bar"]
+    SUPPORTED_DATA_TYPES = ["csv"]  # Only CSV is actually implemented (json/sql removed until implemented)
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
 
     def validate(self, spec: Dict[str, Any]) -> None:

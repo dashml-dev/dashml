@@ -10,6 +10,7 @@ from typing import TypedDict, List, Union
 class StyleColors(TypedDict, total=False):
     """Color definitions for dashboard styling"""
     background: str
+    card: str
     primary: str
     text: str
     buttons: str
@@ -32,15 +33,25 @@ class ChartSpec(TypedDict, total=False):
     """
     Chart specification.
 
+    Supported chart types:
+    - bar: Vertical bar chart
+    - line: Line chart with points
+    - scatter: Scatter plot
+    - pie: Pie chart (uses secondary colors)
+    - area: Filled area chart
+    - histogram: Distribution histogram
+    - stacked_bar: Stacked bars (requires grouping - not yet fully supported)
+    - grouped_bar: Grouped/clustered bars (requires grouping - not yet fully supported)
+
     Note: Using total=False allows optional fields like 'title' and 'agg'.
     The validator ensures required fields are present.
     """
     id: str
-    type: str
+    type: str  # One of the supported chart types above
     title: str
     x: str
     y: str
-    agg: str
+    agg: str  # sum, mean, or count
 
 
 class PageSpec(TypedDict, total=False):

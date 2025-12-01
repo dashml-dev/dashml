@@ -30,6 +30,22 @@ dashml_new/
 3. **No Data Materialization**: Engine never fetches data, only validates structure
 4. **Code Generation**: Transformers generate standalone code that fetches its own data
 
+## Design Guidelines
+
+### Naming Conventions
+
+When naming UI components, data visualization elements, and other design patterns:
+
+1. **Primary: Vega/Vega-Lite Nomenclature** - Use terminology from [Vega-Lite](https://vega.github.io/vega-lite/) and [Vega](https://vega.github.io/vega/) specifications as the primary source
+2. **Fallback: Material Design** - When Vega doesn't define a term, use [Material Design 3](https://m3.material.io/) naming conventions
+3. **Examples**:
+   - Chart containers: "**card**" (Material Design term, as Vega doesn't define UI containers)
+   - Mark types: "bar", "line", "point" (Vega terms)
+   - Encodings: "x", "y", "color", "size" (Vega terms)
+   - Aggregations: "sum", "mean", "count" (Vega terms)
+
+This ensures consistency with data visualization standards while maintaining familiar UI terminology.
+
 ## Usage
 
 ### CLI

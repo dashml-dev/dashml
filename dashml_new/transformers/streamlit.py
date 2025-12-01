@@ -9,6 +9,10 @@ from .base import Transformer, TransformerError
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec, ChartSpec
 
+# Chart type categorization by data requirements
+CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
+CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data points
+
 
 class StreamlitTransformer(Transformer):
     """
@@ -29,9 +33,18 @@ class StreamlitTransformer(Transformer):
         Generate Streamlit code from DashML spec.
         """
         try:
+            self.clear_warnings()  # Clear warnings from previous builds
+
             # Load style config first to get colors
             style_config = self._load_style_config(spec.get("style"))
-            primary_color = style_config.get("colors", {}).get("primary", "#29b5e8") # Default Streamlit blue-ish
+            colors = style_config.get("colors", {})
+            primary_color = colors.get("primary", "#29b5e8") # Default Streamlit blue-ish
+
+            # Warn about unsupported color fields
+            if colors.get("card"):
+                self.warn("'card' color is not supported - Streamlit doesn't allow custom card backgrounds")
+            if colors.get("buttons"):
+                self.warn("'buttons' color is not supported - Streamlit button styling is limited")
 
             code_parts = []
 
@@ -60,11 +73,11 @@ class StreamlitTransformer(Transformer):
 
             # Charts or Pages
             if "pages" in spec:
-                code_parts.append(self._generate_pages(spec["pages"], primary_color))
+                code_parts.append(self._generate_pages(spec["pages"], colors))
             else:
                 charts = spec.get("charts", [])
                 for i, chart in enumerate(charts):
-                    code_parts.append(self._generate_chart(chart, primary_color))
+                    code_parts.append(self._generate_chart(chart, colors))
                     if i < len(charts) - 1:
                         code_parts.append('    st.divider()')
                     code_parts.append("")
@@ -146,7 +159,7 @@ import altair as alt"""
         return f'''    st.error("Unsupported data type: {data_type}")
     return'''
 
-    def _generate_chart(self, chart: Dict[str, Any], primary_color: str) -> str:
+    def _generate_chart(self, chart: Dict[str, Any], colors: Dict[str, Any]) -> str:
         """Generate Altair chart code with explicit colors"""
         chart_id = chart["id"]
         chart_type = chart["type"]
@@ -155,24 +168,29 @@ import altair as alt"""
         y = chart["y"]
         agg = chart.get("agg", "sum")
 
+        # Extract colors
+        primary_color = colors.get("primary", "#29b5e8")
+        secondary_colors = colors.get("secondary", ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+
         code_parts = []
         code_parts.append(f'    # Chart: {chart_id}')
         code_parts.append(f'    st.subheader("{title}")')
 
-        # Aggregation
-        code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
+        # Aggregation (only for chart types that need it)
+        if chart_type in CHARTS_NEED_AGGREGATION:
+            code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
 
-        if agg == "sum":
-            agg_method = "sum"
-        elif agg == "mean":
-            agg_method = "mean"
-        elif agg == "count":
-            agg_method = "count"
-        else:
-            agg_method = "sum"
+            if agg == "sum":
+                agg_method = "sum"
+            elif agg == "mean":
+                agg_method = "mean"
+            elif agg == "count":
+                agg_method = "count"
+            else:
+                agg_method = "sum"
 
-        # Prep data for Altair
-        code_parts.append(f'    chart_data = df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
+            # Prep data for Altair
+            code_parts.append(f'    chart_data = df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
 
         # Altair Chart Generation
         if chart_type == "bar":
@@ -192,28 +210,60 @@ import altair as alt"""
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "scatter":
-            code_parts.append(f'''    c = alt.Chart(chart_data).mark_circle(color="{primary_color}", size=60).encode(
-        x=alt.X("{x}", sort=None),
+            code_parts.append(f'''    # Scatter: show raw data points
+    c = alt.Chart(df).mark_circle(color="{primary_color}", size=60).encode(
+        x=alt.X("{x}"),
         y="{y}",
         tooltip=["{x}", "{y}"]
     ).properties(title="{title}")
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "pie":
-            # Altair pie charts are complex (mark_arc), basic bar fallback for now
-            code_parts.append(f'    st.caption("Pie chart fallback to bar (Altair)")')
-            code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
-        x=alt.X("{x}", sort=None),
-        y="{y}"
-    )
+            # Use secondary colors from theme for categorical data
+            code_parts.append(f'''    # Use theme secondary colors for pie chart
+    theme_colors = {secondary_colors}
+    c = alt.Chart(chart_data).mark_arc().encode(
+        theta=alt.Theta("{y}:Q"),
+        color=alt.Color("{x}:N",
+            scale=alt.Scale(range=theme_colors),
+            legend=alt.Legend(title="{x}")
+        ),
+        tooltip=["{x}", "{y}"]
+    ).properties(title="{title}")
     st.altair_chart(c, use_container_width=True)''')
+
+        elif chart_type == "area":
+            code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
+        x=alt.X("{x}", sort=None),
+        y="{y}",
+        tooltip=["{x}", "{y}"]
+    ).properties(title="{title}")
+    st.altair_chart(c, use_container_width=True)''')
+
+        elif chart_type == "histogram":
+            # Histogram uses binning on x axis, no aggregation needed
+            code_parts.append(f'''    # Histogram: bin {x} values
+    c = alt.Chart(df).mark_bar(color="{primary_color}").encode(
+        x=alt.X("{x}:Q", bin=True),
+        y="count()",
+        tooltip=["count()"]
+    ).properties(title="{title}")
+    st.altair_chart(c, use_container_width=True)''')
+
+        elif chart_type == "stacked_bar":
+            self.warn(f"'stacked_bar' requires a grouping column - not yet fully supported")
+            code_parts.append(f'    st.warning("stacked_bar not yet fully implemented")')
+
+        elif chart_type == "grouped_bar":
+            self.warn(f"'grouped_bar' requires a grouping column - not yet fully supported")
+            code_parts.append(f'    st.warning("grouped_bar not yet fully implemented")')
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')
 
         return "\n".join(code_parts)
 
-    def _generate_pages(self, pages: list, primary_color: str) -> str:
+    def _generate_pages(self, pages: list, colors: Dict[str, Any]) -> str:
         code_parts = []
         tab_titles = []
         for page in pages:
@@ -237,7 +287,7 @@ import altair as alt"""
 
             page_charts = page.get("charts", [])
             for j, chart in enumerate(page_charts):
-                chart_code = self._generate_chart(chart, primary_color)
+                chart_code = self._generate_chart(chart, colors)
                 indented_chart = "\n".join(f"    {line}" for line in chart_code.split("\n"))
                 code_parts.append(indented_chart)
 

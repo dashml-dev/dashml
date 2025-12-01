@@ -19,6 +19,35 @@ class Transformer(ABC):
     They only generate code that will fetch data when executed.
     """
 
+    def __init__(self):
+        """Initialize transformer with empty warnings list"""
+        self._warnings: list[str] = []
+
+    def warn(self, message: str) -> None:
+        """
+        Record a warning about unsupported features or limitations.
+
+        Args:
+            message: Warning message describing what is not supported
+
+        Example:
+            self.warn("'card' color is not supported by Streamlit transformer")
+        """
+        self._warnings.append(message)
+
+    def get_warnings(self) -> list[str]:
+        """
+        Get all warnings recorded during build.
+
+        Returns:
+            List of warning messages
+        """
+        return self._warnings.copy()
+
+    def clear_warnings(self) -> None:
+        """Clear all recorded warnings"""
+        self._warnings.clear()
+
     @property
     @abstractmethod
     def name(self) -> str:

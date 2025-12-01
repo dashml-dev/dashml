@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Chart Types Demo</title>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, sans-serif;
+            background-color: #282a36;
+            color: #f8f8f2;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            font-weight: 600;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            font-weight: 500;
+        }
+
+        .card {
+            margin-bottom: 3rem;
+            background: #313343;
+            padding: 1.5rem;
+            border-radius: 8px;
+        }
+
+        .page-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            border-bottom: 2px solid rgba(128, 128, 128, 0.2);
+            padding-bottom: 0;
+        }
+
+        .tab-button {
+            background: none;
+            border: none;
+            color: #f8f8f2;
+            padding: 0.75rem 1.5rem;
+            cursor: pointer;
+            font-size: 1rem;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+            opacity: 0.6;
+        }
+
+        .tab-button:hover {
+            opacity: 0.8;
+        }
+
+        .tab-button.active {
+            opacity: 1;
+            border-bottom-color: #bd93f9;
+        }
+
+        .page-content {
+            display: none;
+        }
+
+        .page-content.active {
+            display: block;
+        }
+
+        .page-description {
+            font-style: italic;
+            opacity: 0.8;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Observable Plot chart styling */
+        svg {
+            background: transparent;
+        }
+    </style>
+</head>
+<body>
+    <h1>New Chart Types Demo</h1>
+
+    <script>
+        // Load and parse CSV data
+        let dashmlData = [];
+
+        fetch('data/example.csv')
+            .then(response => response.text())
+            .then(csvText => {
+                dashmlData = parseCSV(csvText);
+                renderAllCharts();
+            })
+            .catch(error => {
+                console.error('Error loading data:', error);
+                document.body.innerHTML += '<p style="color: red;">Error loading data file: data/example.csv</p>';
+            });
+
+        function parseCSV(csvText) {
+            const lines = csvText.trim().split('\n').filter(line => line.trim());
+            const headers = lines[0].split(',').map(h => h.trim());
+            const rows = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',');
+                if (values.length !== headers.length) continue;
+
+                const row = {};
+                headers.forEach((header, index) => {
+                    const value = values[index] ? values[index].trim() : '';
+                    // Try to parse as number first
+                    if (!isNaN(value) && value !== '') {
+                        row[header] = parseFloat(value);
+                    }
+                    // Check if it looks like a date (YYYY-MM-DD or similar)
+                    else if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+                        row[header] = new Date(value);
+                    }
+                    // Keep as string
+                    else {
+                        row[header] = value;
+                    }
+                });
+                rows.push(row);
+            }
+            return rows;
+        }
+    </script>
+    <div class="page-tabs">
+        <button class="tab-button active" onclick="showPage('basic', this)">📊 Basic Charts</button>
+        <button class="tab-button" onclick="showPage('new', this)">✨ New Chart Types</button>
+        <button class="tab-button" onclick="showPage('future', this)">🚧 Coming Soon</button>
+    </div>
+    <div id="page-basic" class="page-content active">
+        <p class="page-description">Original chart types (bar, line, scatter, pie)</p>
+        <div class="card">
+            <h2>Bar Chart</h2>
+            <div id="chart-basic-bar_example"></div>
+        </div>
+        <div class="card">
+            <h2>Line Chart</h2>
+            <div id="chart-basic-line_example"></div>
+        </div>
+    </div>
+    <div id="page-new" class="page-content">
+        <p class="page-description">Priority 1 additions (area, histogram)</p>
+        <div class="card">
+            <h2>Area Chart - Sales Over Time</h2>
+            <div id="chart-new-area_example"></div>
+        </div>
+        <div class="card">
+            <h2>Histogram - Sales Distribution</h2>
+            <div id="chart-new-histogram_example"></div>
+        </div>
+    </div>
+    <div id="page-future" class="page-content">
+        <p class="page-description">Charts requiring schema extensions</p>
+        <div class="card">
+            <h2>Stacked Bar (Not Yet Supported)</h2>
+            <div id="chart-future-stacked_example"></div>
+        </div>
+        <div class="card">
+            <h2>Grouped Bar (Not Yet Supported)</h2>
+            <div id="chart-future-grouped_example"></div>
+        </div>
+    </div>
+    <script>
+        function showPage(pageId, buttonElement) {
+            // Hide all pages
+            document.querySelectorAll('.page-content').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Remove active from all buttons
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById('page-' + pageId).classList.add('active');
+            buttonElement.classList.add('active');
+        }
+
+        function renderAllCharts() {
+            // Chart: bar_example
+            const data_bar_example = d3.rollups(
+                dashmlData,
+                v => d3.sum(v, d => d['sales']),
+                d => d['country']
+            ).map(([country, sales]) => ({ country, sales }));
+            const plot_bar_example = Plot.plot({
+                marks: [
+                    Plot.barY(data_bar_example, {
+                        x: "country",
+                        y: "sales",
+                        fill: "#bd93f9",
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-basic-bar_example').appendChild(plot_bar_example);
+            // Chart: line_example
+            const data_line_example = d3.rollups(
+                dashmlData,
+                v => d3.sum(v, d => d['sales']),
+                d => d['date']
+            ).map(([date, sales]) => ({ date, sales }));
+            const plot_line_example = Plot.plot({
+                marks: [
+                    Plot.line(data_line_example, {
+                        x: "date",
+                        y: "sales",
+                        stroke: "#bd93f9",
+                        strokeWidth: 2,
+                        tip: true
+                    }),
+                    Plot.dot(data_line_example, {
+                        x: "date",
+                        y: "sales",
+                        fill: "#bd93f9",
+                        r: 4
+                    }),
+                    Plot.ruleY([0])
+                ],
+                x: { type: "utc" },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-basic-line_example').appendChild(plot_line_example);
+            // Chart: area_example
+            const data_area_example = d3.rollups(
+                dashmlData,
+                v => d3.sum(v, d => d['sales']),
+                d => d['date']
+            ).map(([date, sales]) => ({ date, sales }));
+            const plot_area_example = Plot.plot({
+                marks: [
+                    Plot.areaY(data_area_example, {
+                        x: "date",
+                        y: "sales",
+                        fill: "#bd93f9",
+                        fillOpacity: 0.7,
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                x: { type: "utc" },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-new-area_example').appendChild(plot_area_example);
+            // Chart: histogram_example
+            const data_histogram_example = d3.rollups(
+                dashmlData,
+                v => v.length,
+                d => d['sales']
+            ).map(([sales, sales]) => ({ sales, sales }));
+            const plot_histogram_example = Plot.plot({
+                marks: [
+                    Plot.rectY(data_histogram_example, Plot.binX({y: "count"}, {
+                        x: "sales",
+                        fill: "#bd93f9",
+                        tip: true
+                    })),
+                    Plot.ruleY([0])
+                ],
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-new-histogram_example').appendChild(plot_histogram_example);
+            // Chart: stacked_example
+            const data_stacked_example = d3.rollups(
+                dashmlData,
+                v => d3.sum(v, d => d['sales']),
+                d => d['country']
+            ).map(([country, sales]) => ({ country, sales }));
+            const plot_stacked_example = Plot.plot({
+                marks: [
+                    Plot.barY(data_stacked_example, {
+                        x: "country",
+                        y: "sales",
+                        fill: "#bd93f9",
+                        tip: true
+                    }),
+                    Plot.ruleY([0]),
+                    Plot.text([], {
+                        text: ["stacked_bar not yet fully supported"],
+                        frameAnchor: "top"
+                    })
+                ],
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-future-stacked_example').appendChild(plot_stacked_example);
+            // Chart: grouped_example
+            const data_grouped_example = d3.rollups(
+                dashmlData,
+                v => d3.sum(v, d => d['sales']),
+                d => d['country']
+            ).map(([country, sales]) => ({ country, sales }));
+            const plot_grouped_example = Plot.plot({
+                marks: [
+                    Plot.barY(data_grouped_example, {
+                        x: "country",
+                        y: "sales",
+                        fill: "#bd93f9",
+                        tip: true
+                    }),
+                    Plot.ruleY([0]),
+                    Plot.text([], {
+                        text: ["grouped_bar not yet fully supported"],
+                        frameAnchor: "top"
+                    })
+                ],
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-future-grouped_example').appendChild(plot_grouped_example);
+        }
+    </script>
+</body>
+</html>

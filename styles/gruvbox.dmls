@@ -2,6 +2,7 @@ version: 0.000000001
 
 colors:
   background: "#282828"
+  card: "#3c3836"
   primary: "#458588"
   text: "#ebdbb2"
   buttons: "#689d6a"

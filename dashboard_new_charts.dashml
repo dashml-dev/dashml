@@ -1,0 +1,62 @@
+version: 0.000000001
+title: "New Chart Types Demo"
+style: "styles/dracula.dmls"
+
+data:
+  type: csv
+  path: "data/example.csv"
+
+pages:
+  - id: "basic"
+    title: "📊 Basic Charts"
+    description: "Original chart types (bar, line, scatter, pie)"
+    charts:
+      - id: "bar_example"
+        type: "bar"
+        title: "Bar Chart"
+        x: "country"
+        y: "sales"
+        agg: "sum"
+
+      - id: "line_example"
+        type: "line"
+        title: "Line Chart"
+        x: "date"
+        y: "sales"
+        agg: "sum"
+
+  - id: "new"
+    title: "✨ New Chart Types"
+    description: "Priority 1 additions (area, histogram)"
+    charts:
+      - id: "area_example"
+        type: "area"
+        title: "Area Chart - Sales Over Time"
+        x: "date"
+        y: "sales"
+        agg: "sum"
+
+      - id: "histogram_example"
+        type: "histogram"
+        title: "Histogram - Sales Distribution"
+        x: "sales"
+        y: "sales"
+        agg: "count"
+
+  - id: "future"
+    title: "🚧 Coming Soon"
+    description: "Charts requiring schema extensions"
+    charts:
+      - id: "stacked_example"
+        type: "stacked_bar"
+        title: "Stacked Bar (Not Yet Supported)"
+        x: "country"
+        y: "sales"
+        agg: "sum"
+
+      - id: "grouped_example"
+        type: "grouped_bar"
+        title: "Grouped Bar (Not Yet Supported)"
+        x: "country"
+        y: "sales"
+        agg: "sum"
