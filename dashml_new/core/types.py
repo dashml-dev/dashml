@@ -40,8 +40,8 @@ class ChartSpec(TypedDict, total=False):
     - pie: Pie chart (uses secondary colors)
     - area: Filled area chart
     - histogram: Distribution histogram
-    - stacked_bar: Stacked bars (requires grouping - not yet fully supported)
-    - grouped_bar: Grouped/clustered bars (requires grouping - not yet fully supported)
+    - stacked_bar: Stacked bars (requires 'group' field)
+    - grouped_bar: Grouped/clustered bars (requires 'group' field)
 
     Note: Using total=False allows optional fields like 'title' and 'agg'.
     The validator ensures required fields are present.
@@ -52,6 +52,7 @@ class ChartSpec(TypedDict, total=False):
     x: str
     y: str
     agg: str  # sum, mean, or count
+    group: str  # Field to group/stack by (required for stacked_bar and grouped_bar)
 
 
 class PageSpec(TypedDict, total=False):

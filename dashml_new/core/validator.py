@@ -105,6 +105,13 @@ class DashMLValidator:
                 f"Supported: {', '.join(self.SUPPORTED_AGGREGATIONS)}"
             )
 
+        # Group field validation for stacked/grouped charts
+        if chart["type"] in ["stacked_bar", "grouped_bar"]:
+            if "group" not in chart:
+                raise ValidationError(
+                    f"Chart '{chart['id']}' is type '{chart['type']}' and requires a 'group' field"
+                )
+
         # ID uniqueness (check against other charts)
         # This is simplified - full implementation would track seen IDs
 

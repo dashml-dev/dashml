@@ -347,6 +347,33 @@ class PlotlyTransformer(Transformer):
         result.push({ x: key, y: aggregated });
       });
       return result;
+    }
+
+    function aggregateDataWithGroup(data, x, y, groupField, agg) {
+      const grouped = {};
+      data.forEach(row => {
+        const xKey = row[x];
+        const groupKey = row[groupField];
+        const compositeKey = xKey + '|||' + groupKey;
+        if (!grouped[compositeKey]) grouped[compositeKey] = { x: xKey, group: groupKey, values: [], count: 0 };
+        grouped[compositeKey].values.push(row[y]);
+        grouped[compositeKey].count++;
+      });
+
+      const result = [];
+      Object.keys(grouped).forEach(key => {
+        const entry = grouped[key];
+        const values = entry.values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = entry.count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        result.push({ x: entry.x, group: entry.group, y: aggregated });
+      });
+      return result;
     }'''
 
     def _generate_renderer(self, multi_page=False) -> str:
@@ -369,20 +396,41 @@ class PlotlyTransformer(Transformer):
       const chartsNeedAggregation = new Set(['bar', 'line', 'area', 'pie', 'stacked_bar', 'grouped_bar']);
       const chartsUseRawData = new Set(['histogram', 'scatter']);
 
-      let xValues, yValues;
-      if (chartsUseRawData.has(chart.type)) {{
-        // Use raw data for histogram and scatter
-        xValues = window.dashmlData.map(d => d[chart.x]);
-        yValues = window.dashmlData.map(d => d[chart.y]);
-      }} else {{
-        // Aggregate data for other chart types
-        const aggregated = aggregateData(window.dashmlData, chart.x, chart.y, chart.agg || 'sum');
-        xValues = aggregated.map(d => d.x);
-        yValues = aggregated.map(d => d.y);
-      }}
+      let traces = [];
+      let barmode = undefined;
 
-      let trace;
-      switch (chart.type) {{
+      if (chart.type === 'stacked_bar' || chart.type === 'grouped_bar') {{
+        // Stacked/grouped bars need multiple traces
+        const aggregated = aggregateDataWithGroup(window.dashmlData, chart.x, chart.y, chart.group, chart.agg || 'sum');
+        const groupValues = [...new Set(aggregated.map(d => d.group))];
+
+        groupValues.forEach((groupVal, idx) => {{
+          const filtered = aggregated.filter(d => d.group === groupVal);
+          traces.push({{
+            x: filtered.map(d => d.x),
+            y: filtered.map(d => d.y),
+            name: groupVal,
+            type: 'bar',
+            marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
+          }});
+        }});
+
+        barmode = chart.type === 'stacked_bar' ? 'stack' : 'group';
+      }} else {{
+        let xValues, yValues;
+        if (chartsUseRawData.has(chart.type)) {{
+          // Use raw data for histogram and scatter
+          xValues = window.dashmlData.map(d => d[chart.x]);
+          yValues = window.dashmlData.map(d => d[chart.y]);
+        }} else {{
+          // Aggregate data for other chart types
+          const aggregated = aggregateData(window.dashmlData, chart.x, chart.y, chart.agg || 'sum');
+          xValues = aggregated.map(d => d.x);
+          yValues = aggregated.map(d => d.y);
+        }}
+
+        let trace;
+        switch (chart.type) {{
         case 'bar':
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
           break;
@@ -401,13 +449,11 @@ class PlotlyTransformer(Transformer):
         case 'histogram':
           trace = {{ x: xValues, type: 'histogram', marker: {{ color: theme.primary }} }};
           break;
-        case 'stacked_bar':
-        case 'grouped_bar':
-          console.warn(chart.type + ' requires grouping column - not yet fully supported');
-          trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
-          break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
+      }}
+
+      traces.push(trace);
       }}
 
       const layout = {{
@@ -415,13 +461,13 @@ class PlotlyTransformer(Transformer):
             text: chart.title || chart.id,
             font: {{ color: theme.text }}
         }},
-        xaxis: {{ 
-            title: chart.x, 
+        xaxis: {{
+            title: chart.x,
             color: theme.text,
             gridcolor: theme.text + '20' // 20 = low opacity
         }},
-        yaxis: {{ 
-            title: chart.y, 
+        yaxis: {{
+            title: chart.y,
             color: theme.text,
             gridcolor: theme.text + '20'
         }},
@@ -430,7 +476,11 @@ class PlotlyTransformer(Transformer):
         plot_bgcolor: 'rgba(0,0,0,0)'
       }};
 
-      {plot_call}
+      if (barmode) {{
+        layout.barmode = barmode;
+      }}
+
+      Plotly.newPlot('chart', traces, layout, {{ responsive: true }});
     }}'''
 
     def _generate_page_tabs(self, pages: list, colors: Dict[str, str]) -> str:
@@ -486,13 +536,57 @@ class PlotlyTransformer(Transformer):
             x = chart["x"]
             y = chart["y"]
             agg = chart.get("agg", "sum")
+            group = chart.get("group")
             title = chart.get("title", chart_id)
 
-            chart_functions.append(f'''
+            # Check if this is stacked/grouped bar
+            if chart_type in ["stacked_bar", "grouped_bar"]:
+                barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
+                chart_functions.append(f'''
     function render_{chart_id}(data) {{
+      // Stacked/grouped bars need multiple traces
+      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}');
+      const groupValues = [...new Set(aggregated.map(d => d.group))];
+
+      const traces = [];
+      groupValues.forEach((groupVal, idx) => {{
+        const filtered = aggregated.filter(d => d.group === groupVal);
+        traces.push({{
+          x: filtered.map(d => d.x),
+          y: filtered.map(d => d.y),
+          name: groupVal,
+          type: 'bar',
+          marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
+        }});
+      }});
+
+      const layout = {{
+        title: {{ text: '{title}', font: {{ color: theme.text }} }},
+        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
+        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+        barmode: '{barmode}',
+        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      }};
+
+      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
+    }}''')
+            else:
+                # Standard single-trace charts
+                if chart_type in CHARTS_USE_RAW_DATA:
+                    data_prep = f'''
+      // Use raw data for {chart_type}
+      const xValues = data.map(d => d['{x}']);
+      const yValues = data.map(d => d['{y}']);'''
+                else:
+                    data_prep = f'''
       const grouped = aggregateData(data, '{x}', '{y}', '{agg}');
       const xValues = grouped.map(d => d.{x});
-      const yValues = grouped.map(d => d.{y});
+      const yValues = grouped.map(d => d.{y});'''
+
+                chart_functions.append(f'''
+    function render_{chart_id}(data) {{{data_prep}
 
       let trace;
       switch ('{chart_type}') {{
@@ -510,11 +604,6 @@ class PlotlyTransformer(Transformer):
           break;
         case 'histogram':
           trace = {{ x: xValues, type: 'histogram', marker: {{ color: theme.primary }} }};
-          break;
-        case 'stacked_bar':
-        case 'grouped_bar':
-          console.warn(chart.type + ' requires grouping column - not yet fully supported');
-          trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -577,6 +666,33 @@ class PlotlyTransformer(Transformer):
         }}
         return {{ [xCol]: key, [yCol]: aggValue }};
       }});
+    }}
+
+    function aggregateDataWithGroup(data, x, y, groupField, agg) {{
+      const grouped = {{}};
+      data.forEach(row => {{
+        const xKey = row[x];
+        const groupKey = row[groupField];
+        const compositeKey = xKey + '|||' + groupKey;
+        if (!grouped[compositeKey]) grouped[compositeKey] = {{ x: xKey, group: groupKey, values: [], count: 0 }};
+        grouped[compositeKey].values.push(parseFloat(row[y]) || 0);
+        grouped[compositeKey].count++;
+      }});
+
+      const result = [];
+      Object.keys(grouped).forEach(key => {{
+        const entry = grouped[key];
+        const values = entry.values;
+        let aggregated;
+        switch (agg) {{
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = entry.count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }}
+        result.push({{ x: entry.x, group: entry.group, y: aggregated }});
+      }});
+      return result;
     }}
 
 {''.join(chart_functions)}

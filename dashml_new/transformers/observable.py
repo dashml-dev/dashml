@@ -51,10 +51,7 @@ class ObservablePlotTransformer(Transformer):
             else:
                 all_charts = spec.get("charts", [])
 
-            for chart in all_charts:
-                chart_type = chart.get("type")
-                if chart_type in ["stacked_bar", "grouped_bar"]:
-                    self.warn(f"'{chart_type}' requires a grouping column - not yet fully supported")
+            # Warnings are now handled by validator (group field requirement)
 
             # Build HTML structure
             html_parts = []
@@ -357,8 +354,10 @@ class ObservablePlotTransformer(Transformer):
         x = chart["x"]
         y = chart["y"]
         agg = chart.get("agg", "sum")
+        group = chart.get("group")  # Optional grouping field for stacked/grouped bars
 
         primary_color = colors.get("primary", "#4269d0")
+        secondary_colors = colors.get("secondary", ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
 
         # Determine container ID
         container_id = f"chart-{page_id}-{chart_id}" if page_id else f"chart-{chart_id}"
@@ -370,6 +369,9 @@ class ObservablePlotTransformer(Transformer):
         if chart_type in CHARTS_USE_RAW_DATA:
             # Use raw data for histogram and scatter
             data_code = "dashmlData"
+        elif chart_type in ["stacked_bar", "grouped_bar"] and group:
+            # For stacked/grouped bars, need to group by both x and group field
+            data_code = self._get_aggregation_code_with_group(x, y, group, agg)
         else:
             # Aggregate data for other chart types
             data_code = self._get_aggregation_code(x, y, agg)
@@ -379,7 +381,7 @@ class ObservablePlotTransformer(Transformer):
             return self._generate_d3_pie_chart(safe_var_name, x, y, data_code, container_id, colors)
 
         # Generate Observable Plot mark based on chart type
-        mark_code = self._get_plot_mark(chart_type, x, y, primary_color, safe_var_name)
+        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name)
 
         # Detect if x axis is temporal (common date field names)
         temporal_fields = ['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at']
@@ -486,7 +488,31 @@ class ObservablePlotTransformer(Transformer):
                 d => d['{x}']
             ).map(([{x}, {y}]) => ({{ {x}, {y} }}))"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, color: str, data_var: str) -> str:
+    def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str) -> str:
+        """Generate JavaScript code to aggregate data with grouping"""
+        if agg == "sum":
+            agg_expr = f"d3.sum(v, d => d['{y}'])"
+        elif agg == "mean":
+            agg_expr = f"d3.mean(v, d => d['{y}'])"
+        elif agg == "count":
+            agg_expr = "v.length"
+        else:
+            agg_expr = f"d3.sum(v, d => d['{y}'])"
+
+        return f"""d3.rollups(
+                dashmlData,
+                v => {agg_expr},
+                d => d['{x}'],
+                d => d['{group}']
+            ).flatMap(([{x}Val, groupData]) =>
+                groupData.map(([{group}Val, {y}Val]) => ({{
+                    {x}: {x}Val,
+                    {group}: {group}Val,
+                    {y}: {y}Val
+                }}))
+            )"""
+
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str) -> str:
         """Generate Observable Plot mark specification"""
         if chart_type == "bar":
             return f"""marks: [
@@ -551,20 +577,45 @@ class ObservablePlotTransformer(Transformer):
                     Plot.ruleY([0])
                 ]"""
 
-        elif chart_type in ["stacked_bar", "grouped_bar"]:
+        elif chart_type == "stacked_bar":
+            # Observable Plot stacks by default when using fill with categorical data
+            color_scale_json = str(secondary_colors).replace("'", '"')
             return f"""marks: [
                     Plot.barY(data_{data_var}, {{
                         x: "{x}",
                         y: "{y}",
-                        fill: "{color}",
+                        fill: "{group}",
                         tip: true
                     }}),
-                    Plot.ruleY([0]),
-                    Plot.text([], {{
-                        text: ["{chart_type} not yet fully supported"],
-                        frameAnchor: "top"
-                    }})
-                ]"""
+                    Plot.ruleY([0])
+                ],
+                color: {{
+                    domain: [...new Set(data_{data_var}.map(d => d.{group}))],
+                    range: {color_scale_json}
+                }}"""
+
+        elif chart_type == "grouped_bar":
+            # Observable Plot groups bars using fx channel
+            color_scale_json = str(secondary_colors).replace("'", '"')
+            return f"""marks: [
+                    Plot.barY(data_{data_var}, {{
+                        x: "{x}",
+                        y: "{y}",
+                        fill: "{group}",
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{
+                    paddingInner: 0.2
+                }},
+                color: {{
+                    domain: [...new Set(data_{data_var}.map(d => d.{group}))],
+                    range: {color_scale_json}
+                }},
+                fx: {{
+                    domain: [...new Set(data_{data_var}.map(d => d.{x}))]
+                }}"""
 
         else:
             return f"""marks: [

@@ -167,6 +167,7 @@ import altair as alt"""
         x = chart["x"]
         y = chart["y"]
         agg = chart.get("agg", "sum")
+        group = chart.get("group")  # Optional grouping field for stacked/grouped bars
 
         # Extract colors
         primary_color = colors.get("primary", "#29b5e8")
@@ -178,8 +179,6 @@ import altair as alt"""
 
         # Aggregation (only for chart types that need it)
         if chart_type in CHARTS_NEED_AGGREGATION:
-            code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
-
             if agg == "sum":
                 agg_method = "sum"
             elif agg == "mean":
@@ -189,8 +188,13 @@ import altair as alt"""
             else:
                 agg_method = "sum"
 
-            # Prep data for Altair
-            code_parts.append(f'    chart_data = df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
+            # For stacked/grouped bars, aggregate by both x and group
+            if chart_type in ["stacked_bar", "grouped_bar"] and group:
+                code_parts.append(f'    # Aggregate: {agg}({y}) group by {x} and {group}')
+                code_parts.append(f'    chart_data = df.groupby(["{x}", "{group}"])["{y}"].{agg_method}().reset_index()')
+            else:
+                code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
+                code_parts.append(f'    chart_data = df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
 
         # Altair Chart Generation
         if chart_type == "bar":
@@ -251,12 +255,35 @@ import altair as alt"""
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "stacked_bar":
-            self.warn(f"'stacked_bar' requires a grouping column - not yet fully supported")
-            code_parts.append(f'    st.warning("stacked_bar not yet fully implemented")')
+            # Use secondary colors from theme for stacked segments
+            code_parts.append(f'''    # Stacked bar: stack {y} by {group}
+    theme_colors = {secondary_colors}
+    c = alt.Chart(chart_data).mark_bar().encode(
+        x=alt.X("{x}", sort=None),
+        y=alt.Y("{y}:Q", stack="zero"),
+        color=alt.Color("{group}:N",
+            scale=alt.Scale(range=theme_colors),
+            legend=alt.Legend(title="{group}")
+        ),
+        tooltip=["{x}", "{group}", "{y}"]
+    ).properties(title="{title}")
+    st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "grouped_bar":
-            self.warn(f"'grouped_bar' requires a grouping column - not yet fully supported")
-            code_parts.append(f'    st.warning("grouped_bar not yet fully implemented")')
+            # Use secondary colors from theme for grouped bars
+            code_parts.append(f'''    # Grouped bar: group {y} by {group}
+    theme_colors = {secondary_colors}
+    c = alt.Chart(chart_data).mark_bar().encode(
+        x=alt.X("{x}", sort=None),
+        y="{y}:Q",
+        color=alt.Color("{group}:N",
+            scale=alt.Scale(range=theme_colors),
+            legend=alt.Legend(title="{group}")
+        ),
+        xOffset="{group}:N",
+        tooltip=["{x}", "{group}", "{y}"]
+    ).properties(title="{title}")
+    st.altair_chart(c, use_container_width=True)''')
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')

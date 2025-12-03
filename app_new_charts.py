@@ -36,7 +36,7 @@ def main():
         st.error(f"Error loading data: {e}")
         return
 
-    tab1, tab2, tab3 = st.tabs(["📊 Basic Charts", "✨ New Chart Types", "🚧 Coming Soon"])
+    tab1, tab2, tab3 = st.tabs(["📊 Basic Charts", "✨ New Chart Types", "📊 Advanced Charts"])
 
     with tab1:
         st.markdown("*Original chart types (bar, line, scatter, pie)*")
@@ -92,21 +92,44 @@ def main():
         st.altair_chart(c, use_container_width=True)
 
     with tab3:
-        st.markdown("*Charts requiring schema extensions*")
+        st.markdown("*Stacked and grouped bar charts*")
         st.divider()
 
         # Chart: stacked_example
-        st.subheader("Stacked Bar (Not Yet Supported)")
-        # Aggregate: sum(sales) group by country
-        chart_data = df.groupby("country")["sales"].sum().reset_index()
-        st.warning("stacked_bar not yet fully implemented")
+        st.subheader("Stacked Bar - Sales by Country and Product")
+        # Aggregate: sum(sales) group by country and product
+        chart_data = df.groupby(["country", "product"])["sales"].sum().reset_index()
+        # Stacked bar: stack sales by product
+        theme_colors = ['#50fa7b', '#ffb86c', '#ff5555', '#8be9fd', '#f1fa8c']
+        c = alt.Chart(chart_data).mark_bar().encode(
+            x=alt.X("country", sort=None),
+            y=alt.Y("sales:Q", stack="zero"),
+            color=alt.Color("product:N",
+                scale=alt.Scale(range=theme_colors),
+                legend=alt.Legend(title="product")
+            ),
+            tooltip=["country", "product", "sales"]
+        ).properties(title="Stacked Bar - Sales by Country and Product")
+        st.altair_chart(c, use_container_width=True)
         st.divider()
 
         # Chart: grouped_example
-        st.subheader("Grouped Bar (Not Yet Supported)")
-        # Aggregate: sum(sales) group by country
-        chart_data = df.groupby("country")["sales"].sum().reset_index()
-        st.warning("grouped_bar not yet fully implemented")
+        st.subheader("Grouped Bar - Sales by Country and Product")
+        # Aggregate: sum(sales) group by country and product
+        chart_data = df.groupby(["country", "product"])["sales"].sum().reset_index()
+        # Grouped bar: group sales by product
+        theme_colors = ['#50fa7b', '#ffb86c', '#ff5555', '#8be9fd', '#f1fa8c']
+        c = alt.Chart(chart_data).mark_bar().encode(
+            x=alt.X("country", sort=None),
+            y="sales:Q",
+            color=alt.Color("product:N",
+                scale=alt.Scale(range=theme_colors),
+                legend=alt.Legend(title="product")
+            ),
+            xOffset="product:N",
+            tooltip=["country", "product", "sales"]
+        ).properties(title="Grouped Bar - Sales by Country and Product")
+        st.altair_chart(c, use_container_width=True)
 
 
 if __name__ == "__main__":
