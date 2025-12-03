@@ -1,106 +1,217 @@
-# Chart Types Implementation Roadmap
+# Chart Types Roadmap
 
-## Current Status (4 types - Fully Implemented)
+## ✅ Implemented (8 types - Fully Working)
+
+All Priority 1 chart types are now **fully implemented** across all three backends:
+
+| Chart Type | Streamlit | Plotly | Observable | Notes |
+|------------|-----------|--------|------------|-------|
+| `bar` | ✅ Altair | ✅ Plotly | ✅ Plot | Vertical bar chart |
+| `line` | ✅ Altair | ✅ Plotly | ✅ Plot | Line with markers |
+| `scatter` | ✅ Altair | ✅ Plotly | ✅ Plot | Raw data points |
+| `pie` | ✅ Altair | ✅ Plotly | ✅ D3 | Observable uses custom D3 code |
+| `area` | ✅ Altair | ✅ Plotly | ✅ Plot | Filled area chart |
+| `histogram` | ✅ Altair | ✅ Plotly | ✅ Plot | Bins raw data automatically |
+| `stacked_bar` | ✅ Altair | ✅ Plotly | ✅ Plot | Requires `group` field |
+| `grouped_bar` | ✅ Altair | ✅ Plotly | ✅ Plot | Requires `group` field |
+
+### Implementation Details
+
+**Data Handling:**
+- **Aggregated charts** (bar, line, area, pie, stacked_bar, grouped_bar): Use `groupby` + aggregation
+- **Raw data charts** (scatter, histogram): Work directly with raw data points
+
+**Color Support:**
+- Single-series charts use `primary` theme color
+- Multi-series charts (pie, stacked_bar, grouped_bar) use `secondary` theme color array
+- All backends properly support theme colors including `card` backgrounds (except Streamlit - platform limitation)
+
+**Grouping Support:**
+- Stacked and grouped bars require `group` field in spec
+- Validator enforces this requirement
+- All transformers implement multi-trace/multi-series rendering
+
+---
+
+## 🚧 Priority 2: Partial Backend Support
+
+Charts that work in 2 out of 3 backends:
 
 | Chart Type | Streamlit | Plotly | Observable | Status |
 |------------|-----------|--------|------------|--------|
-| `bar` | ✅ | ✅ | ✅ | Complete |
-| `line` | ✅ | ✅ | ✅ | Complete |
-| `scatter` | ✅ | ✅ | ✅ | Complete |
-| `pie` | ✅ | ✅ | ✅ (D3) | Complete (Observable uses D3 workaround) |
+| `box` | ✅ `mark_boxplot()` | ✅ `type: 'box'` | ❌ Not supported | Not implemented |
+| `violin` | ❌ Limited | ✅ Native | ❌ Not supported | Not implemented |
+
+**Implementation approach:**
+- Add to validator
+- Implement in Streamlit + Plotly
+- Observable transformer emits warning
 
 ---
 
-## Priority 1: Universal Support (All Backends)
+## 🔮 Priority 3: Plotly-Exclusive Charts
 
-These chart types are natively supported by all three backends:
+Specialized visualizations only Plotly supports natively:
 
-### To Implement
-
-| Chart Type | Streamlit (Altair) | Plotly | Observable | Notes |
-|------------|-------------------|--------|------------|-------|
-| `area` | `mark_area()` | `type: 'scatter', fill: 'tozeroy'` | `Plot.areaY()` | Filled line chart |
-| `histogram` | `mark_bar()` + `bin` | `type: 'histogram'` | `Plot.rectY()` + `bin` | Distribution of single variable |
-| `stacked_bar` | `mark_bar()` + color channel | `type: 'bar', barmode: 'stack'` | `Plot.barY()` + fill channel | Stacked categories |
-| `grouped_bar` | `mark_bar()` + `column` facet | `type: 'bar', barmode: 'group'` | `Plot.barY()` + `fx` channel | Grouped/clustered bars |
-
-**Action:** Implement all 4 types across all transformers with full theme color support.
-
----
-
-## Priority 2: Partial Support (Plotly + Streamlit)
-
-These work in 2 out of 3 backends:
-
-| Chart Type | Streamlit (Altair) | Plotly | Observable | Notes |
-|------------|-------------------|--------|------------|-------|
-| `box` | ✅ `mark_boxplot()` | ✅ `type: 'box'` | ❌ No native support | Box plots for distributions |
-| `choropleth` | ✅ `mark_geoshape()` | ✅ Geographic maps | ❌ No geo support | Geographic heatmap |
-
-**Action:** Implement with warnings for Observable transformer.
-
----
-
-## Priority 3: Plotly Exclusive
-
-These specialized charts only Plotly supports:
-
-### Business Charts
-- `treemap` - Hierarchical rectangles
-- `sunburst` - Hierarchical radial
-- `sankey` - Flow diagrams
-- `waterfall` - Cumulative effect chart
+### Business/Analytics
+- `treemap` - Hierarchical rectangle packing
+- `sunburst` - Hierarchical radial chart
+- `sankey` - Flow diagram
+- `waterfall` - Cumulative effect
 - `funnel` - Conversion funnel
-- `candlestick` - Financial OHLC
 
-### Advanced Visualization
-- `violin` - Distribution with density
+### Scientific
+- `candlestick` - Financial OHLC chart
 - `3d_scatter` - 3D point cloud
 - `3d_surface` - 3D height map
+- `contour` - Contour/topographic plot
 - `parallel_coordinates` - Multi-dimensional data
 
-**Action:** Implement only in Plotly, warn in Streamlit/Observable.
+### Geographic
+- `choropleth` - Geographic heatmap
+- `scatter_geo` - Points on map
+- `mapbox` - Custom map tiles
+
+**Implementation approach:**
+- Plotly: Full implementation
+- Streamlit: Warning or fallback chart
+- Observable: Warning or fallback chart
 
 ---
 
-## Backend Limitations Summary
+## 📊 Backend Capability Matrix
 
 ### Observable Plot
-**Cannot Support:**
-- `box` - No box plot mark
-- `pie` - Using D3 workaround ✅ (already implemented)
-- Any geographic visualization
-- Any 3D visualization
+**Strengths:**
+- Elegant, minimalist design
+- Excellent for standard statistical charts
+- Fast rendering
+
+**Limitations:**
+- ❌ No native pie charts (using D3 workaround ✅)
+- ❌ No box plots
+- ❌ No geographic visualizations
+- ❌ No 3D charts
+- ❌ Limited business charts
 
 ### Streamlit (Altair/Vega-Lite)
-**Cannot Support:**
-- 3D charts
-- Specialized business charts (treemap, sunburst, etc.)
+**Strengths:**
+- Full statistical chart support
+- Interactive widgets
+- Good for data apps
+
+**Limitations:**
+- ❌ Card backgrounds don't work (platform issue)
+- ❌ No 3D charts
+- ❌ Limited business charts
+- ⚠️ Violin plots have limited support
 
 ### Plotly
-**Can Support:** Everything - most comprehensive library
+**Strengths:**
+- ✅ Most comprehensive chart library
+- ✅ Supports everything (statistical, business, 3D, geo)
+- ✅ Full theme support
+- ✅ Standalone HTML deployment
+
+**Limitations:**
+- None for basic chart types
 
 ---
 
-## Implementation Strategy
+## 🎯 Implementation Strategy
 
-1. ✅ **Priority 1 (Next):** Implement `area`, `histogram`, `stacked_bar`, `grouped_bar` in all transformers
-2. **Priority 2:** Implement `box` and geo charts with Observable warnings
-3. **Priority 3:** Implement Plotly-exclusive charts with appropriate warnings
+### Phase 1: Core Charts ✅ COMPLETE
+- ✅ bar, line, scatter, pie
+- ✅ area, histogram
+- ✅ stacked_bar, grouped_bar
 
-For unsupported chart types:
-- Call `self.warn(f"'{chart_type}' is not supported by {self.name} transformer")`
-- Skip rendering or provide fallback
+### Phase 2: Statistical Extensions 🚧
+- [ ] box plots (Streamlit + Plotly)
+- [ ] violin plots (Plotly only)
+- [ ] Add error bars to existing charts
+- [ ] Add trend lines
+
+### Phase 3: Business Charts 🔮
+- [ ] treemap, sunburst, sankey (Plotly only)
+- [ ] funnel, waterfall (Plotly only)
+
+### Phase 4: Geographic 🔮
+- [ ] choropleth maps (Plotly + Streamlit)
+- [ ] Requires location field support in schema
+- [ ] GeoJSON data integration
+
+### Phase 5: Advanced 🔮
+- [ ] 3D visualizations (Plotly only)
+- [ ] Animated charts
+- [ ] Real-time data updates
 
 ---
 
-## Data Requirements
+## 📝 Schema Extensions Needed
 
-Some chart types require different data structures:
+### For Box/Violin Plots
+```yaml
+- type: "box"
+  x: "category"  # Grouping variable
+  y: "value"     # Continuous variable
+  # No aggregation - shows distribution
+```
 
-- **Single variable:** `histogram` (only needs one column)
-- **Multi-series:** `stacked_bar`, `grouped_bar` (need grouping column)
-- **Geographic:** `choropleth` (needs location identifiers)
-- **Financial:** `candlestick` (needs OHLC columns)
+### For Geographic Charts
+```yaml
+- type: "choropleth"
+  locations: "country_code"  # ISO codes or region names
+  z: "value"                 # Color intensity
+  agg: "sum"
+```
 
-This may require extending the DashML spec schema in the future.
+### For Financial Charts
+```yaml
+- type: "candlestick"
+  x: "date"
+  open: "open_price"
+  high: "high_price"
+  low: "low_price"
+  close: "close_price"
+```
+
+---
+
+## 🔧 Adding New Chart Types - Checklist
+
+When implementing a new chart type:
+
+- [ ] Add to `SUPPORTED_CHART_TYPES` in `validator.py`
+- [ ] Add TypedDict documentation in `types.py`
+- [ ] Update data requirement categorization:
+  - [ ] Add to `CHARTS_NEED_AGGREGATION` or `CHARTS_USE_RAW_DATA`
+- [ ] Implement in `streamlit.py` transformer
+  - [ ] Add to `_generate_chart()` method
+  - [ ] Handle aggregation correctly
+  - [ ] Use theme colors
+- [ ] Implement in `plotly.py` transformer
+  - [ ] Add to `_generate_renderer()` (single-page)
+  - [ ] Add to `_generate_javascript_pages()` (multi-page)
+  - [ ] Use theme colors
+- [ ] Implement in `observable.py` transformer
+  - [ ] Add to `_get_plot_mark()` method
+  - [ ] Handle data preparation in `_generate_chart_render()`
+  - [ ] Use theme colors
+- [ ] Create test case in test dashboard
+- [ ] Update `README.md` chart types table
+- [ ] Update this roadmap
+
+---
+
+## 🎨 Current Color Theme Support
+
+All chart types support the full theme system:
+
+- `background` - Dashboard background ✅
+- `card` - Chart container (Plotly ✅, Observable ✅, Streamlit ⚠️ limited)
+- `primary` - Single-series chart color ✅
+- `secondary` - Multi-series colors ✅
+- `text` - Labels and titles ✅
+- `buttons` - UI elements ✅
+
+Theme support is consistent across backends (except Streamlit card limitation).
