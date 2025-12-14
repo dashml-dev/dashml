@@ -1,0 +1,22 @@
+version: 0.000000001
+title: "DashML Example Dashboard"
+
+data:
+  type: csv
+  path: "data/example.csv"
+
+charts:
+  - id: "sales_by_country"
+    type: "line"
+    title: "Sales by country"
+    x: "country"
+    y: "sales"
+    agg: "sum"
+
+  - id: "sales_over_time"
+    type: "line"
+    title: "Sales over time"
+    x: "date"
+    y: "sales"
+    agg: "sum"
+
