@@ -17,9 +17,14 @@
       max-width: 1200px;
       margin: 0 auto;
       background-color: #282a36;
+      padding: 0;
+    }
+    .card {
+      background-color: #313343;
       padding: 30px;
       border-radius: 8px;
       box-shadow: 0 2px 4px rgba(255,255,255,0.1);
+      margin-bottom: 20px;
     }
     h1 {
       margin-top: 0;
@@ -37,7 +42,7 @@
       font-size: 14px;
       border: 1px solid #ddd;
       border-radius: 4px;
-      background-color: #282a36;
+      background-color: #313343;
       color: #f8f8f2;
     }
     label {
@@ -97,20 +102,34 @@
     </div>
     <div id="page-overview" class="page-container">
       <p class="page-description"><em>High-level sales metrics and KPIs</em></p>
-      <div id="chart-total_sales_by_country" class="chart-container"></div>
+      <div class="card">
+        <div id="chart-total_sales_by_country"></div>
+      </div>
+      <div class="card">
+        <div id="chart-country_sales_breakdown"></div>
+      </div>
     </div>
     <div id="page-trends" class="page-container" style="display:none">
       <p class="page-description"><em>Sales trends and patterns over time</em></p>
-      <div id="chart-sales_over_time" class="chart-container"></div>
-      <div id="chart-average_sales_trend" class="chart-container"></div>
+      <div class="card">
+        <div id="chart-sales_over_time"></div>
+      </div>
+      <div class="card">
+        <div id="chart-average_sales_trend"></div>
+      </div>
     </div>
     <div id="page-detailed" class="page-container" style="display:none">
       <p class="page-description"><em>In-depth breakdown and analysis</em></p>
-      <div id="chart-sales_count_by_country" class="chart-container"></div>
+      <div class="card">
+        <div id="chart-sales_count_by_country"></div>
+      </div>
+      <div class="card">
+        <div id="chart-sales_scatter"></div>
+      </div>
     </div>
   </div>
   <script>
-    const theme = {"background": "#282a36", "container": "#282a36", "text": "#f8f8f2", "primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]};
+    const theme = {"background": "#282a36", "card": "#313343", "text": "#f8f8f2", "primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]};
 
     function aggregateData(data, xCol, yCol, aggFunc) {
       const groups = {};
@@ -146,7 +165,18 @@
           trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
           break;
         case 'pie':
-          trace = { labels: xValues, values: yValues, type: 'pie' };
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', marker: { color: theme.primary } };
+          break;
+        case 'stacked_bar':
+        case 'grouped_bar':
+          console.warn(chart.type + ' requires grouping column - not yet fully supported');
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
           break;
         default:
           trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
@@ -163,6 +193,48 @@
 
       Plotly.newPlot('chart-total_sales_by_country', [trace], layout, { responsive: true });
     }
+    function render_country_sales_breakdown(data) {
+      const grouped = aggregateData(data, 'country', 'sales', 'sum');
+      const xValues = grouped.map(d => d.country);
+      const yValues = grouped.map(d => d.sales);
+
+      let trace;
+      switch ('pie') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', marker: { color: theme.primary } };
+          break;
+        case 'stacked_bar':
+        case 'grouped_bar':
+          console.warn(chart.type + ' requires grouping column - not yet fully supported');
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Market Share by Country', font: { color: theme.text } },
+        xaxis: { title: 'country', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-country_sales_breakdown', [trace], layout, { responsive: true });
+    }
     function render_sales_over_time(data) {
       const grouped = aggregateData(data, 'date', 'sales', 'sum');
       const xValues = grouped.map(d => d.date);
@@ -177,7 +249,18 @@
           trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
           break;
         case 'pie':
-          trace = { labels: xValues, values: yValues, type: 'pie' };
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', marker: { color: theme.primary } };
+          break;
+        case 'stacked_bar':
+        case 'grouped_bar':
+          console.warn(chart.type + ' requires grouping column - not yet fully supported');
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
           break;
         default:
           trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
@@ -208,7 +291,18 @@
           trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
           break;
         case 'pie':
-          trace = { labels: xValues, values: yValues, type: 'pie' };
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', marker: { color: theme.primary } };
+          break;
+        case 'stacked_bar':
+        case 'grouped_bar':
+          console.warn(chart.type + ' requires grouping column - not yet fully supported');
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
           break;
         default:
           trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
@@ -239,7 +333,18 @@
           trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
           break;
         case 'pie':
-          trace = { labels: xValues, values: yValues, type: 'pie' };
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', marker: { color: theme.primary } };
+          break;
+        case 'stacked_bar':
+        case 'grouped_bar':
+          console.warn(chart.type + ' requires grouping column - not yet fully supported');
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
           break;
         default:
           trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
@@ -255,6 +360,48 @@
       };
 
       Plotly.newPlot('chart-sales_count_by_country', [trace], layout, { responsive: true });
+    }
+    function render_sales_scatter(data) {
+      const grouped = aggregateData(data, 'date', 'sales', 'mean');
+      const xValues = grouped.map(d => d.date);
+      const yValues = grouped.map(d => d.sales);
+
+      let trace;
+      switch ('scatter') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', marker: { color: theme.primary } };
+          break;
+        case 'stacked_bar':
+        case 'grouped_bar':
+          console.warn(chart.type + ' requires grouping column - not yet fully supported');
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Sales Distribution Over Time', font: { color: theme.text } },
+        xaxis: { title: 'date', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-sales_scatter', [trace], layout, { responsive: true });
     }
 
 
@@ -274,9 +421,11 @@
 
     function renderAllPages(data) {
       render_total_sales_by_country(data);
+      render_country_sales_breakdown(data);
       render_sales_over_time(data);
       render_average_sales_trend(data);
       render_sales_count_by_country(data);
+      render_sales_scatter(data);
     }
 
     fetch('data/example.csv')

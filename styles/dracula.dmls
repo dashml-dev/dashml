@@ -1,0 +1,14 @@
+version: 0.000000001
+
+colors:
+  background: "#282a36"
+  card: "#313343"
+  primary: "#bd93f9"
+  text: "#f8f8f2"
+  buttons: "#ff79c6"
+  secondary:
+    - "#50fa7b"  # Green
+    - "#ffb86c"  # Orange
+    - "#ff5555"  # Red
+    - "#8be9fd"  # Cyan
+    - "#f1fa8c"  # Yellow
