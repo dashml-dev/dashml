@@ -22,12 +22,18 @@ def register_builtin_transformers():
 
 
 def build_command(args):
-    """Handle the build command"""
+    """Handle the build command
+
+    TODO: [SRP] This function does too much - file validation, loading, transformation, writing, AND running
+    Consider splitting into: load_and_validate_spec(), generate_code(), write_output(), run_dashboard()
+    """
     dashml_path = args.input
     target = args.target
     output_path = args.output
 
     # Check if input file exists
+    # TODO: [Pythonic] Use pathlib consistently - Path.exists() over os.path.exists()
+    # This is good! But also consider Path(dashml_path).is_file() for clarity
     if not Path(dashml_path).exists():
         print(f"Error: DashML file not found: {dashml_path}", file=sys.stderr)
         return 1
@@ -128,6 +134,8 @@ def watch_command(args):
     output_path = args.output
     should_run = args.run
 
+    # TODO: [DRY] This file validation logic is duplicated from build_command
+    # Extract to: _validate_input_file(path: str) -> bool
     # Validate paths
     if not Path(dashml_path).exists():
         print(f"Error: DashML file not found: {dashml_path}", file=sys.stderr)
@@ -152,6 +160,9 @@ def watch_command(args):
     print()
 
     # Define rebuild function
+    # TODO: [Code Organization] Nested function - extract to module-level
+    # This makes testing harder and duplicates logic from build_command
+    # Fix: Extract common logic into _build_and_write(engine, transformer, dashml_path, output_path)
     def rebuild():
         """Rebuild the output file"""
         engine = DashMLEngine()

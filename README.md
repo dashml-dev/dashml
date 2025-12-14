@@ -1,157 +1,111 @@
 # DashML Playground
 
-**DashML v0.000000001** - A declarative language for data visualization dashboards
+**DashML** - A declarative language for data visualization dashboards that compiles to multiple platforms.
+
+## ⚠️ Active Development
+
+This repository contains both the **legacy runtime architecture** and the **new compiler architecture**.
+
+### Current Implementation: `dashml_new/` ✅
+
+The active implementation is in the `dashml_new/` directory. This is a **build-time compiler** that generates standalone code.
+
+**Documentation:**
+- **[Main README](dashml_new/README.md)** - Complete guide to DashML
+- **[Chart Types Roadmap](dashml_new/CHART_TYPES_ROADMAP.md)** - Supported chart types and future plans
+- **[TypedDict Architecture](dashml_new/TYPEDDICT_IR.md)** - Type system design
+
+**Quick Start:**
+```bash
+cd dashml_new
+
+# Generate Streamlit app
+python -m dashml_new.cli dashboard.dashml --backend streamlit --output app.py
+streamlit run app.py
+
+# Generate Plotly HTML
+python -m dashml_new.cli dashboard.dashml --backend plotly --output dashboard.html
+
+# Generate Observable Plot HTML
+python -m dashml_new.cli dashboard.dashml --backend observable --output dashboard.html
+```
+
+### Legacy Implementation: Root Directory ⚠️ Deprecated
+
+The files in the playground root (`dashml/`, `js/`, `app.py`, `index.html`, etc.) are from the **old runtime architecture** and are no longer actively developed.
+
+**Old approach**: Runtime interpreter that materializes data
+**New approach**: Build-time compiler that generates standalone code
 
 ## What is DashML?
 
-DashML is a meta-language that describes data visualizations as abstractions. Like HTML for web pages, DashML provides a unified way to describe dashboards that can be transformed into different platforms (Streamlit, PowerBI, Looker, etc.).
+DashML is a declarative language for defining analytics dashboards. Write your dashboard spec once in `.dashml` format, then compile it to:
 
-**One spec, multiple platforms:**
-- ✅ Python/Streamlit - Server-side dashboards
-- ✅ JavaScript/Plotly - Client-side web dashboards
-- 🚧 PowerBI, Looker - Coming soon
+- **Streamlit** (Python) - Interactive data apps
+- **Plotly** (HTML/JS) - Standalone web dashboards
+- **Observable Plot** (HTML/JS) - Modern web visualizations
 
-## Quick Start
-
-### Option 1: Development with Auto-reload ⚡ (Recommended)
-
-**For JavaScript/Plotly:**
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Start dev server with auto-reload
-python watch.py
-```
-
-Then open:
-- http://localhost:8000/index.html
-- http://localhost:8000/example_integration.html
-
-**Edit any `.dashml` file and see changes instantly!** ✨
-
-**For Python/Streamlit:**
-```bash
-streamlit run app.py
-```
-
-Streamlit has auto-reload built-in! Edit `.dashml` files and see instant updates.
-
----
-
-### Option 2: Simple Static Server
-
-```bash
-python -m http.server 8000
-# or
-npx http-server -p 8000
-```
-
-Then open: http://localhost:8000/index.html
-
-_(No auto-reload, manual refresh needed)_
-
-## Project Structure
-
-```
-dashml-playground/
-├── dashml/                       # Python library
-│   ├── __init__.py              # Package exports
-│   ├── transformer.py           # Platform-agnostic DashML parser
-│   └── streamlit_renderer.py    # Streamlit-specific renderer
-├── js/                           # JavaScript library
-│   ├── dashml.js                # Platform-agnostic DashML parser
-│   └── dashml-plotly.js         # Plotly-specific renderer
-├── app.py                        # Streamlit standalone demo
-├── example_integration.py        # Streamlit integration example
-├── index.html                    # Plotly standalone demo
-├── example_integration.html      # Plotly integration example
-├── dashml_example.dashml         # Example DashML spec
-├── data/
-│   └── example.csv               # Sample dataset
-├── requirements.txt              # Python dependencies
-├── USAGE.md                      # Python integration guide
-└── JS_USAGE.md                   # JavaScript integration guide
-```
-
-## Usage in Your Own Streamlit App
-
-### Simple integration (full dashboard):
-
-```python
-from dashml import DashMLTransformer, StreamlitRenderer
-
-transformer = DashMLTransformer("my_dashboard.dashml")
-renderer = StreamlitRenderer(transformer)
-renderer.render_dashboard()
-```
-
-### Advanced integration (specific charts):
-
-```python
-from dashml import DashMLTransformer, StreamlitRenderer
-
-transformer = DashMLTransformer("my_dashboard.dashml")
-transformer.load_data()
-renderer = StreamlitRenderer(transformer)
-
-# Render specific chart by ID
-renderer.render_chart_by_id("sales_by_country")
-```
-
-See `example_integration.py` for a complete working example.
-
-### JavaScript Usage
-
-```javascript
-// Simple full dashboard
-const transformer = await DashMLTransformer.fromYAML('dashboard.dashml');
-const renderer = new DashMLPlotlyRenderer(transformer);
-await renderer.renderDashboard({ containerId: 'my-div' });
-
-// Specific charts
-const transformer = await DashMLTransformer.fromYAML('dashboard.dashml');
-await transformer.loadData();
-const renderer = new DashMLPlotlyRenderer(transformer);
-renderer.renderChartById('sales_by_country', 'chart1');
-```
-
-See `example_integration.html` for a complete working example.
-
-## DashML Spec Example
-
-**File: `dashboard.dashml`**
+### Example Spec
 
 ```yaml
-version: 0.000000001
-title: "DashML Example Dashboard"
+version: 0.1
+title: "Sales Dashboard"
+style: "styles/dracula.dmls"
 
 data:
   type: csv
-  path: "data/example.csv"
+  path: "data/sales.csv"
 
 charts:
   - id: "sales_by_country"
     type: "bar"
-    title: "Sales by country"
+    title: "Sales by Country"
     x: "country"
     y: "sales"
     agg: "sum"
 ```
 
-**Note:** `.dashml` files use YAML syntax under the hood, making them both human and machine-readable.
+Compile to Streamlit:
+```bash
+python -m dashml_new.cli dashboard.dashml --backend streamlit --output app.py
+```
 
-## The DashML Manifesto
+## Supported Features
 
-1. **Typeless Core** - No rigid schemas, flexible for humans & AI
-2. **Non-Validating** - Validation belongs to transformers, not the language
-3. **Source-Agnostic** - Works with any data source
-4. **Declarative** - Define what, never how
-5. **Extensible & Backend-Neutral** - Minimal core, pluggable renderers
-6. **LLM & Human-Friendly** - Clean YAML, easy to write & generate
-7. **Read-Only** - Visualization only, no data mutation
+- ✅ **8 chart types**: bar, line, scatter, pie, area, histogram, stacked_bar, grouped_bar
+- ✅ **Multi-page dashboards**: Organize charts into pages
+- ✅ **Theme system**: 6 built-in themes (Dracula, Nord, Gruvbox, etc.)
+- ✅ **3 backends**: Streamlit, Plotly, Observable Plot
+- ✅ **CSV data sources**: Load data from CSV files
+- ✅ **Aggregations**: sum, mean, count
+
+## Documentation
+
+All current documentation is in `dashml_new/`:
+
+1. **[README.md](dashml_new/README.md)** - Complete user guide
+2. **[CHART_TYPES_ROADMAP.md](dashml_new/CHART_TYPES_ROADMAP.md)** - Chart implementation status
+3. **[TYPEDDICT_IR.md](dashml_new/TYPEDDICT_IR.md)** - Architecture details
+
+## Architecture
+
+DashML follows **hexagonal architecture** principles:
+
+```
+.dashml spec → Parser → Validator → Transformer → Generated Code
+                                         ↓
+                            ┌────────────┼────────────┐
+                            ↓            ↓            ↓
+                        Streamlit    Plotly    Observable
+```
+
+**Key principle**: DashML never materializes data. It only generates code that will load data at runtime.
 
 ## Authors
 
 - Dawid Olejniczak
 - Szymon Nowaczyk
+
+## License
+
+MIT

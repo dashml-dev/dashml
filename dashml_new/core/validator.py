@@ -14,9 +14,14 @@ class DashMLValidator:
     Validates the semantic correctness of DashML specifications.
     Ensures required fields exist and values are reasonable.
     Does NOT validate data sources or check if files exist.
+
+    TODO: [SRP] Split into multiple validators (TopLevelValidator, DataSourceValidator, ChartValidator)
+    This class handles too many types of validation - violates Single Responsibility Principle
     """
 
     REQUIRED_TOP_LEVEL = ["version", "data"]
+    # TODO: [Immutability] Use frozenset for constants to prevent accidental modification
+    # SUPPORTED_CHART_TYPES = frozenset(["bar", "line", ...])
     SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie", "area", "histogram", "stacked_bar", "grouped_bar"]
     SUPPORTED_DATA_TYPES = ["csv"]  # Only CSV is actually implemented (json/sql removed until implemented)
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
@@ -74,6 +79,7 @@ class DashMLValidator:
         if not isinstance(charts, list):
             raise ValidationError(f"'charts' must be an array, got {type(charts)}")
 
+        # TODO: [Pythonic] Use 'if not charts:' instead of 'if len(charts) == 0:'
         if len(charts) == 0:
             raise ValidationError("'charts' must contain at least one chart")
 

@@ -57,6 +57,7 @@ class Transformer(ABC):
         Returns:
             Transformer name in lowercase
         """
+        # TODO: [Pythonic] Use '...' (Ellipsis) instead of 'pass' for abstract methods
         pass
 
     @property

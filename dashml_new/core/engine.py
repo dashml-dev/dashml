@@ -16,6 +16,10 @@ class DashMLEngine:
     """
 
     def __init__(self):
+        # TODO: [DIP] Use dependency injection instead of direct instantiation
+        # This makes testing harder and violates Dependency Inversion Principle
+        # Fix: def __init__(self, parser=None, validator=None):
+        #         self.parser = parser or DashMLParser()
         self.parser = DashMLParser()
         self.validator = DashMLValidator()
 
@@ -40,4 +44,7 @@ class DashMLEngine:
         # Validate semantic correctness
         self.validator.validate(spec)
 
+        # TODO: [Type Safety] Use cast() instead of type: ignore
+        # Fix: from typing import cast
+        #      return cast(DashMLSpec, spec)
         return spec  # type: ignore - Runtime dict, typed as DashMLSpec

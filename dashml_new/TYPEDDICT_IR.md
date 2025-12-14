@@ -1,24 +1,47 @@
-# TypedDict IR - The Best of Both Worlds
+# TypedDict - Zero-Overhead Type Hints
 
-DashML now uses **TypedDict** for type hints without runtime overhead.
+DashML uses **TypedDict** for type hints without runtime overhead. This design decision aligns with DashML's philosophy of being a build-time compiler rather than a runtime framework.
 
-## What We Have
+## Current Implementation
 
 ```python
 # core/types.py
-class DashMLSpec(TypedDict):
-    version: Union[str, int, float]
-    title: str
-    data: DataSpec
-    charts: List[ChartSpec]
+from typing import TypedDict, List, Union
+
+class StyleColors(TypedDict, total=False):
+    background: str
+    card: str
+    primary: str
+    text: str
+    buttons: str
+    secondary: List[str]
+
+class DataSpec(TypedDict):
+    type: str  # Currently: "csv"
+    path: str
 
 class ChartSpec(TypedDict, total=False):
+    id: str           # Required: Unique identifier
+    type: str         # Required: bar|line|scatter|pie|area|histogram|stacked_bar|grouped_bar
+    title: str        # Optional: Display title
+    x: str            # Required: X-axis column
+    y: str            # Required: Y-axis column (except histogram)
+    agg: str          # Optional: sum|mean|count
+    group: str        # Optional: Grouping column (required for stacked/grouped bars)
+
+class PageSpec(TypedDict, total=False):
     id: str
-    type: str
-    x: str
-    y: str
-    agg: str
     title: str
+    description: str
+    charts: List[ChartSpec]
+
+class DashMLSpec(TypedDict, total=False):
+    version: Union[str, int, float]
+    title: str
+    style: str
+    data: DataSpec
+    charts: List[ChartSpec]   # Legacy single-page format
+    pages: List[PageSpec]     # Multi-page format
 ```
 
 ## Benefits
@@ -27,161 +50,206 @@ class ChartSpec(TypedDict, total=False):
 
 ```python
 def build(self, spec: DashMLSpec) -> str:
-    spec["charts"]  # ← IDE autocompletes!
-    spec["data"]["path"]  # ← Type-checked!
-    spec["title"]  # ← Knows this exists!
+    spec["charts"]           # IDE autocompletes available keys
+    spec["data"]["path"]     # Type-checked nested access
+    spec["title"]            # IDE knows this field exists
+
+    for chart in spec["charts"]:
+        chart["type"]        # Autocomplete works in loops
+        chart["x"]           # Type hints propagate
 ```
 
-### 2. Type Checking (mypy/pyright) ✅
+### 2. Static Type Checking ✅
 
 ```bash
 $ mypy dashml_new/
-# Catches typos:
-spec["titel"]  # ❌ Error: Key "titel" not found
-spec["charts"][0]["typ"]  # ❌ Error: Key "typ" not found
+# Catches typos at development time:
+spec["titel"]                # ❌ Error: Key "titel" not found
+spec["charts"][0]["typ"]     # ❌ Error: Key "typ" not found
+chart["group"]               # ✅ OK: Optional field
 ```
 
 ### 3. Zero Runtime Cost ✅
 
 ```python
-# At runtime, it's just a dict!
-spec = {"version": "1.0", "title": "Dashboard", ...}
+# TypedDict is purely a type hint - at runtime it's just a dict
+spec = {"version": "1.0", "title": "Dashboard", "charts": [...]}
 type(spec)  # <class 'dict'>
 
-# No conversion, no overhead
-# TypedDict is purely for type checkers
+# No object instantiation, no conversion, no overhead
+# The parsed YAML dict flows directly through the system
 ```
 
-### 4. Easy Schema Evolution ✅
+### 4. No Conversion Layer ✅
 
 ```python
-# Week 1: Simple
-class ChartSpec(TypedDict):
-    id: str
-    type: str
+# WITHOUT TypedDict (if we used dataclasses):
+YAML → parse → dict → validate → convert to dataclass →
+       convert back to dict → transformer
 
-# Week 2: Add fields (no breaking changes!)
-class ChartSpec(TypedDict, total=False):  # total=False makes all optional
-    id: str
-    type: str
-    color: str  # New field!
-
-# Week 3: Refine
-class ChartSpec(TypedDict):
-    id: str  # Required
-    type: str  # Required
-    color: NotRequired[str]  # Optional (Python 3.11+)
+# WITH TypedDict (current approach):
+YAML → parse → dict → validate → transformer
+                ↑ Just annotate the type, zero overhead!
 ```
 
-### 5. No Dataclass Conversion ✅
+## Architecture Philosophy
 
-```python
-# WITHOUT TypedDict (dataclass IR):
-yaml_dict → validate → convert to dataclass → convert back to dict → transformer
-
-# WITH TypedDict:
-yaml_dict → validate → transformer
-#           ↑ Just cast the type hint, no conversion!
+```
+┌─────────────┐
+│  .dashml    │
+│  YAML file  │
+└──────┬──────┘
+       │ Parse (yaml.safe_load)
+       ▼
+┌─────────────┐
+│ Python dict │ ◄─── TypedDict annotates this as DashMLSpec
+└──────┬──────┘      (no runtime conversion!)
+       │ Validate
+       ▼
+┌─────────────┐
+│  Valid dict │ ◄─── Still just a dict!
+└──────┬──────┘
+       │ Transform
+       ▼
+┌─────────────┐
+│  Generated  │
+│    Code     │
+└─────────────┘
 ```
 
-## Why Not `Literal` for Enums?
+**Key insight:** TypedDict provides compile-time safety without runtime cost.
 
-We intentionally use `str` instead of `Literal["bar", "line", ...]` for values:
+## Why Not Use `Literal` for Chart Types?
+
+We intentionally use `str` instead of `Literal["bar", "line", ...]`:
 
 ```python
-# ❌ BAD - Prescriptive (limits extensibility)
+# ❌ BAD - Prescriptive (tight coupling)
+from typing import Literal
 ChartType = Literal["bar", "line", "scatter", "pie"]
-type: ChartType  # Can't add "histogram" without changing types!
+type: ChartType
 
-# ✅ GOOD - Descriptive (validator handles it)
-type: str  # Any string, validator checks if reasonable
+# Problem: Adding "histogram" requires changing types.py!
+
+# ✅ GOOD - Descriptive (loose coupling)
+type: str
+
+# Validation happens in validator.py, not type system
+# Transformers decide what they support independently
 ```
 
-**Why?**
-- DashML is **non-validating** - validation happens in the validator, not types
-- DashML is **extensible** - new chart types shouldn't require core changes
-- **Transformers** decide what they support, not the type system
+**Philosophy:**
+- **Types document structure**, not valid values
+- **Validator enforces semantics**, not the type system
+- **Transformers are plugins**, they handle their own supported types
 
-## Architecture
+## Evolution Without Breaking Changes
 
-```
-YAML v1 ──┐
-YAML v2 ──┤──→ Parser ──→ DashMLSpec (TypedDict) ──→ Transformers
-YAML v3 ──┘     Normalizes    ↑ Just a type hint!
-                             (still a dict at runtime)
-```
-
-**Key insight:** TypedDict is "IR as documentation" not "IR as data structure"
-
-## When to Upgrade to Dataclass IR
-
-Consider full dataclass IR when:
-- ❌ Team > 5 developers
-- ❌ Frequent bugs from dict typos
-- ❌ Need methods on spec objects (e.g., `spec.get_chart_by_id()`)
-- ❌ Complex transformations on the spec itself
-
-For DashML MVP/thesis: **TypedDict is perfect!**
-
-## Usage Example
+TypedDict's `total=False` allows schema evolution:
 
 ```python
-# Engine returns typed spec
-from core import DashMLEngine
-from core.types import DashMLSpec
+# Week 1: Initial implementation
+class ChartSpec(TypedDict, total=False):
+    id: str
+    type: str
+    x: str
+    y: str
 
-engine = DashMLEngine()
-spec: DashMLSpec = engine.load("dashboard.dashml")
+# Week 4: Add aggregation (backward compatible!)
+class ChartSpec(TypedDict, total=False):
+    id: str
+    type: str
+    x: str
+    y: str
+    agg: str  # New optional field - old code still works!
 
-# IDE knows the structure!
-for chart in spec["charts"]:  # ← Autocompletes
-    print(chart["id"])  # ← Type-checked
-    print(chart["type"])  # ← IDE suggests valid keys
+# Week 8: Add grouping (backward compatible!)
+class ChartSpec(TypedDict, total=False):
+    id: str
+    type: str
+    x: str
+    y: str
+    agg: str
+    group: str  # Another optional field - still backward compatible!
 ```
 
-## Migration to Dataclass IR (Future)
+Old `.dashml` files continue to work without changes!
 
-If you later decide you need full dataclass IR:
+## Practical Usage
+
+### In Transformers
 
 ```python
-# Add conversion layer
-@dataclass
-class DashMLSpecIR:
-    version: str
-    title: str
-    data: DataSpec
-    charts: List[Chart]
+from typing import Dict, Any
+from core.types import DashMLSpec, ChartSpec
 
-    @classmethod
-    def from_dict(cls, d: DashMLSpec) -> "DashMLSpecIR":
-        return cls(
-            version=str(d["version"]),
-            title=d["title"],
-            data=DataSpec(**d["data"]),
-            charts=[Chart(**c) for c in d["charts"]]
-        )
+class StreamlitTransformer(Transformer):
+    def build(self, spec: DashMLSpec) -> str:
+        # IDE autocompletes and type-checks all of this
+        title = spec.get("title", "Dashboard")
+        charts = spec.get("charts", [])
 
-# Engine
-def load(self, path: str) -> DashMLSpecIR:
-    dict_spec = self.parser.parse(path)
-    return DashMLSpecIR.from_dict(dict_spec)
+        for chart in charts:
+            chart_type = chart["type"]      # str
+            x = chart["x"]                  # str
+            y = chart["y"]                  # str
+            group = chart.get("group")      # str | None
+
+            # Type checker knows what fields exist
+            self._generate_chart(chart)
 ```
 
-But you probably won't need it! 🎉
+### In Validators
+
+```python
+from core.types import DashMLSpec, ChartSpec
+
+def validate(self, spec: DashMLSpec) -> None:
+    # TypedDict helps catch bugs during development
+    for chart in spec.get("charts", []):
+        if chart["type"] in ["stacked_bar", "grouped_bar"]:
+            if "group" not in chart:
+                raise ValidationError(f"Chart '{chart['id']}' requires 'group' field")
+```
+
+## When to Consider Full Dataclasses
+
+You might want full dataclass IR if:
+
+- ❌ You need methods on spec objects (e.g., `spec.get_chart_by_id()`)
+- ❌ You need deep spec transformations (e.g., macro expansion)
+- ❌ You need strict runtime validation beyond semantic checks
+- ❌ Team > 10 developers with many accidental dict access bugs
+
+For DashML's current scope: **TypedDict is perfect!**
+
+## Comparison: TypedDict vs Dataclass IR
+
+| Feature | TypedDict | Dataclass |
+|---------|-----------|-----------|
+| Runtime overhead | ✅ Zero | ❌ Object creation |
+| Conversion required | ✅ No | ❌ Yes (dict ↔ class) |
+| IDE autocomplete | ✅ Yes | ✅ Yes |
+| Type checking | ✅ Yes | ✅ Yes |
+| Schema evolution | ✅ Easy | ⚠️ More complex |
+| Methods on objects | ❌ No | ✅ Yes |
+| Runtime validation | ⚠️ Manual | ✅ Built-in |
+| Memory footprint | ✅ Minimal | ❌ Higher |
 
 ## Summary
 
-**TypedDict gives you:**
-- ✅ Type safety (compile-time errors)
-- ✅ IDE autocomplete
-- ✅ Zero runtime cost
-- ✅ Easy to evolve
-- ✅ No conversion overhead
+**TypedDict provides:**
+- ✅ Compile-time type safety
+- ✅ IDE autocomplete and IntelliSense
+- ✅ Zero runtime overhead
+- ✅ No conversion layer
+- ✅ Easy schema evolution
+- ✅ Perfect for build-time compilation
 
-**Without:**
-- ❌ Runtime object creation
-- ❌ Dict ↔ Dataclass conversion
-- ❌ Memory overhead
-- ❌ Breaking changes when schema evolves
+**Aligns with DashML philosophy:**
+- DashML is a **compiler**, not a runtime
+- Specs are **blueprints**, not data structures
+- Type hints are **documentation**, not validation
+- Transformers are **plugins**, not core
 
-**Perfect for DashML!** 🚀
+**TypedDict is the right choice for DashML!** 🚀

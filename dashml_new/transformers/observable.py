@@ -9,6 +9,8 @@ from .base import Transformer, TransformerError
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec, ChartSpec
 
+# TODO: [DRY] Move these constants to shared module (transformers/constants.py)
+# These are duplicated in streamlit.py, plotly.py, and observable.py
 # Chart type categorization by data requirements
 CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
 CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data points
@@ -78,7 +80,11 @@ class ObservablePlotTransformer(Transformer):
             raise TransformerError(f"Failed to generate Observable Plot HTML: {e}")
 
     def _load_style_config(self, style_path: str) -> Dict[str, Any]:
-        """Read .dmls file during build"""
+        """Read .dmls file during build
+
+        TODO: [DRY] This method is duplicated in streamlit.py, plotly.py, and observable.py
+        Move to base.Transformer or create a StyleMixin
+        """
         if not style_path:
             return {}
         try:
@@ -87,6 +93,9 @@ class ObservablePlotTransformer(Transformer):
                 with open(path, 'r', encoding='utf-8') as f:
                     return yaml.safe_load(f) or {}
         except Exception:
+            # TODO: [CRITICAL] Silent exception handling - use specific exceptions and logging
+            # Fix: except (FileNotFoundError, yaml.YAMLError) as e:
+            #         logger.warning(f"Could not load style {style_path}: {e}")
             pass
         return {}
 
@@ -384,6 +393,8 @@ class ObservablePlotTransformer(Transformer):
         mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name)
 
         # Detect if x axis is temporal (common date field names)
+        # TODO: [Magic Values] Extract temporal field names to module-level constant
+        # Fix: TEMPORAL_FIELD_NAMES = frozenset(['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at'])
         temporal_fields = ['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at']
         is_temporal_x = x.lower() in temporal_fields
 
@@ -489,7 +500,11 @@ class ObservablePlotTransformer(Transformer):
             ).map(([{x}, {y}]) => ({{ {x}, {y} }}))"""
 
     def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str) -> str:
-        """Generate JavaScript code to aggregate data with grouping"""
+        """Generate JavaScript code to aggregate data with grouping
+
+        TODO: [DRY] This if/elif chain is duplicated from _get_aggregation_code
+        Extract to a helper method: _get_agg_expression(agg: str, y: str) -> str
+        """
         if agg == "sum":
             agg_expr = f"d3.sum(v, d => d['{y}'])"
         elif agg == "mean":
@@ -513,7 +528,12 @@ class ObservablePlotTransformer(Transformer):
             )"""
 
     def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str) -> str:
-        """Generate Observable Plot mark specification"""
+        """Generate Observable Plot mark specification
+
+        TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
+        Consider splitting into separate methods per chart type
+        Fix: _get_bar_mark(), _get_line_mark(), _get_scatter_mark(), etc.
+        """
         if chart_type == "bar":
             return f"""marks: [
                     Plot.barY(data_{data_var}, {{

@@ -10,6 +10,8 @@ from .base import Transformer, TransformerError
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec
 
+# TODO: [DRY] Move these constants to shared module (transformers/constants.py)
+# These are duplicated in streamlit.py, plotly.py, and observable.py
 # Chart type categorization by data requirements
 CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
 CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data points
@@ -135,6 +137,9 @@ class PlotlyTransformer(Transformer):
                         "secondary": loaded.get("secondary", [])
                     }
         except Exception as e:
+            # TODO: [CRITICAL] Use specific exceptions and proper logging instead of bare except + print
+            # Fix: except (FileNotFoundError, yaml.YAMLError) as e:
+            #         logger.warning(f"Failed to load style {style_path}: {e}")
             print(f"Warning: Failed to load style {style_path}: {e}")
 
         return defaults
@@ -147,6 +152,9 @@ class PlotlyTransformer(Transformer):
         primary = colors["primary"]
 
         # If background is dark (simple heuristic), make shadow lighter or different
+        # TODO: [Complexity] Complex conditional for dark color detection - extract to helper function
+        # Fix: def is_dark_color(hex_color: str) -> bool:
+        #          return hex_color.startswith("#") and len(hex_color) == 7 and int(hex_color[1:3], 16) < 100
         is_dark = bg.startswith("#") and len(bg) == 7 and int(bg[1:3], 16) < 100
         shadow = "0 2px 4px rgba(255,255,255,0.1)" if is_dark else "0 2px 4px rgba(0,0,0,0.1)"
 
@@ -380,6 +388,10 @@ class PlotlyTransformer(Transformer):
         """
         Generate chart rendering function.
         Updated to use theme colors for Plotly Layout.
+
+        TODO: [SRP] This method is very long (~300 lines) and handles multiple chart types
+        Consider splitting into separate render functions per chart type
+        Fix: _render_bar_chart(), _render_line_chart(), etc.
         """
         div_id_logic = "chart.id" if not multi_page else "'chart-' + chart.id"
         if not multi_page:

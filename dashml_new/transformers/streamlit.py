@@ -9,6 +9,8 @@ from .base import Transformer, TransformerError
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec, ChartSpec
 
+# TODO: [DRY] Move these constants to shared module (transformers/constants.py)
+# These are duplicated in streamlit.py, plotly.py, and observable.py
 # Chart type categorization by data requirements
 CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
 CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data points
@@ -31,6 +33,9 @@ class StreamlitTransformer(Transformer):
     def build(self, spec: "DashMLSpec") -> str:
         """
         Generate Streamlit code from DashML spec.
+
+        TODO: [SRP] This method does too much - handles imports, config, CSS, data loading, charts.
+        Consider splitting into smaller methods like _assemble_code()
         """
         try:
             self.clear_warnings()  # Clear warnings from previous builds
@@ -104,6 +109,9 @@ class StreamlitTransformer(Transformer):
                 with open(path, 'r', encoding='utf-8') as f:
                     return yaml.safe_load(f) or {}
         except Exception:
+            # TODO: [CRITICAL] Silent exception handling - use specific exceptions and logging
+            # Fix: except (FileNotFoundError, yaml.YAMLError) as e:
+            #         logger.warning(f"Could not load style {style_path}: {e}")
             pass
         return {}
 
@@ -170,6 +178,9 @@ import altair as alt"""
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
 
         # Extract colors
+        # TODO: [Magic Values] Extract hardcoded defaults to module-level constants
+        # Fix: DEFAULT_PRIMARY_COLOR = "#29b5e8"
+        #      DEFAULT_SECONDARY_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
         primary_color = colors.get("primary", "#29b5e8")
         secondary_colors = colors.get("secondary", ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
 
@@ -179,6 +190,9 @@ import altair as alt"""
 
         # Aggregation (only for chart types that need it)
         if chart_type in CHARTS_NEED_AGGREGATION:
+            # TODO: [DRY] Replace if/elif chain with dictionary lookup
+            # Fix: AGG_METHODS = {"sum": "sum", "mean": "mean", "count": "count"}
+            #      agg_method = AGG_METHODS.get(agg, "sum")
             if agg == "sum":
                 agg_method = "sum"
             elif agg == "mean":

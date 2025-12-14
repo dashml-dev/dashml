@@ -12,6 +12,9 @@ class TransformerRegistry:
     Transformers can be registered manually or auto-discovered from the transformers package.
     """
 
+    # TODO: [Immutability] Mutable class variable shared across all instances
+    # This can cause unexpected behavior if modified at runtime
+    # Fix: Use __init_subclass__ or consider making this a module-level variable
     _transformers: Dict[str, Type[Transformer]] = {}
 
     @classmethod
@@ -25,6 +28,9 @@ class TransformerRegistry:
         Raises:
             ValueError: If transformer with same name already registered
         """
+        # TODO: [Design] Creating temporary instance just to get name is wasteful
+        # Consider making 'name' a class attribute instead of property
+        # Fix: class StreamlitTransformer: name = "streamlit"  # class attribute
         # Create temporary instance to get name
         instance = transformer_class()
         name = instance.name
