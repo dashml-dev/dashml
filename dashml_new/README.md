@@ -266,6 +266,58 @@ When naming components and concepts, DashML follows this hierarchy:
 - Full theme support
 - Custom D3 pie charts (Observable Plot doesn't have native pie support)
 
+### Superset Transformer
+
+**Output**: None - creates dashboard directly in Superset!
+**Best for**: Enterprise BI dashboards, SQL-based analytics, team collaboration
+**Features**:
+- **Direct dashboard creation** - no code generation, no intermediate steps
+- Automatic CSV upload to Superset
+- Dashboard deduplication (updates existing dashboards)
+- Automatic cleanup of old charts
+- Full support for all 8 DashML chart types using modern ECharts visualizations
+
+**Requirements**:
+- Running Superset instance (e.g., http://localhost:8088)
+- Superset credentials (username/password)
+- CSV file accessible at the path specified in the DashML spec
+- `requests` library: `pip install requests`
+
+**Usage**:
+```bash
+# Single command - creates dashboard immediately!
+python -m dashml_new.cli build dashboard.dashml \
+  --target superset \
+  --superset-user admin \
+  --superset-password admin
+```
+
+**What happens:**
+1. ✓ Authenticates with Superset
+2. ✓ Uploads CSV automatically (or finds existing dataset)
+3. ✓ Creates all charts with correct ECharts viz types
+4. ✓ Creates/updates dashboard with proper layout
+5. ✓ Associates charts with dashboard
+6. 🎉 Prints dashboard URL - open in browser!
+
+**Chart Type Mappings**:
+- `bar` → `echarts_timeseries` (bar)
+- `line` → `echarts_timeseries` (line)
+- `area` → `echarts_area`
+- `histogram` → `histogram_v2`
+- `scatter` → `scatter`
+- `pie` → `pie`
+- `stacked_bar` → `echarts_timeseries` (stacked)
+- `grouped_bar` → `echarts_timeseries` (grouped)
+
+**Key Benefits**:
+- ⚡ Immediate execution - no intermediate Python scripts
+- ✅ Automatic CSV upload
+- ✅ Dashboard deduplication (updates instead of creating duplicates)
+- ✅ Perfect for CI/CD pipelines
+- ✅ Idempotent - run multiple times safely
+- ✅ Modern ECharts visualizations for better performance
+
 ## Command-Line Interface
 
 ```bash
@@ -273,20 +325,27 @@ When naming components and concepts, DashML follows this hierarchy:
 python -m dashml_new.cli <input.dashml> --backend <backend> --output <output_file>
 
 # Examples
-python -m dashml_new.cli dashboard.dashml --backend streamlit --output app.py
-python -m dashml_new.cli dashboard.dashml --backend plotly --output index.html
-python -m dashml_new.cli dashboard.dashml --backend observable --output dashboard.html
+python -m dashml_new.cli build dashboard.dashml --target streamlit --output app.py
+python -m dashml_new.cli build dashboard.dashml --target plotly --output index.html
+python -m dashml_new.cli build dashboard.dashml --target observable --output dashboard.html
+
+# Superset - no output file needed, creates dashboard directly!
+python -m dashml_new.cli build dashboard.dashml --target superset \
+  --superset-user admin --superset-password admin
 
 # With run flag (Streamlit only)
-python -m dashml_new.cli dashboard.dashml --backend streamlit --output app.py --run
+python -m dashml_new.cli build dashboard.dashml --target streamlit --output app.py --run
 ```
 
 ### Arguments
 
 - `input_file`: Path to `.dashml` specification file
-- `--backend`: Target platform (`streamlit`, `plotly`, or `observable`)
-- `--output`: Output file path
-- `--run`: (Streamlit only) Automatically run `streamlit run` after generation
+- `--target`, `-t`: Target platform (`streamlit`, `plotly`, `observable`, or `superset`)
+- `--output`, `-o`: Output file path (not needed for `superset`)
+- `--run`, `-r`: (Streamlit only) Automatically run `streamlit run` after generation
+- `--superset-url`: Superset instance URL (default: `http://localhost:8088`)
+- `--superset-user`: Superset username (required for `superset` target)
+- `--superset-password`: Superset password (required for `superset` target)
 
 ## Creating Custom Transformers
 

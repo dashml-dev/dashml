@@ -12,6 +12,7 @@ from transformers import TransformerRegistry
 from transformers.streamlit import StreamlitTransformer
 from transformers.plotly import PlotlyTransformer
 from transformers.observable import ObservablePlotTransformer
+from transformers.superset import SupersetTransformer
 
 
 def register_builtin_transformers():
@@ -19,6 +20,7 @@ def register_builtin_transformers():
     TransformerRegistry.register(StreamlitTransformer)
     TransformerRegistry.register(PlotlyTransformer)
     TransformerRegistry.register(ObservablePlotTransformer)
+    TransformerRegistry.register(SupersetTransformer)
 
 
 def build_command(args):
@@ -55,7 +57,16 @@ def build_command(args):
 
     # Get transformer
     try:
-        transformer = TransformerRegistry.get(target)
+        # Special handling for Superset transformer - pass credentials
+        if target == "superset":
+            from transformers.superset import SupersetTransformer
+            transformer = SupersetTransformer(
+                superset_url=args.superset_url,
+                username=args.superset_user,
+                password=args.superset_password
+            )
+        else:
+            transformer = TransformerRegistry.get(target)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -78,18 +89,19 @@ def build_command(args):
         for warning in warnings:
             print(f"  - {warning}")
 
-    # Write output
-    if output_path:
-        try:
-            Path(output_path).write_text(code, encoding="utf-8")
-            print(f"✓ Output written to: {output_path}")
-        except Exception as e:
-            print(f"Error writing output: {e}", file=sys.stderr)
-            return 1
-    else:
-        # Print to stdout
-        print("\n--- Generated Code ---")
-        print(code)
+    # Write output (skip for Superset - it doesn't generate code)
+    if target != "superset":
+        if output_path:
+            try:
+                Path(output_path).write_text(code, encoding="utf-8")
+                print(f"✓ Output written to: {output_path}")
+            except Exception as e:
+                print(f"Error writing output: {e}", file=sys.stderr)
+                return 1
+        else:
+            # Print to stdout
+            print("\n--- Generated Code ---")
+            print(code)
 
     # Run the dashboard if --run flag is set
     if args.run and output_path:
@@ -279,6 +291,19 @@ Examples:
         "--run", "-r",
         action="store_true",
         help="Run the dashboard after building (requires --output)"
+    )
+    build_parser.add_argument(
+        "--superset-url",
+        default="http://localhost:8088",
+        help="Superset instance URL (for superset backend only)"
+    )
+    build_parser.add_argument(
+        "--superset-user",
+        help="Superset username (for superset backend only)"
+    )
+    build_parser.add_argument(
+        "--superset-password",
+        help="Superset password (for superset backend only)"
     )
 
     # List command
