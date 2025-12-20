@@ -1,0 +1,365 @@
+# How to Run DashML Apps (New Architecture)
+
+## 🎯 Quick Start
+
+### Run Everything at Once
+
+```bash
+./run_all.sh
+```
+
+This starts:
+- ✅ Streamlit app at http://localhost:8501
+- ✅ Plotly dashboard at http://localhost:8000/generated_dashboard.html
+
+Both use the **new architecture** (compiler → IR → backend).
+
+---
+
+## 🐍 Streamlit (New Architecture)
+
+### Basic Run
+
+```bash
+streamlit run app_new.py
+```
+
+**What happens:**
+1. User opens app
+2. App compiles `.dashml` to IR (DashMLCompiler)
+3. IR passed to StreamlitBackend
+4. Backend loads data and renders charts
+5. **Core never touches data!**
+
+### With Debugging
+
+```bash
+streamlit run app_new.py
+```
+
+Then in the sidebar, click "View IR" to see the semantic model.
+
+---
+
+## 📊 Plotly/JavaScript (New Architecture)
+
+The new architecture uses **code generation** for Plotly.
+
+### Option 1: Generate and Serve (Recommended)
+
+```bash
+# Step 1: Generate HTML from .dashml
+python dashml_cli.py generate dashml_example.dashml -b plotly -o dashboard.html
+
+# Step 2: Serve it
+python -m http.server 8000
+
+# Step 3: Open in browser
+open http://localhost:8000/dashboard.html
+```
+
+**What happens:**
+1. Compiler reads `.dashml` → generates IR
+2. PlotlyBackend reads IR → generates standalone HTML
+3. HTML contains:
+   - IR embedded as JSON
+   - JavaScript that loads data in browser
+   - Plotly rendering code
+4. **Browser handles all data loading!**
+
+### Option 2: Use Code Generator Script
+
+```bash
+python dashml_generate.py dashml_example.dashml --backend plotly -o my_dashboard.html
+open my_dashboard.html
+```
+
+### Option 3: Dev Mode with Hot Reload
+
+```bash
+python dashml_cli.py dev dashml_example.dashml -b plotly
+```
+
+Edit `.dashml` file → HTML regenerates automatically!
+
+---
+
+## 🔄 Development Workflow
+
+### For Streamlit Development
+
+```bash
+# Terminal 1: Run Streamlit (has auto-reload built-in)
+streamlit run app_new.py
+
+# Terminal 2: Edit .dashml files
+vim dashml_example.dashml
+
+# Streamlit auto-reloads when you save!
+```
+
+### For Plotly Development
+
+```bash
+# Terminal 1: Dev mode (watches .dashml and regenerates)
+python dashml_cli.py dev dashml_example.dashml -b plotly
+
+# Terminal 2: Serve generated file
+python -m http.server 8000
+
+# Edit .dashml, see browser notification to refresh
+```
+
+---
+
+## 🧪 Testing the Architecture
+
+### Run Test Suite
+
+```bash
+python test_new_architecture.py
+```
+
+This will:
+- ✅ Compile `.dashml` to IR
+- ✅ Verify core NEVER loads data
+- ✅ Generate Streamlit code → `generated_streamlit_app.py`
+- ✅ Generate Plotly HTML → `generated_dashboard.html`
+- ✅ Prove backends handle data
+
+### Run Generated Streamlit App
+
+```bash
+# Test suite generates this:
+streamlit run generated_streamlit_app.py
+```
+
+This is pure generated code - no DashML runtime needed!
+
+---
+
+## 📦 What's Running Where?
+
+| App | Port | URL | Architecture |
+|-----|------|-----|--------------|
+| Streamlit (new) | 8501 | http://localhost:8501 | Compiler → IR → Backend |
+| Plotly (generated) | 8000 | http://localhost:8000/generated_dashboard.html | Compiler → IR → HTML |
+| Old Streamlit* | 8501 | - | Legacy (deprecated) |
+| Old Plotly* | 8000 | http://localhost:8000/index.html | Legacy (deprecated) |
+
+*Old architecture files still exist for reference but should use new architecture going forward.
+
+---
+
+## 🔧 CLI Commands
+
+### Validate .dashml File
+
+```bash
+python dashml_cli.py validate dashml_example.dashml
+```
+
+### Compile to IR (JSON)
+
+```bash
+python dashml_cli.py compile dashml_example.dashml
+```
+
+Output shows pure semantic IR - no data!
+
+### Generate Backend Code
+
+```bash
+# Streamlit Python code
+python dashml_cli.py generate dashml_example.dashml -b streamlit -o my_app.py
+
+# Plotly HTML
+python dashml_cli.py generate dashml_example.dashml -b plotly -o my_dashboard.html
+```
+
+### Development Mode
+
+```bash
+# Watch and regenerate on changes
+python dashml_cli.py dev dashml_example.dashml -b plotly
+```
+
+---
+
+## 🎯 Architecture Comparison
+
+### Old Architecture (Deprecated)
+
+```python
+# Transformer loads data (❌ Core touches data)
+transformer = DashMLTransformer("dashboard.yaml")
+transformer.load_data()  # Core loads data
+df = transformer.df      # Core has DataFrame
+renderer.render(chart, df)  # Passes data around
+```
+
+### New Architecture (Current)
+
+```python
+# Core compiles to IR (✅ Core NEVER touches data)
+compiler = DashMLCompiler()
+ir = compiler.compile("dashboard.dashml")  # Pure semantics
+
+# Backend handles data (✅ Proper separation)
+backend = StreamlitBackend()
+backend.execute(ir)  # Backend loads data itself
+```
+
+---
+
+## 📁 File Structure
+
+```
+dashml-playground/
+├── dashml_cli.py                 # CLI tool (NEW)
+├── dashml_generate.py            # Code generator (NEW)
+├── test_new_architecture.py      # Test suite (NEW)
+│
+├── app_new.py                    # Streamlit app (NEW arch)
+├── app.py                        # Streamlit app (OLD arch)
+│
+├── generated_dashboard.html      # Generated by Plotly backend
+├── generated_streamlit_app.py    # Generated by Streamlit backend
+│
+├── index.html                    # Old Plotly demo
+├── example_integration.html      # Old integration demo
+│
+└── run_all.sh                    # Run everything (NEW)
+```
+
+---
+
+## 🚀 Recommended: Run Everything
+
+```bash
+./run_all.sh
+```
+
+Opens:
+- **Streamlit**: http://localhost:8501
+- **Plotly**: http://localhost:8000/generated_dashboard.html
+
+Both powered by the same `.dashml` spec through the new compiler architecture!
+
+---
+
+## 💡 Pro Tips
+
+### 1. Use New Architecture for Development
+
+Always use:
+- `app_new.py` (not `app.py`)
+- Generated HTML (not old `index.html`)
+
+### 2. Generate Production Artifacts
+
+```bash
+# For production Streamlit
+python dashml_cli.py generate dashboard.dashml -b streamlit -o production_app.py
+
+# For production Plotly
+python dashml_cli.py generate dashboard.dashml -b plotly -o production.html
+```
+
+Deploy these files - no DashML runtime needed!
+
+### 3. Debug with IR
+
+View the IR to understand what the compiler generated:
+
+```bash
+python dashml_cli.py compile dashboard.dashml | jq .
+```
+
+### 4. Test Before Deploy
+
+```bash
+python test_new_architecture.py
+```
+
+Ensures everything works before deployment.
+
+---
+
+## 🎓 For Your Thesis Demo
+
+**Show the pipeline:**
+
+```bash
+# Terminal 1: Show compilation
+python dashml_cli.py compile dashml_example.dashml
+
+# Terminal 2: Run Streamlit
+streamlit run app_new.py
+
+# Terminal 3: Generate Plotly
+python dashml_cli.py generate dashml_example.dashml -b plotly -o demo.html
+```
+
+**Key talking points:**
+- ✅ Same `.dashml` spec
+- ✅ Different backends (Streamlit, Plotly)
+- ✅ Core never loads data
+- ✅ Backends handle execution
+- ✅ Code generation works
+
+---
+
+## ❓ Troubleshooting
+
+### "Module not found: dashml.core"
+
+Solution:
+```bash
+# Make sure you're in the playground directory
+cd /Users/dawid.olejniczak/code/cdv/dashml/playground
+
+# Run from there
+streamlit run app_new.py
+```
+
+### "File not found: dashml_example.dashml"
+
+Solution:
+```bash
+# Make sure .dashml file exists
+ls *.dashml
+
+# Use correct path
+python dashml_cli.py compile dashml_example.dashml
+```
+
+### Ports already in use
+
+Solution:
+```bash
+# Kill existing processes
+lsof -ti:8501 | xargs kill -9  # Streamlit
+lsof -ti:8000 | xargs kill -9  # HTTP server
+
+# Then restart
+./run_all.sh
+```
+
+---
+
+## ✅ Quick Reference
+
+| Task | Command |
+|------|---------|
+| Run Streamlit | `streamlit run app_new.py` |
+| Generate Plotly | `python dashml_cli.py generate dashboard.dashml -b plotly -o out.html` |
+| Run both | `./run_all.sh` |
+| Test | `python test_new_architecture.py` |
+| Validate | `python dashml_cli.py validate dashboard.dashml` |
+| Dev mode | `python dashml_cli.py dev dashboard.dashml` |
+
+---
+
+**Everything is ready to run! Just choose your preferred method above.** 🚀
+
