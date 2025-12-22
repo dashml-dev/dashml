@@ -6,6 +6,10 @@ from pathlib import Path
 import yaml
 import json
 import time
+try:
+    import prison
+except ImportError:
+    prison = None
 from .base import Transformer, TransformerError
 
 if TYPE_CHECKING:
@@ -135,13 +139,14 @@ class SupersetTransformer(Transformer):
             # Create or update charts
             print("\nCreating/updating charts...")
             chart_ids = []
+            all_label_colors = {}  # Collect all label->color mappings from all charts
 
             if pages:
                 for page in pages:
                     page_id = page["id"]
                     print(f"\nProcessing page: {page.get('title', page_id)}")
                     for chart in page.get("charts", []):
-                        chart_id = self._create_or_update_chart(
+                        chart_id, label_colors = self._create_or_update_chart(
                             f"{page_id}_{chart['id']}",
                             chart,
                             style_config,
@@ -149,11 +154,15 @@ class SupersetTransformer(Transformer):
                         )
                         if chart_id:
                             chart_ids.append(chart_id)
+                            if label_colors:
+                                all_label_colors.update(label_colors)
             else:
                 for chart in charts:
-                    chart_id = self._create_or_update_chart(chart["id"], chart, style_config, existing_chart_map)
+                    chart_id, label_colors = self._create_or_update_chart(chart["id"], chart, style_config, existing_chart_map)
                     if chart_id:
                         chart_ids.append(chart_id)
+                        if label_colors:
+                            all_label_colors.update(label_colors)
 
             if not chart_ids:
                 raise TransformerError("No charts were created successfully")
@@ -164,6 +173,9 @@ class SupersetTransformer(Transformer):
 
             if not dashboard_id:
                 raise TransformerError("Failed to create dashboard")
+
+            # Set dashboard colors from theme
+            self._set_dashboard_colors(dashboard_id, style_config, all_label_colors)
 
             dashboard_url = f"{self.superset_url}/superset/dashboard/{dashboard_id}/"
             success_msg = f"\n🎉 Dashboard created successfully!\n\nURL: {dashboard_url}\n"
@@ -400,6 +412,34 @@ class SupersetTransformer(Transformer):
             print(f"✗ Error uploading CSV: {e}")
             return False
 
+    def _get_unique_values(self, column: str) -> list:
+        """Query the dataset to get unique values for a column"""
+        try:
+            # Query the dataset via the chart data API
+            query_payload = {
+                "datasource": {"id": self.dataset_id, "type": "table"},
+                "queries": [{
+                    "columns": [column],
+                    "groupby": [column],
+                    "metrics": [],
+                    "row_limit": 1000,
+                }],
+                "result_format": "json",
+                "result_type": "full"
+            }
+
+            url = f"{self.superset_url}/api/v1/chart/data"
+            response = self.session.post(url, headers=self._get_headers(), json=query_payload)
+
+            if response.status_code == 200:
+                result = response.json()
+                if "result" in result and len(result["result"]) > 0:
+                    data = result["result"][0].get("data", [])
+                    return [row.get(column) for row in data if row.get(column) is not None]
+        except Exception:
+            pass
+        return []
+
     def _find_existing_dashboard(self, title: str) -> Optional[int]:
         """Find existing dashboard by title"""
         url = f"{self.superset_url}/api/v1/dashboard/"
@@ -414,8 +454,45 @@ class SupersetTransformer(Transformer):
             pass
         return None
 
-    def _create_or_update_chart(self, chart_id: str, chart: Dict[str, Any], style_config: Dict[str, Any] = None, existing_chart_map: Dict[str, int] = None) -> Optional[int]:
-        """Create or update a chart in Superset"""
+    def _set_dashboard_colors(self, dashboard_id: int, style_config: Dict[str, Any], label_colors: Dict[str, str] = None) -> None:
+        """Set dashboard-level color configuration from theme"""
+        if not style_config:
+            return
+
+        colors = style_config.get("colors", {})
+        secondary_colors = colors.get("secondary", [])
+
+        if not secondary_colors or not isinstance(secondary_colors, list):
+            return
+
+        # Build color configuration for dashboard
+        color_config = {
+            "color_scheme": "supersetColors",  # Base scheme
+            "label_colors": label_colors or {},  # Label-to-color mappings from charts
+            "shared_label_colors": secondary_colors,  # Our custom colors from theme
+            "map_label_colors": label_colors or {},  # Map labels to colors
+            "color_scheme_domain": list(label_colors.keys()) if label_colors else []  # All labels
+        }
+
+        try:
+            url = f"{self.superset_url}/api/v1/dashboard/{dashboard_id}/colors"
+            response = self.session.put(url, headers=self._get_headers(), json=color_config)
+
+            if response.status_code == 200:
+                if label_colors:
+                    print(f"✓ Applied theme colors ({len(label_colors)} categories mapped)")
+                else:
+                    print(f"✓ Applied theme colors")
+            else:
+                print(f"⚠ Warning: Could not apply dashboard colors ({response.status_code})")
+        except Exception as e:
+            print(f"⚠ Warning: Could not apply dashboard colors: {e}")
+
+    def _create_or_update_chart(self, chart_id: str, chart: Dict[str, Any], style_config: Dict[str, Any] = None, existing_chart_map: Dict[str, int] = None):
+        """Create or update a chart in Superset
+
+        Returns: Tuple of (chart_id, label_colors_dict)
+        """
         if existing_chart_map is None:
             existing_chart_map = {}
 
@@ -443,16 +520,35 @@ class SupersetTransformer(Transformer):
             "adhoc_filters": [],
         }
 
-        # Apply custom color scheme from DashML theme
-        if "secondary" in colors and isinstance(colors["secondary"], list):
-            # Use custom categorical color scheme
+        # Apply custom color scheme from DashML theme via label_colors
+        params["color_scheme"] = "supersetColors"  # Use neutral base scheme
+        params["label_colors"] = {}
+
+        if "secondary" in colors and isinstance(colors["secondary"], list) and len(colors["secondary"]) > 0:
             custom_colors = colors["secondary"]
-            # Superset doesn't have a way to define fully custom schemes via API,
-            # but we can use the closest built-in or set label colors
-            params["color_scheme"] = "lyftColors"  # A colorful scheme
-            # Note: Full custom color application would require creating a custom theme in Superset UI
-        else:
-            params["color_scheme"] = "supersetColors"
+
+            # Determine which column contains the categories we want to color
+            category_column = None
+            if chart_type == "pie":
+                category_column = x  # Pie chart groups by x
+            elif chart_type in ["stacked_bar", "grouped_bar"] and group:
+                category_column = group  # Stacked/grouped bar uses group column
+            elif chart_type in ["bar", "line", "area"] and group:
+                category_column = group
+
+            # If we have a category column, query the dataset to get unique values
+            if category_column:
+                try:
+                    unique_values = self._get_unique_values(category_column)
+                    if unique_values:
+                        # Assign colors from theme to each unique value (cycling if needed)
+                        for i, value in enumerate(unique_values):
+                            color_index = i % len(custom_colors)
+                            color = custom_colors[color_index]
+                            params["label_colors"][str(value)] = color
+                except Exception:
+                    # If we can't get unique values, just use the base color scheme
+                    pass
 
         # Add metrics only for chart types that use them
         if chart_type in ["bar", "line", "stacked_bar", "grouped_bar"]:
@@ -557,6 +653,9 @@ class SupersetTransformer(Transformer):
             })
         }
 
+        # Extract label_colors to return
+        chart_label_colors = params.get("label_colors", {})
+
         try:
             if existing_chart_id:
                 # Update existing chart
@@ -564,7 +663,7 @@ class SupersetTransformer(Transformer):
                 response = self.session.put(url, headers=self._get_headers(), json=chart_config)
                 response.raise_for_status()
                 print(f"✓ Updated chart: {title} (ID: {existing_chart_id})")
-                return existing_chart_id
+                return existing_chart_id, chart_label_colors
             else:
                 # Create new chart
                 url = f"{self.superset_url}/api/v1/chart/"
@@ -572,11 +671,11 @@ class SupersetTransformer(Transformer):
                 response.raise_for_status()
                 created_chart_id = response.json().get("id")
                 print(f"✓ Created chart: {title} (ID: {created_chart_id})")
-                return created_chart_id
+                return created_chart_id, chart_label_colors
         except Exception as e:
             action = "update" if existing_chart_id else "create"
             print(f"✗ Failed to {action} chart {title}: {e}")
-            return None
+            return None, {}
 
     def _create_or_update_dashboard(self, title: str, chart_ids: list) -> Optional[int]:
         """Create dashboard or update existing one"""
@@ -603,19 +702,38 @@ class SupersetTransformer(Transformer):
                 detail_response = self.session.get(detail_url, headers=self._get_headers())
                 old_chart_ids = []
                 if detail_response.status_code == 200:
-                    dashboard_result = detail_response.json().get("result", {})
-                    # Extract chart IDs from position_json (CHART-123 format)
-                    position_json_str = dashboard_result.get("position_json", "{}")
-                    position_json_data = json.loads(position_json_str)
-                    old_chart_ids = []
-                    for key, value in position_json_data.items():
-                        if key.startswith("CHART-"):
-                            # Get the actual chart ID from the meta.chartId field
-                            if isinstance(value, dict) and "meta" in value:
-                                chart_id = value["meta"].get("chartId")
-                                if chart_id:
-                                    old_chart_ids.append(chart_id)
-                    print(f"  DEBUG: Extracted {len(old_chart_ids)} chart IDs from position_json: {old_chart_ids[:6]}")
+                    # Query the chart API to find ALL charts associated with this dashboard
+                    # This is more reliable than parsing position_json which may not include all charts
+                    try:
+                        # Use RISON filter to find charts where dashboard ID matches
+                        # Fetch with large page size to get all charts at once
+                        filter_params = {"filters": [{"col": "dashboards", "opr": "rel_m_m", "value": existing_dashboard_id}], "page_size": 1000}
+                        filter_rison = prison.dumps(filter_params) if prison else None
+
+                        if filter_rison:
+                            charts_url = f"{self.superset_url}/api/v1/chart/?q={filter_rison}"
+                        else:
+                            # Fallback without page_size if prison not available
+                            charts_url = f"{self.superset_url}/api/v1/chart/"
+
+                        charts_response = self.session.get(charts_url, headers=self._get_headers())
+
+                        if charts_response.status_code == 200:
+                            charts_data = charts_response.json()
+                            old_chart_ids = [chart["id"] for chart in charts_data.get("result", [])]
+                            print(f"  Found {len(old_chart_ids)} existing charts associated with dashboard")
+                    except Exception as e:
+                        print(f"  Warning: Could not fetch associated charts: {e}")
+                        # Fallback to position_json parsing
+                        dashboard_result = detail_response.json().get("result", {})
+                        position_json_str = dashboard_result.get("position_json", "{}")
+                        position_json_data = json.loads(position_json_str)
+                        for key, value in position_json_data.items():
+                            if key.startswith("CHART-"):
+                                if isinstance(value, dict) and "meta" in value:
+                                    chart_id = value["meta"].get("chartId")
+                                    if chart_id:
+                                        old_chart_ids.append(chart_id)
 
                 # Build position_json with NEW chart layout
                 position_json = self._build_position_json(chart_ids)
@@ -641,17 +759,36 @@ class SupersetTransformer(Transformer):
                     charts_to_remove = [cid for cid in old_chart_ids if cid not in chart_ids]
                     if charts_to_remove:
                         print(f"  Removing {len(charts_to_remove)} old/duplicate charts...")
-                        removed_count = 0
-                        for chart_id in charts_to_remove:
-                            try:
-                                delete_url = f"{self.superset_url}/api/v1/chart/{chart_id}"
-                                delete_response = self.session.delete(delete_url, headers=self._get_headers())
-                                if delete_response.status_code in [200, 204]:
-                                    removed_count += 1
-                            except Exception:
-                                pass  # Continue even if one deletion fails
-                        if removed_count > 0:
-                            print(f"  ✓ Removed {removed_count} old/duplicate charts")
+                        try:
+                            # Use bulk delete with RISON encoding
+                            if prison:
+                                # Use prison library for RISON encoding
+                                rison_encoded = prison.dumps(charts_to_remove)
+                            else:
+                                # Manual RISON encoding: [1,2,3] -> !(1,2,3)
+                                rison_encoded = f"!({','.join(map(str, charts_to_remove))})"
+
+                            delete_url = f"{self.superset_url}/api/v1/chart/?q={rison_encoded}"
+                            delete_response = self.session.delete(delete_url, headers=self._get_headers())
+
+                            if delete_response.status_code == 200:
+                                print(f"  ✓ Removed {len(charts_to_remove)} old/duplicate charts")
+                            else:
+                                print(f"  ✗ Bulk delete failed ({delete_response.status_code}), trying individual deletes...")
+                                # Fallback to individual deletes
+                                removed_count = 0
+                                for chart_id in charts_to_remove:
+                                    try:
+                                        single_delete_url = f"{self.superset_url}/api/v1/chart/{chart_id}"
+                                        single_response = self.session.delete(single_delete_url, headers=self._get_headers())
+                                        if single_response.status_code in [200, 204]:
+                                            removed_count += 1
+                                    except Exception:
+                                        pass
+                                if removed_count > 0:
+                                    print(f"  ✓ Removed {removed_count} old/duplicate charts")
+                        except Exception as e:
+                            print(f"  ✗ Failed to delete old charts: {e}")
 
                 # Now associate only the current charts with the dashboard
                 for chart_id in chart_ids:
