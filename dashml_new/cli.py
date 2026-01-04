@@ -6,6 +6,7 @@ import sys
 import argparse
 import subprocess
 import threading
+import json
 from pathlib import Path
 from core import DashMLEngine, ValidationError, DashMLWatcher
 from transformers import TransformerRegistry
@@ -73,6 +74,33 @@ def build_command(args):
 
     print(f"Using transformer: {transformer.description}")
 
+    # Handle database configuration for SQL datasources
+    if spec["data"]["type"] == "sql":
+        # Validate database arguments are provided
+        required_db_args = ["db_type", "db_host", "db_port", "db_name", "db_user", "db_password"]
+        missing_args = [arg for arg in required_db_args if not getattr(args, arg, None)]
+
+        if missing_args:
+            print(f"Error: SQL datasource requires database configuration arguments:", file=sys.stderr)
+            for arg in missing_args:
+                print(f"  --{arg.replace('_', '-')}", file=sys.stderr)
+            return 1
+
+        # Create database config
+        db_config = {
+            "type": args.db_type,
+            "host": args.db_host,
+            "port": args.db_port,
+            "database": args.db_name,
+            "user": args.db_user,
+            "password": args.db_password
+        }
+
+        # Pass to transformer (if it has set_db_config method)
+        if hasattr(transformer, "set_db_config"):
+            transformer.set_db_config(db_config)
+            print(f"✓ Database configuration set")
+
     # Generate code
     try:
         code = transformer.build(spec)
@@ -89,19 +117,47 @@ def build_command(args):
         for warning in warnings:
             print(f"  - {warning}")
 
+    # Check if output is multi-file (JSON-encoded structure)
+    is_multi_file = False
+    try:
+        output_data = json.loads(code)
+        if isinstance(output_data, dict) and output_data.get("type") == "multi-file":
+            is_multi_file = True
+    except (json.JSONDecodeError, TypeError):
+        # Not JSON or not multi-file - treat as regular single-file output
+        pass
+
     # Write output (skip for Superset - it doesn't generate code)
     if target != "superset":
         if output_path:
             try:
-                Path(output_path).write_text(code, encoding="utf-8")
-                print(f"✓ Output written to: {output_path}")
+                if is_multi_file:
+                    # Multi-file output - create directory and write multiple files
+                    output_dir = Path(output_path)
+                    output_dir.mkdir(parents=True, exist_ok=True)
+
+                    files = output_data.get("files", {})
+                    for filename, content in files.items():
+                        file_path = output_dir / filename
+                        file_path.write_text(content, encoding="utf-8")
+                        print(f"✓ Written: {file_path}")
+
+                    print(f"\n✓ Multi-file output created in: {output_dir}")
+                else:
+                    # Single-file output - write normally
+                    Path(output_path).write_text(code, encoding="utf-8")
+                    print(f"✓ Output written to: {output_path}")
             except Exception as e:
                 print(f"Error writing output: {e}", file=sys.stderr)
                 return 1
         else:
             # Print to stdout
-            print("\n--- Generated Code ---")
-            print(code)
+            if is_multi_file:
+                print("\n⚠ Multi-file output cannot be printed to stdout. Use --output to specify a directory.")
+                return 1
+            else:
+                print("\n--- Generated Code ---")
+                print(code)
 
     # Run the dashboard if --run flag is set
     if args.run and output_path:
@@ -304,6 +360,34 @@ Examples:
     build_parser.add_argument(
         "--superset-password",
         help="Superset password (for superset backend only)"
+    )
+
+    # Database arguments (for SQL datasources)
+    build_parser.add_argument(
+        "--db-type",
+        choices=["postgresql", "mysql", "sqlite"],
+        help="Database type (required for SQL datasources)"
+    )
+    build_parser.add_argument(
+        "--db-host",
+        help="Database host (required for SQL datasources)"
+    )
+    build_parser.add_argument(
+        "--db-port",
+        type=int,
+        help="Database port (required for SQL datasources)"
+    )
+    build_parser.add_argument(
+        "--db-name",
+        help="Database name (required for SQL datasources)"
+    )
+    build_parser.add_argument(
+        "--db-user",
+        help="Database username (required for SQL datasources)"
+    )
+    build_parser.add_argument(
+        "--db-password",
+        help="Database password (required for SQL datasources)"
     )
 
     # List command

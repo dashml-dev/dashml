@@ -15,6 +15,78 @@ from .base import Transformer, TransformerError
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec, ChartSpec
 
+# ============================================================
+# Custom Exceptions
+# ============================================================
+
+class SupersetAuthenticationError(TransformerError):
+    """Raised when Superset authentication fails"""
+    pass
+
+class SupersetDatasetError(TransformerError):
+    """Raised when dataset operations fail"""
+    pass
+
+class SupersetChartError(TransformerError):
+    """Raised when chart operations fail"""
+    pass
+
+class SupersetDashboardError(TransformerError):
+    """Raised when dashboard operations fail"""
+    pass
+
+# ============================================================
+# Configuration Constants
+# ============================================================
+
+# API Configuration
+DEFAULT_SUPERSET_URL = "http://localhost:8088"
+API_LOGIN_ENDPOINT = "/api/v1/security/login"
+API_CSRF_ENDPOINT = "/api/v1/security/csrf_token/"
+API_DATASET_ENDPOINT = "/api/v1/dataset/"
+API_DATABASE_ENDPOINT = "/api/v1/database/"
+API_CHART_ENDPOINT = "/api/v1/chart/"
+API_DASHBOARD_ENDPOINT = "/api/v1/dashboard/"
+API_CHART_DATA_ENDPOINT = "/api/v1/chart/data"
+AUTH_PROVIDER = "db"
+
+# Retry & Timeout Settings
+DATASET_CREATION_WAIT_SECONDS = 5
+RETRY_WAIT_SECONDS = 3
+MAX_DATASET_FIND_ATTEMPTS = 3
+
+# Query Limits
+UNIQUE_VALUES_ROW_LIMIT = 1000
+RAW_DATA_ROW_LIMIT = 10000
+CHART_LIST_PAGE_SIZE = 1000
+
+# Layout & Display Settings
+CHARTS_PER_ROW = 2
+DEFAULT_CHART_WIDTH = 6  # Grid units (out of 12)
+DEFAULT_CHART_HEIGHT = 50
+DASHBOARD_HEADER_TEXT = "Dashboard"
+DASHBOARD_BACKGROUND = "BACKGROUND_TRANSPARENT"
+
+# Chart Configuration
+DEFAULT_HISTOGRAM_BINS = 25
+DEFAULT_COLOR_SCHEME = "supersetColors"
+
+# CSV Upload Settings
+CSV_DELIMITER = ','
+CSV_ALREADY_EXISTS_ACTION = 'replace'
+CSV_FILE_TYPE = 'csv'
+CSV_CONTENT_TYPE = 'text/csv'
+JSON_CONTENT_TYPE = "application/json"
+
+# Default Colors
+DEFAULT_COLORS = {
+    "primary": "#20A7C9",
+    "secondary": ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
+    "background": "#FAFAFA",
+    "text": "#11181C",
+    "card": "#FFFFFF"
+}
+
 # Chart type categorization by data requirements
 CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
 CHARTS_USE_RAW_DATA = {"histogram", "scatter"}
@@ -41,13 +113,18 @@ class SupersetTransformer(Transformer):
 
     def __init__(self, superset_url: str = None, username: str = None, password: str = None):
         super().__init__()
-        self.superset_url = superset_url or "http://localhost:8088"
+        self.superset_url = superset_url or DEFAULT_SUPERSET_URL
         self.username = username
         self.password = password
         self.access_token = None
         self.csrf_token = None
         self.dataset_id = None
         self.session = None  # Will hold requests.Session for cookie management
+        self.db_config = None  # Database credentials for auto-creating databases
+
+    def set_db_config(self, config: Dict[str, Any]) -> None:
+        """Store database configuration for auto-creating databases in Superset"""
+        self.db_config = config
 
     @property
     def name(self) -> str:
@@ -70,7 +147,7 @@ class SupersetTransformer(Transformer):
             )
 
         if not self.username or not self.password:
-            raise TransformerError(
+            raise SupersetAuthenticationError(
                 "Superset credentials required.\n"
                 "Use: --superset-user and --superset-password CLI arguments"
             )
@@ -84,7 +161,7 @@ class SupersetTransformer(Transformer):
 
             # Authenticate
             if not self._authenticate():
-                raise TransformerError("Authentication failed")
+                raise SupersetAuthenticationError("Authentication failed")
 
             # Load style config (resolve path relative to .dashml file)
             style_path = spec.get("style")
@@ -98,22 +175,61 @@ class SupersetTransformer(Transformer):
             # Extract spec components
             title = spec.get("title", "DashML Dashboard")
             data_spec = spec["data"]
-            data_path = data_spec["path"]
+            data_type = data_spec.get("type", "csv")
 
-            # Get the absolute path to the CSV file
-            # spec.get("_source_file") contains the path to the .dashml file
-            source_file = spec.get("_source_file")
-            if source_file:
-                # Resolve data_path relative to the .dashml file location
-                dashml_dir = Path(source_file).parent
-                data_path = str(dashml_dir / data_path)
+            # Create or get dataset based on data type
+            if data_type == "csv":
+                # CSV datasource - resolve path and upload
+                data_path = data_spec["path"]
 
-            # Convert to absolute path
-            data_path = str(Path(data_path).resolve())
+                # Get the absolute path to the CSV file
+                # spec.get("_source_file") contains the path to the .dashml file
+                source_file = spec.get("_source_file")
+                if source_file:
+                    # Resolve data_path relative to the .dashml file location
+                    dashml_dir = Path(source_file).parent
+                    data_path = str(dashml_dir / data_path)
 
-            # Create or get dataset
-            if not self._create_or_get_dataset(data_path):
-                raise TransformerError("Failed to create/find dataset")
+                # Convert to absolute path
+                data_path = str(Path(data_path).resolve())
+
+                # Create or get dataset from CSV
+                if not self._create_or_get_dataset_csv(data_path):
+                    raise SupersetDatasetError("Failed to create/find CSV dataset")
+
+            elif data_type == "sql":
+                # SQL datasource - reference existing table
+                # Support both new format (path) and legacy format (schema + table_name)
+                if "path" in data_spec:
+                    # New format: parse path into schema.table
+                    schema, table_name = self._parse_sql_path(data_spec["path"])
+                else:
+                    # Legacy format: use explicit schema and table_name fields
+                    schema = data_spec["schema"]
+                    table_name = data_spec["table_name"]
+
+                # Determine database_id: either auto-create from db_config or use from spec
+                if self.db_config:
+                    # Auto-create/find database using CLI credentials
+                    database_id = self._create_or_get_database()
+                    if not database_id:
+                        raise SupersetDatasetError("Failed to create/find database in Superset")
+                elif "database_id" in data_spec:
+                    # Use pre-configured database_id from spec
+                    database_id = data_spec["database_id"]
+                else:
+                    raise SupersetDatasetError(
+                        "SQL datasource requires either:\n"
+                        "  1. database_id in spec (for pre-configured databases), OR\n"
+                        "  2. --db-* CLI arguments to auto-create database"
+                    )
+
+                # Create or get dataset from SQL table
+                if not self._create_or_get_dataset_sql(database_id, schema, table_name):
+                    raise SupersetDatasetError("Failed to create/find SQL dataset")
+
+            else:
+                raise SupersetDatasetError(f"Unsupported data type: {data_type}")
 
             # Get charts or pages
             charts = spec.get("charts", [])
@@ -165,14 +281,14 @@ class SupersetTransformer(Transformer):
                             all_label_colors.update(label_colors)
 
             if not chart_ids:
-                raise TransformerError("No charts were created successfully")
+                raise SupersetChartError("No charts were created successfully")
 
             # Create or update dashboard
             print("\nCreating/updating dashboard...")
             dashboard_id = self._create_or_update_dashboard(title, chart_ids)
 
             if not dashboard_id:
-                raise TransformerError("Failed to create dashboard")
+                raise SupersetDashboardError("Failed to create dashboard")
 
             # Set dashboard colors from theme
             self._set_dashboard_colors(dashboard_id, style_config, all_label_colors)
@@ -183,18 +299,21 @@ class SupersetTransformer(Transformer):
 
             return success_msg
 
-        except TransformerError:
+        except (SupersetAuthenticationError, SupersetDatasetError, SupersetChartError, SupersetDashboardError):
+            # Re-raise our custom exceptions
             raise
+        except ImportError as e:
+            raise TransformerError(f"Missing required library: {e}")
         except Exception as e:
-            raise TransformerError(f"Failed to create Superset dashboard: {e}")
+            raise TransformerError(f"Unexpected error creating Superset dashboard: {e}")
 
     def _authenticate(self) -> bool:
         """Authenticate with Superset and get tokens"""
-        login_url = f"{self.superset_url}/api/v1/security/login"
+        login_url = f"{self.superset_url}{API_LOGIN_ENDPOINT}"
         payload = {
             "username": self.username,
             "password": self.password,
-            "provider": "db",
+            "provider": AUTH_PROVIDER,
             "refresh": True
         }
 
@@ -205,7 +324,7 @@ class SupersetTransformer(Transformer):
             self.access_token = data.get("access_token")
 
             # Get CSRF token - session will keep the cookie
-            csrf_url = f"{self.superset_url}/api/v1/security/csrf_token/"
+            csrf_url = f"{self.superset_url}{API_CSRF_ENDPOINT}"
             headers = {"Authorization": f"Bearer {self.access_token}"}
             csrf_response = self.session.get(csrf_url, headers=headers)
             csrf_response.raise_for_status()
@@ -223,13 +342,73 @@ class SupersetTransformer(Transformer):
         return {
             "Authorization": f"Bearer {self.access_token}",
             "X-CSRFToken": self.csrf_token,
-            "Content-Type": "application/json"
+            "Content-Type": JSON_CONTENT_TYPE
         }
 
-    def _create_or_get_dataset(self, csv_path: str) -> bool:
+    def _refresh_csrf_token(self) -> bool:
+        """Refresh CSRF token - useful before POST/PUT requests"""
+        try:
+            csrf_url = f"{self.superset_url}{API_CSRF_ENDPOINT}"
+            csrf_headers = {"Authorization": f"Bearer {self.access_token}"}
+            csrf_response = self.session.get(csrf_url, headers=csrf_headers)
+            if csrf_response.status_code == 200:
+                self.csrf_token = csrf_response.json().get("result")
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _build_api_url(self, endpoint: str, resource_id: str = None) -> str:
+        """Build a complete API URL with optional resource ID"""
+        if resource_id:
+            return f"{self.superset_url}{endpoint}{resource_id}"
+        return f"{self.superset_url}{endpoint}"
+
+    def _parse_sql_path(self, path: str) -> tuple:
+        """
+        Parse SQL path into (schema, table_name) tuple.
+
+        Supports formats:
+        - "schema.table" -> ("schema", "table")
+        - "[schema].[table]" -> ("schema", "table")
+        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
+        """
+        import re
+
+        # Pattern: [optional brackets]identifier[optional brackets].identifier
+        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
+        match = re.match(pattern, path)
+
+        if match:
+            schema = match.group(1)
+            table = match.group(2)
+            return (schema.strip(), table.strip())
+
+        raise SupersetDatasetError(f"Invalid SQL path format: {path}")
+
+    def _associate_chart_with_dashboard(self, chart_id: int, dashboard_id: int) -> bool:
+        """Associate a chart with a dashboard"""
+        try:
+            chart_url = self._build_api_url(API_CHART_ENDPOINT, chart_id)
+            # Get current dashboards for this chart
+            chart_response = self.session.get(chart_url, headers=self._get_headers())
+            if chart_response.status_code == 200:
+                chart_data = chart_response.json().get("result", {})
+                dashboards = chart_data.get("dashboards", [])
+                # Add this dashboard if not already there
+                if dashboard_id not in dashboards:
+                    dashboards.append(dashboard_id)
+                    update_response = self.session.put(chart_url, headers=self._get_headers(), json={"dashboards": dashboards})
+                    return update_response.status_code in [200, 201]
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _create_or_get_dataset_csv(self, csv_path: str) -> bool:
         """Create dataset from CSV or get existing one"""
         dataset_name = Path(csv_path).stem
-        search_url = f"{self.superset_url}/api/v1/dataset/"
+        search_url = f"{self.superset_url}{API_DATASET_ENDPOINT}"
 
         # Check if dataset already exists
         try:
@@ -253,7 +432,7 @@ class SupersetTransformer(Transformer):
 
         try:
             # First, get the database ID (usually 1 for the examples/default database)
-            db_url = f"{self.superset_url}/api/v1/database/"
+            db_url = f"{self.superset_url}{API_DATABASE_ENDPOINT}"
             db_response = self.session.get(db_url, headers=self._get_headers())
 
             database_id = None
@@ -286,12 +465,12 @@ class SupersetTransformer(Transformer):
             print(f"  Using database ID: {database_id}")
 
             with open(csv_path, 'rb') as f:
-                files = {'file': (Path(csv_path).name, f, 'text/csv')}
+                files = {'file': (Path(csv_path).name, f, CSV_CONTENT_TYPE)}
                 data = {
-                    'type': 'csv',  # Required field
+                    'type': CSV_FILE_TYPE,  # Required field
                     'table_name': dataset_name,
-                    'delimiter': ',',
-                    'already_exists': 'replace',
+                    'delimiter': CSV_DELIMITER,
+                    'already_exists': CSV_ALREADY_EXISTS_ACTION,
                     # Don't specify schema - let it use the default allowed schema
                 }
 
@@ -308,7 +487,7 @@ class SupersetTransformer(Transformer):
                 if response.status_code == 404:
                     upload_url = f"{self.superset_url}/api/v1/database/{database_id}/csv_upload"
                     with open(csv_path, 'rb') as f2:
-                        files = {'file': (Path(csv_path).name, f2, 'text/csv')}
+                        files = {'file': (Path(csv_path).name, f2, CSV_CONTENT_TYPE)}
                         response = self.session.post(upload_url, headers=upload_headers, files=files, data=data)
 
                 if response.status_code in [200, 201, 302]:
@@ -326,11 +505,7 @@ class SupersetTransformer(Transformer):
                     print(f"  Creating dataset from uploaded table...")
 
                     # Refresh CSRF token before POST request
-                    csrf_url = f"{self.superset_url}/api/v1/security/csrf_token/"
-                    csrf_headers = {"Authorization": f"Bearer {self.access_token}"}
-                    csrf_response = self.session.get(csrf_url, headers=csrf_headers)
-                    if csrf_response.status_code == 200:
-                        self.csrf_token = csrf_response.json().get("result")
+                    self._refresh_csrf_token()
 
                     dataset_payload = {
                         "database": database_id,
@@ -342,7 +517,7 @@ class SupersetTransformer(Transformer):
                     dataset_headers = self._get_headers()
                     dataset_headers["Referer"] = self.superset_url
 
-                    create_dataset_url = f"{self.superset_url}/api/v1/dataset/"
+                    create_dataset_url = f"{self.superset_url}{API_DATASET_ENDPOINT}"
                     dataset_response = self.session.post(
                         create_dataset_url,
                         headers=dataset_headers,
@@ -362,10 +537,10 @@ class SupersetTransformer(Transformer):
                             print(f"  Error: {dataset_response.text[:500]}")
 
                     print(f"  Waiting for dataset to be created...")
-                    time.sleep(5)  # Wait longer for dataset creation
+                    time.sleep(DATASET_CREATION_WAIT_SECONDS)
 
                     # Try to find the dataset multiple times
-                    for attempt in range(3):
+                    for attempt in range(MAX_DATASET_FIND_ATTEMPTS):
                         search_response = self.session.get(search_url, headers=self._get_headers())
                         if search_response.status_code == 200:
                             datasets = search_response.json().get("result", [])
@@ -391,9 +566,9 @@ class SupersetTransformer(Transformer):
                                     print(f"✓ Dataset found: {ds.get('table_name')} (ID: {self.dataset_id})")
                                     return True
 
-                        if attempt < 2:
-                            print(f"  Attempt {attempt + 1}/3: Dataset not found yet, waiting...")
-                            time.sleep(3)
+                        if attempt < MAX_DATASET_FIND_ATTEMPTS - 1:
+                            print(f"  Attempt {attempt + 1}/{MAX_DATASET_FIND_ATTEMPTS}: Dataset not found yet, waiting...")
+                            time.sleep(RETRY_WAIT_SECONDS)
 
                     # Dataset still not found, list available datasets for debugging
                     print(f"⚠ CSV uploaded but dataset '{dataset_name}' not found.")
@@ -412,6 +587,180 @@ class SupersetTransformer(Transformer):
             print(f"✗ Error uploading CSV: {e}")
             return False
 
+    def _create_or_get_dataset_sql(self, database_id: int, schema: str, table_name: str) -> bool:
+        """Create dataset from existing SQL table or get existing one"""
+        search_url = f"{self.superset_url}{API_DATASET_ENDPOINT}"
+
+        # Check if dataset already exists
+        try:
+            response = self.session.get(search_url, headers=self._get_headers())
+            if response.status_code == 200:
+                datasets = response.json().get("result", [])
+                for ds in datasets:
+                    # Match on database_id, schema, and table_name
+                    if (ds.get("database", {}).get("id") == database_id and
+                        ds.get("schema") == schema and
+                        ds.get("table_name") == table_name):
+                        self.dataset_id = ds.get("id")
+                        print(f"✓ Found existing dataset: {schema}.{table_name} (ID: {self.dataset_id})")
+                        return True
+        except Exception as e:
+            print(f"⚠ Warning checking for existing dataset: {e}")
+
+        # Dataset not found, create from existing SQL table
+        print(f"Dataset '{schema}.{table_name}' not found. Creating from existing table...")
+
+        try:
+            # Refresh CSRF token before POST request
+            self._refresh_csrf_token()
+
+            # Create dataset payload
+            dataset_payload = {
+                "database": database_id,
+                "schema": schema,
+                "table_name": table_name
+            }
+
+            # Add referer header - sometimes required by Superset
+            dataset_headers = self._get_headers()
+            dataset_headers["Referer"] = self.superset_url
+
+            create_dataset_url = f"{self.superset_url}{API_DATASET_ENDPOINT}"
+            dataset_response = self.session.post(
+                create_dataset_url,
+                headers=dataset_headers,
+                json=dataset_payload
+            )
+
+            if dataset_response.status_code in [200, 201]:
+                dataset_data = dataset_response.json()
+                self.dataset_id = dataset_data.get("id")
+                print(f"✓ Dataset created: {schema}.{table_name} (ID: {self.dataset_id})")
+
+                # Trigger metadata refresh to introspect table columns
+                print(f"  Fetching table metadata...")
+                metadata_url = f"{self.superset_url}{API_DATASET_ENDPOINT}{self.dataset_id}/refresh"
+                metadata_response = self.session.put(
+                    metadata_url,
+                    headers=self._get_headers(),
+                    json={"columns": []}
+                )
+
+                if metadata_response.status_code in [200, 201]:
+                    print(f"✓ Metadata fetched successfully")
+                else:
+                    print(f"⚠ Metadata fetch returned status {metadata_response.status_code}")
+
+                return True
+            else:
+                print(f"✗ Dataset creation failed: {dataset_response.status_code}")
+                try:
+                    error_data = dataset_response.json()
+                    print(f"  Error: {error_data}")
+                except:
+                    print(f"  Error: {dataset_response.text[:500]}")
+                return False
+
+        except Exception as e:
+            print(f"✗ Error creating SQL dataset: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _create_or_get_database(self) -> Optional[int]:
+        """Create or find database connection in Superset using db_config"""
+        if not self.db_config:
+            return None
+
+        db_type = self.db_config["type"]
+        host = self.db_config["host"]
+        port = self.db_config["port"]
+        database = self.db_config["database"]
+        user = self.db_config["user"]
+        password = self.db_config["password"]
+
+        # Build SQLAlchemy URI based on database type
+        if db_type == "postgresql":
+            sqlalchemy_uri = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+            backend = "postgresql"
+        elif db_type == "mysql":
+            sqlalchemy_uri = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
+            backend = "mysql"
+        elif db_type == "sqlite":
+            sqlalchemy_uri = f"sqlite:///{database}"
+            backend = "sqlite"
+        else:
+            print(f"✗ Unsupported database type: {db_type}")
+            return None
+
+        # Generate a database name for Superset
+        db_name = f"{database}@{host}" if db_type != "sqlite" else database
+
+        # Check if database already exists in Superset
+        print(f"Checking for existing database connection: {db_name}")
+        search_url = f"{self.superset_url}{API_DATABASE_ENDPOINT}"
+
+        try:
+            response = self.session.get(search_url, headers=self._get_headers())
+            if response.status_code == 200:
+                databases = response.json().get("result", [])
+                for db in databases:
+                    # Match on database_name and sqlalchemy_uri
+                    if db.get("database_name") == db_name:
+                        database_id = db.get("id")
+                        print(f"✓ Found existing database: {db_name} (ID: {database_id})")
+                        return database_id
+        except Exception as e:
+            print(f"⚠ Warning checking for existing database: {e}")
+
+        # Database not found, create it
+        print(f"Database '{db_name}' not found. Creating new database connection...")
+
+        try:
+            # Refresh CSRF token before POST request
+            self._refresh_csrf_token()
+
+            # Build database payload
+            database_payload = {
+                "database_name": db_name,
+                "sqlalchemy_uri": sqlalchemy_uri,
+                "expose_in_sqllab": True,
+                "allow_run_async": True,
+                "allow_file_upload": True,  # Enable CSV uploads
+                "extra": "{}"
+            }
+
+            # Add referer header
+            db_headers = self._get_headers()
+            db_headers["Referer"] = self.superset_url
+
+            create_db_url = f"{self.superset_url}{API_DATABASE_ENDPOINT}"
+            db_response = self.session.post(
+                create_db_url,
+                headers=db_headers,
+                json=database_payload
+            )
+
+            if db_response.status_code in [200, 201]:
+                db_data = db_response.json()
+                database_id = db_data.get("id")
+                print(f"✓ Database created: {db_name} (ID: {database_id})")
+                return database_id
+            else:
+                print(f"✗ Database creation failed: {db_response.status_code}")
+                try:
+                    error_data = db_response.json()
+                    print(f"  Error: {error_data}")
+                except:
+                    print(f"  Error: {db_response.text[:500]}")
+                return None
+
+        except Exception as e:
+            print(f"✗ Error creating database: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     def _get_unique_values(self, column: str) -> list:
         """Query the dataset to get unique values for a column"""
         try:
@@ -422,13 +771,13 @@ class SupersetTransformer(Transformer):
                     "columns": [column],
                     "groupby": [column],
                     "metrics": [],
-                    "row_limit": 1000,
+                    "row_limit": UNIQUE_VALUES_ROW_LIMIT,
                 }],
                 "result_format": "json",
                 "result_type": "full"
             }
 
-            url = f"{self.superset_url}/api/v1/chart/data"
+            url = f"{self.superset_url}{API_CHART_DATA_ENDPOINT}"
             response = self.session.post(url, headers=self._get_headers(), json=query_payload)
 
             if response.status_code == 200:
@@ -442,7 +791,7 @@ class SupersetTransformer(Transformer):
 
     def _find_existing_dashboard(self, title: str) -> Optional[int]:
         """Find existing dashboard by title"""
-        url = f"{self.superset_url}/api/v1/dashboard/"
+        url = f"{self.superset_url}{API_DASHBOARD_ENDPOINT}"
         try:
             response = self.session.get(url, headers=self._get_headers())
             if response.status_code == 200:
@@ -456,22 +805,20 @@ class SupersetTransformer(Transformer):
 
     def _set_dashboard_colors(self, dashboard_id: int, style_config: Dict[str, Any], label_colors: Dict[str, str] = None) -> None:
         """Set dashboard-level color configuration from theme"""
-        if not style_config:
+        if not label_colors:
             return
 
-        colors = style_config.get("colors", {})
-        secondary_colors = colors.get("secondary", [])
-
-        if not secondary_colors or not isinstance(secondary_colors, list):
-            return
+        # shared_label_colors should be a list of LABEL NAMES that are shared across charts
+        # NOT a list of hex colors! See: superset-frontend/src/utils/colorScheme.ts:40-49
+        shared_labels = list(label_colors.keys())
 
         # Build color configuration for dashboard
         color_config = {
-            "color_scheme": "supersetColors",  # Base scheme
-            "label_colors": label_colors or {},  # Label-to-color mappings from charts
-            "shared_label_colors": secondary_colors,  # Our custom colors from theme
-            "map_label_colors": label_colors or {},  # Map labels to colors
-            "color_scheme_domain": list(label_colors.keys()) if label_colors else []  # All labels
+            "color_scheme": DEFAULT_COLOR_SCHEME,  # Base scheme
+            "label_colors": label_colors,  # Forced label-to-color mappings
+            "shared_label_colors": shared_labels,  # List of label names shared across charts
+            "map_label_colors": label_colors,  # Full label-to-color map
+            "color_scheme_domain": shared_labels  # Domain of all labels
         }
 
         try:
@@ -479,10 +826,17 @@ class SupersetTransformer(Transformer):
             response = self.session.put(url, headers=self._get_headers(), json=color_config)
 
             if response.status_code == 200:
-                if label_colors:
-                    print(f"✓ Applied theme colors ({len(label_colors)} categories mapped)")
-                else:
-                    print(f"✓ Applied theme colors")
+                print(f"✓ Applied theme colors ({len(label_colors)} categories, {len(shared_labels)} shared)")
+
+                # Fetch and display the actual saved metadata
+                dash_url = f"{self.superset_url}/api/v1/dashboard/{dashboard_id}"
+                dash_response = self.session.get(dash_url, headers=self._get_headers())
+                if dash_response.status_code == 200:
+                    dash_data = dash_response.json()
+                    metadata_str = dash_data.get("result", {}).get("json_metadata", "{}")
+                    metadata = json.loads(metadata_str)
+                    print(f"\nDashboard metadata (json_metadata):")
+                    print(json.dumps(metadata, indent=2))
             else:
                 print(f"⚠ Warning: Could not apply dashboard colors ({response.status_code})")
         except Exception as e:
@@ -521,7 +875,7 @@ class SupersetTransformer(Transformer):
         }
 
         # Apply custom color scheme from DashML theme via label_colors
-        params["color_scheme"] = "supersetColors"  # Use neutral base scheme
+        params["color_scheme"] = DEFAULT_COLOR_SCHEME  # Use neutral base scheme
         params["label_colors"] = {}
 
         if "secondary" in colors and isinstance(colors["secondary"], list) and len(colors["secondary"]) > 0:
@@ -586,7 +940,7 @@ class SupersetTransformer(Transformer):
             # Histogram v2 uses different params than legacy histogram
             params["column"] = x  # The column to create histogram from
             params["groupby"] = []  # Optional grouping columns
-            params["bins"] = 25  # Number of bins
+            params["bins"] = DEFAULT_HISTOGRAM_BINS  # Number of bins
             params["normalized"] = False  # Whether to normalize
             params["cumulative"] = False  # Whether to show cumulative distribution
             # No metrics for histogram!
@@ -601,7 +955,7 @@ class SupersetTransformer(Transformer):
                     "groupby": [],
                     "metrics": [],
                     "filters": [],
-                    "row_limit": 10000
+                    "row_limit": RAW_DATA_ROW_LIMIT
                 }
             else:
                 # Scatter uses columns, not metrics
@@ -609,7 +963,7 @@ class SupersetTransformer(Transformer):
                 query_obj = {
                     "columns": columns,
                     "filters": [],
-                    "row_limit": 10000
+                    "row_limit": RAW_DATA_ROW_LIMIT
                 }
             query_context_queries.append(query_obj)
         else:
@@ -635,7 +989,7 @@ class SupersetTransformer(Transformer):
                 "metrics": [{"label": y, "expressionType": "SIMPLE",
                             "column": {"column_name": y}, "aggregate": agg.upper()}],
                 "filters": [],
-                "row_limit": 10000
+                "row_limit": RAW_DATA_ROW_LIMIT
             })
 
         chart_config = {
@@ -659,14 +1013,14 @@ class SupersetTransformer(Transformer):
         try:
             if existing_chart_id:
                 # Update existing chart
-                url = f"{self.superset_url}/api/v1/chart/{existing_chart_id}"
+                url = self._build_api_url(API_CHART_ENDPOINT, existing_chart_id)
                 response = self.session.put(url, headers=self._get_headers(), json=chart_config)
                 response.raise_for_status()
                 print(f"✓ Updated chart: {title} (ID: {existing_chart_id})")
                 return existing_chart_id, chart_label_colors
             else:
                 # Create new chart
-                url = f"{self.superset_url}/api/v1/chart/"
+                url = self._build_api_url(API_CHART_ENDPOINT)
                 response = self.session.post(url, headers=self._get_headers(), json=chart_config)
                 response.raise_for_status()
                 created_chart_id = response.json().get("id")
@@ -679,7 +1033,7 @@ class SupersetTransformer(Transformer):
 
     def _create_or_update_dashboard(self, title: str, chart_ids: list) -> Optional[int]:
         """Create dashboard or update existing one"""
-        url = f"{self.superset_url}/api/v1/dashboard/"
+        url = f"{self.superset_url}{API_DASHBOARD_ENDPOINT}"
 
         # Check for existing dashboard
         existing_dashboard_id = None
@@ -707,14 +1061,14 @@ class SupersetTransformer(Transformer):
                     try:
                         # Use RISON filter to find charts where dashboard ID matches
                         # Fetch with large page size to get all charts at once
-                        filter_params = {"filters": [{"col": "dashboards", "opr": "rel_m_m", "value": existing_dashboard_id}], "page_size": 1000}
+                        filter_params = {"filters": [{"col": "dashboards", "opr": "rel_m_m", "value": existing_dashboard_id}], "page_size": CHART_LIST_PAGE_SIZE}
                         filter_rison = prison.dumps(filter_params) if prison else None
 
                         if filter_rison:
-                            charts_url = f"{self.superset_url}/api/v1/chart/?q={filter_rison}"
+                            charts_url = f"{self.superset_url}{API_CHART_ENDPOINT}?q={filter_rison}"
                         else:
                             # Fallback without page_size if prison not available
-                            charts_url = f"{self.superset_url}/api/v1/chart/"
+                            charts_url = f"{self.superset_url}{API_CHART_ENDPOINT}"
 
                         charts_response = self.session.get(charts_url, headers=self._get_headers())
 
@@ -768,7 +1122,7 @@ class SupersetTransformer(Transformer):
                                 # Manual RISON encoding: [1,2,3] -> !(1,2,3)
                                 rison_encoded = f"!({','.join(map(str, charts_to_remove))})"
 
-                            delete_url = f"{self.superset_url}/api/v1/chart/?q={rison_encoded}"
+                            delete_url = f"{self.superset_url}{API_CHART_ENDPOINT}?q={rison_encoded}"
                             delete_response = self.session.delete(delete_url, headers=self._get_headers())
 
                             if delete_response.status_code == 200:
@@ -779,7 +1133,7 @@ class SupersetTransformer(Transformer):
                                 removed_count = 0
                                 for chart_id in charts_to_remove:
                                     try:
-                                        single_delete_url = f"{self.superset_url}/api/v1/chart/{chart_id}"
+                                        single_delete_url = f"{self.superset_url}{API_CHART_ENDPOINT}{chart_id}"
                                         single_response = self.session.delete(single_delete_url, headers=self._get_headers())
                                         if single_response.status_code in [200, 204]:
                                             removed_count += 1
@@ -792,16 +1146,7 @@ class SupersetTransformer(Transformer):
 
                 # Now associate only the current charts with the dashboard
                 for chart_id in chart_ids:
-                    chart_url = f"{self.superset_url}/api/v1/chart/{chart_id}"
-                    # Get current dashboards for this chart
-                    chart_response = self.session.get(chart_url, headers=self._get_headers())
-                    if chart_response.status_code == 200:
-                        chart_data = chart_response.json().get("result", {})
-                        dashboards = chart_data.get("dashboards", [])
-                        # Add this dashboard if not already there
-                        if existing_dashboard_id not in dashboards:
-                            dashboards.append(existing_dashboard_id)
-                            self.session.put(chart_url, headers=self._get_headers(), json={"dashboards": dashboards})
+                    self._associate_chart_with_dashboard(chart_id, existing_dashboard_id)
 
                 print(f"✓ Updated dashboard with {len(chart_ids)} charts")
                 return existing_dashboard_id
@@ -839,11 +1184,7 @@ class SupersetTransformer(Transformer):
 
                     # Associate charts from the chart side
                     for chart_id in chart_ids:
-                        chart_url = f"{self.superset_url}/api/v1/chart/{chart_id}"
-                        chart_update = {
-                            "dashboards": [dashboard_id]
-                        }
-                        self.session.put(chart_url, headers=self._get_headers(), json=chart_update)
+                        self._associate_chart_with_dashboard(chart_id, dashboard_id)
 
                     if update_response.status_code not in [200, 201]:
                         print(f"✗ Failed to add charts: {update_response.status_code}")
@@ -880,7 +1221,7 @@ class SupersetTransformer(Transformer):
             "type": "HEADER",
             "id": "HEADER_ID",
             "meta": {
-                "text": "Dashboard"
+                "text": DASHBOARD_HEADER_TEXT
             }
         }
 
@@ -899,26 +1240,26 @@ class SupersetTransformer(Transformer):
                 "children": [],
                 "meta": {
                     "chartId": chart_id,
-                    "width": 6,  # Half width (2 columns)
-                    "height": 50,
+                    "width": DEFAULT_CHART_WIDTH,  # Half width (2 columns)
+                    "height": DEFAULT_CHART_HEIGHT,
                     "uuid": str(uuid.uuid4())
                 }
             }
 
-        # Now create ROW entries (2 charts per row)
-        for i in range(0, len(chart_keys), 2):
+        # Now create ROW entries (configurable charts per row)
+        for i in range(0, len(chart_keys), CHARTS_PER_ROW):
             row_id = f"ROW-{uuid.uuid4().hex[:8]}"
             row_ids.append(row_id)
 
-            # Get charts for this row (1 or 2 charts)
-            row_charts = chart_keys[i:i+2]
+            # Get charts for this row (1 or more charts up to CHARTS_PER_ROW)
+            row_charts = chart_keys[i:i+CHARTS_PER_ROW]
 
             position[row_id] = {
                 "type": "ROW",
                 "id": row_id,
                 "children": row_charts,
                 "meta": {
-                    "background": "BACKGROUND_TRANSPARENT"
+                    "background": DASHBOARD_BACKGROUND
                 }
             }
 
@@ -959,13 +1300,7 @@ class SupersetTransformer(Transformer):
 
     def _get_default_colors(self) -> Dict[str, str]:
         """Get default color scheme"""
-        return {
-            "primary": "#20A7C9",
-            "secondary": ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
-            "background": "#FAFAFA",
-            "text": "#11181C",
-            "card": "#FFFFFF"
-        }
+        return DEFAULT_COLORS
 
     def get_run_command(self, output_path: str) -> str:
         """No run command needed - dashboard is already created"""

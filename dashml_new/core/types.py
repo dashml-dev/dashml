@@ -23,10 +23,27 @@ class StyleSpec(TypedDict):
     colors: StyleColors
 
 
-class DataSpec(TypedDict):
-    """Data source specification"""
-    type: str
-    path: str
+class DataSpec(TypedDict, total=False):
+    """
+    Data source specification.
+
+    Supports two data source types:
+    - CSV: Requires 'path' field pointing to CSV file (e.g., "./data/sales.csv")
+    - SQL: Requires 'path' field with schema.table format:
+           - Simple: "public.sales_data"
+           - With spaces/special chars: "[Public Data].[Sales Data]"
+           Optional 'database_id' (can be auto-created via CLI args)
+
+    Note: Using total=False allows type-specific fields to be optional.
+    The validator ensures required fields are present for each type.
+    """
+    type: str              # "csv" or "sql" (required)
+    path: str              # CSV: file path, SQL: schema.table_name (required for both)
+    # SQL-specific fields
+    database_id: int       # Superset database ID (optional - auto-created from CLI if not provided)
+    # Legacy SQL fields (deprecated - use path instead)
+    schema: str            # DEPRECATED: Use path="schema.table" instead
+    table_name: str        # DEPRECATED: Use path="schema.table" instead
 
 
 class ChartSpec(TypedDict, total=False):

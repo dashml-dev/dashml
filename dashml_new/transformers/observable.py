@@ -19,8 +19,16 @@ CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data
 class ObservablePlotTransformer(Transformer):
     """
     Generates standalone Observable Plot HTML dashboards from DashML specifications.
-    Output: Single HTML file with embedded JavaScript using Observable Plot
+    Output: Single HTML file for CSV, multi-file with Flask backend for SQL
     """
+
+    def __init__(self):
+        super().__init__()
+        self.db_config = None
+
+    def set_db_config(self, config: Dict[str, Any]) -> None:
+        """Store database configuration for SQL datasources"""
+        self.db_config = config
 
     @property
     def name(self) -> str:
@@ -33,51 +41,90 @@ class ObservablePlotTransformer(Transformer):
     def build(self, spec: "DashMLSpec") -> str:
         """
         Generate Observable Plot HTML from DashML spec.
+        For CSV: Returns single HTML file
+        For SQL: Returns JSON-encoded multi-file structure with Flask backend
         """
         try:
             self.clear_warnings()  # Clear warnings from previous builds
 
-            # Load style config
-            style_config = self._load_style_config(spec.get("style"))
-            colors = style_config.get("colors", {})
+            # Check data type
+            data_type = spec["data"].get("type", "csv")
 
-            # Warn about unsupported color fields
-            if colors.get("buttons"):
-                self.warn("'buttons' color is not currently used by Observable transformer")
-
-            # Check for unsupported chart types
-            all_charts = []
-            if "pages" in spec:
-                for page in spec["pages"]:
-                    all_charts.extend(page.get("charts", []))
+            if data_type == "sql":
+                # Generate multi-file output with Flask backend
+                return self._build_sql_version(spec)
             else:
-                all_charts = spec.get("charts", [])
-
-            # Warnings are now handled by validator (group field requirement)
-
-            # Build HTML structure
-            html_parts = []
-            html_parts.append(self._generate_html_head(spec.get("title", "DashML Dashboard"), colors))
-            html_parts.append(self._generate_body_start(spec.get("title", "DashML Dashboard"), colors))
-
-            # Data loading
-            data_spec = spec["data"]
-            html_parts.append(self._generate_data_loader(data_spec))
-
-            # Pages or Charts
-            if "pages" in spec:
-                html_parts.append(self._generate_pages_structure(spec["pages"], colors))
-            else:
-                html_parts.append(self._generate_charts_structure(spec.get("charts", []), colors))
-
-            html_parts.append(self._generate_html_footer())
-
-            return "\n".join(html_parts)
+                # Generate single HTML file for CSV
+                return self._build_csv_version(spec)
 
         except KeyError as e:
             raise TransformerError(f"Missing required field in spec: {e}")
         except Exception as e:
             raise TransformerError(f"Failed to generate Observable Plot HTML: {e}")
+
+    def _build_csv_version(self, spec: "DashMLSpec") -> str:
+        """Generate single HTML file for CSV datasources"""
+        # Load style config
+        style_config = self._load_style_config(spec.get("style"))
+        colors = style_config.get("colors", {})
+
+        # Warn about unsupported color fields
+        if colors.get("buttons"):
+            self.warn("'buttons' color is not currently used by Observable transformer")
+
+        # Check for unsupported chart types
+        all_charts = []
+        if "pages" in spec:
+            for page in spec["pages"]:
+                all_charts.extend(page.get("charts", []))
+        else:
+            all_charts = spec.get("charts", [])
+
+        # Warnings are now handled by validator (group field requirement)
+
+        # Build HTML structure
+        html_parts = []
+        html_parts.append(self._generate_html_head(spec.get("title", "DashML Dashboard"), colors))
+        html_parts.append(self._generate_body_start(spec.get("title", "DashML Dashboard"), colors))
+
+        # Data loading
+        data_spec = spec["data"]
+        html_parts.append(self._generate_data_loader(data_spec))
+
+        # Pages or Charts
+        if "pages" in spec:
+            html_parts.append(self._generate_pages_structure(spec["pages"], colors))
+        else:
+            html_parts.append(self._generate_charts_structure(spec.get("charts", []), colors))
+
+        html_parts.append(self._generate_html_footer())
+
+        return "\n".join(html_parts)
+
+    def _build_sql_version(self, spec: "DashMLSpec") -> str:
+        """Generate multi-file output with Flask backend for SQL datasources"""
+        import json
+
+        if not self.db_config:
+            raise TransformerError("Database configuration not provided for SQL datasource")
+
+        # Generate Flask backend
+        data_spec = spec["data"]
+        flask_app = self._generate_flask_app(data_spec)
+
+        # Generate HTML frontend (fetches from Flask API instead of CSV)
+        html_frontend = self._generate_sql_frontend(spec)
+
+        # Return multi-file JSON structure
+        multi_file_output = {
+            "type": "multi-file",
+            "files": {
+                "app.py": flask_app,
+                "index.html": html_frontend
+            }
+        }
+
+        return json.dumps(multi_file_output)
 
     def _load_style_config(self, style_path: str) -> Dict[str, Any]:
         """Read .dmls file during build
@@ -647,7 +694,143 @@ class ObservablePlotTransformer(Transformer):
                 ]"""
 
     def get_run_command(self, output_path: str) -> str:
-        """Return command to serve Observable Plot HTML"""
+        """Return command to serve Observable Plot HTML or Flask app"""
         from pathlib import Path
-        output_dir = Path(output_path).parent.resolve()
+        output_path_obj = Path(output_path)
+
+        # If output is a directory (multi-file), run Flask
+        if output_path_obj.is_dir():
+            return f"cd {output_path} && python app.py"
+
+        # Otherwise run simple HTTP server for single HTML file
+        output_dir = output_path_obj.parent.resolve()
         return f"cd {output_dir} && python -m http.server 8000"
+
+    def _parse_sql_path(self, path: str) -> tuple:
+        """
+        Parse SQL path into (schema, table_name) tuple.
+
+        Supports formats:
+        - "schema.table" -> ("schema", "table")
+        - "[schema].[table]" -> ("schema", "table")
+        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
+        """
+        import re
+
+        # Pattern: [optional brackets]identifier[optional brackets].identifier
+        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
+        match = re.match(pattern, path)
+
+        if match:
+            schema = match.group(1)
+            table = match.group(2)
+            return (schema.strip(), table.strip())
+
+        raise TransformerError(f"Invalid SQL path format: {path}")
+
+    def _generate_flask_app(self, data_spec: Dict[str, Any]) -> str:
+        """Generate Flask backend that connects to SQL database"""
+        # Extract database config
+        db_type = self.db_config["type"]
+        host = self.db_config["host"]
+        port = self.db_config["port"]
+        database = self.db_config["database"]
+        user = self.db_config["user"]
+        password = self.db_config["password"]
+
+        # Extract SQL spec fields (support both new path format and legacy format)
+        if "path" in data_spec:
+            schema, table_name = self._parse_sql_path(data_spec["path"])
+        else:
+            schema = data_spec["schema"]
+            table_name = data_spec["table_name"]
+
+        # Build connection string based on database type
+        if db_type == "postgresql":
+            conn_str = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        elif db_type == "mysql":
+            conn_str = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
+        elif db_type == "sqlite":
+            conn_str = f"sqlite:///{database}"
+        else:
+            conn_str = f"{db_type}://{user}:{password}@{host}:{port}/{database}"
+
+        # Generate Flask app code
+        return f'''from flask import Flask, jsonify, send_from_directory
+from sqlalchemy import create_engine
+import pandas as pd
+
+app = Flask(__name__)
+
+# Database configuration
+DATABASE_URL = "{conn_str}"
+SCHEMA = "{schema}"
+TABLE_NAME = "{table_name}"
+
+# Create database engine
+engine = create_engine(DATABASE_URL)
+
+@app.route('/')
+def index():
+    """Serve the HTML frontend"""
+    return send_from_directory('.', 'index.html')
+
+@app.route('/api/data')
+def get_data():
+    """Fetch data from SQL database and return as JSON"""
+    try:
+        query = f"SELECT * FROM {{SCHEMA}}.{{TABLE_NAME}}"
+        df = pd.read_sql(query, engine)
+        data = df.to_dict(orient='records')
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
+
+if __name__ == '__main__':
+    print("Starting Flask server...")
+    print(f"Dashboard available at: http://localhost:5000")
+    app.run(debug=True, port=5000)
+'''
+
+    def _generate_sql_frontend(self, spec: "DashMLSpec") -> str:
+        """Generate HTML frontend that fetches from Flask API"""
+        # Load style config
+        style_config = self._load_style_config(spec.get("style"))
+        colors = style_config.get("colors", {})
+
+        # Build HTML structure
+        html_parts = []
+        html_parts.append(self._generate_html_head(spec.get("title", "DashML Dashboard"), colors))
+        html_parts.append(self._generate_body_start(spec.get("title", "DashML Dashboard"), colors))
+
+        # Data loading from API
+        html_parts.append(self._generate_sql_data_loader())
+
+        # Pages or Charts
+        if "pages" in spec:
+            html_parts.append(self._generate_pages_structure(spec["pages"], colors))
+        else:
+            html_parts.append(self._generate_charts_structure(spec.get("charts", []), colors))
+
+        html_parts.append(self._generate_html_footer())
+
+        return "\n".join(html_parts)
+
+    def _generate_sql_data_loader(self) -> str:
+        """Generate JavaScript to load data from Flask API"""
+        return """
+    <script>
+        // Load data from Flask API
+        let dashmlData = [];
+
+        fetch('/api/data')
+            .then(response => response.json())
+            .then(data => {
+                dashmlData = data;
+                renderAllCharts();
+            })
+            .catch(error => {
+                console.error('Error loading data:', error);
+                document.body.innerHTML += '<p style="color: red;">Error loading data from database</p>';
+            });
+    </script>"""

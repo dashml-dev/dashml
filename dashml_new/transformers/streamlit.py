@@ -22,6 +22,14 @@ class StreamlitTransformer(Transformer):
     Output: Python code that can be run with `streamlit run app.py`
     """
 
+    def __init__(self):
+        super().__init__()
+        self.db_config = None
+
+    def set_db_config(self, config: Dict[str, Any]) -> None:
+        """Store database configuration for SQL datasources"""
+        self.db_config = config
+
     @property
     def name(self) -> str:
         return "streamlit"
@@ -53,8 +61,11 @@ class StreamlitTransformer(Transformer):
 
             code_parts = []
 
+            # Get data type
+            data_type = spec["data"].get("type", "csv")
+
             # Imports
-            code_parts.append(self._generate_imports())
+            code_parts.append(self._generate_imports(data_type))
             code_parts.append("")
 
             # Main function
@@ -115,10 +126,15 @@ class StreamlitTransformer(Transformer):
             pass
         return {}
 
-    def _generate_imports(self) -> str:
-        return """import streamlit as st
+    def _generate_imports(self, data_type: str = "csv") -> str:
+        imports = """import streamlit as st
 import pandas as pd
 import altair as alt"""
+
+        if data_type == "sql":
+            imports += "\nfrom sqlalchemy import create_engine"
+
+        return imports
 
     def _generate_page_config(self, title: str) -> str:
         return f'''    st.set_page_config(
@@ -126,6 +142,28 @@ import altair as alt"""
         page_icon="📊",
         layout="wide"
     )'''
+
+    def _parse_sql_path(self, path: str) -> tuple:
+        """
+        Parse SQL path into (schema, table_name) tuple.
+
+        Supports formats:
+        - "schema.table" -> ("schema", "table")
+        - "[schema].[table]" -> ("schema", "table")
+        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
+        """
+        import re
+
+        # Pattern: [optional brackets]identifier[optional brackets].identifier
+        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
+        match = re.match(pattern, path)
+
+        if match:
+            schema = match.group(1)
+            table = match.group(2)
+            return (schema.strip(), table.strip())
+
+        raise ValueError(f"Invalid SQL path format: {path}")
 
     def _generate_css_injection(self, style_config: Dict) -> str:
         """Generate CSS to override Streamlit defaults"""
@@ -151,11 +189,11 @@ import altair as alt"""
     """, unsafe_allow_html=True)'''
 
     def _generate_data_loading(self, data_spec: Dict[str, Any]) -> str:
-        data_type = data_spec["type"]
-        path = data_spec["path"]
+        data_type = data_spec.get("type", "csv")
 
         if data_type == "csv":
-            return f'''    # Load data
+            path = data_spec["path"]
+            return f'''    # Load data from CSV
     try:
         df = pd.read_csv("{path}")
     except FileNotFoundError:
@@ -164,7 +202,49 @@ import altair as alt"""
     except Exception as e:
         st.error(f"Error loading data: {{e}}")
         return'''
-        return f'''    st.error("Unsupported data type: {data_type}")
+
+        elif data_type == "sql":
+            if not self.db_config:
+                return '''    st.error("Database configuration not provided")
+    return'''
+
+            # Extract database config
+            db_type = self.db_config["type"]
+            host = self.db_config["host"]
+            port = self.db_config["port"]
+            database = self.db_config["database"]
+            user = self.db_config["user"]
+            password = self.db_config["password"]
+
+            # Extract SQL spec fields (support both new path format and legacy format)
+            if "path" in data_spec:
+                schema, table_name = self._parse_sql_path(data_spec["path"])
+            else:
+                schema = data_spec["schema"]
+                table_name = data_spec["table_name"]
+
+            # Build connection string based on database type
+            if db_type == "postgresql":
+                conn_str = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+            elif db_type == "mysql":
+                conn_str = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
+            elif db_type == "sqlite":
+                conn_str = f"sqlite:///{database}"
+            else:
+                return f'''    st.error("Unsupported database type: {db_type}")
+    return'''
+
+            # Generate data loading code
+            return f'''    # Load data from SQL database
+    try:
+        engine = create_engine("{conn_str}")
+        df = pd.read_sql("SELECT * FROM {schema}.{table_name}", engine)
+    except Exception as e:
+        st.error(f"Error loading data from database: {{e}}")
+        return'''
+
+        else:
+            return f'''    st.error("Unsupported data type: {data_type}")
     return'''
 
     def _generate_chart(self, chart: Dict[str, Any], colors: Dict[str, Any]) -> str:
