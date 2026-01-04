@@ -4,7 +4,7 @@ style: "styles/dracula.dmls"
 
 data:
   type: sql
-  path: public.orders
+  path: public.orders_one_week
 
 pages:
   - id: "overview"
