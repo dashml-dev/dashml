@@ -61,6 +61,9 @@ class PlotlyTransformer(Transformer):
             if data_type == "sql":
                 # Generate multi-file output with Flask backend
                 return self._build_sql_version(spec, title, data_spec, colors)
+            elif data_type == "bigquery":
+                # Generate multi-file output with Flask + BigQuery backend
+                return self._build_bigquery_version(spec, title, data_spec, colors)
             else:
                 # Generate single HTML file for CSV
                 return self._build_csv_version(spec, title, data_spec, colors)
@@ -152,6 +155,119 @@ class PlotlyTransformer(Transformer):
         }
 
         return json.dumps(multi_file_output)
+
+    def _build_bigquery_version(self, spec: "DashMLSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
+        """Generate multi-file output with Flask + BigQuery backend"""
+        if not self.db_config:
+            raise TransformerError("BigQuery configuration not provided")
+
+        # Generate Flask backend with BigQuery
+        flask_app = self._generate_flask_app_bigquery(data_spec, colors)
+
+        # Generate HTML frontend (fetches from Flask API - same as SQL version)
+        html_frontend = self._generate_sql_frontend(spec, title, colors)
+
+        # Return multi-file JSON structure
+        multi_file_output = {
+            "type": "multi-file",
+            "files": {
+                "app.py": flask_app,
+                "index.html": html_frontend
+            }
+        }
+
+        return json.dumps(multi_file_output)
+
+    def _generate_flask_app_bigquery(self, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
+        """Generate Flask backend that connects to BigQuery"""
+        # Extract BigQuery config
+        project = self.db_config["project"]
+        credentials_path = self.db_config.get("credentials_path")
+
+        # Parse dataset.table from path
+        path = data_spec["path"]
+        parts = path.split(".")
+        if len(parts) == 2:
+            dataset, table_name = parts
+        else:
+            raise TransformerError(f"Invalid BigQuery path format: {path}. Expected: dataset.table")
+
+        # Build credentials loading code
+        if credentials_path:
+            credentials_code = f'''
+# Load credentials from service account file
+from google.oauth2 import service_account
+credentials = service_account.Credentials.from_service_account_file(
+    "{credentials_path}",
+    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+)
+client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
+'''
+        else:
+            credentials_code = '''
+# Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
+client = bigquery.Client(project=PROJECT_ID)
+'''
+
+        # Generate Flask app code
+        return f'''from flask import Flask, jsonify, send_from_directory
+from google.cloud import bigquery
+import os
+
+app = Flask(__name__)
+
+# BigQuery configuration
+PROJECT_ID = "{project}"
+DATASET = "{dataset}"
+TABLE_NAME = "{table_name}"
+{credentials_code}
+@app.route('/')
+def index():
+    """Serve the HTML frontend"""
+    return send_from_directory('.', 'index.html')
+
+@app.route('/api/data')
+def get_data():
+    """Fetch data from BigQuery and return as JSON"""
+    try:
+        query = f"""
+            SELECT *
+            FROM `{{PROJECT_ID}}.{{DATASET}}.{{TABLE_NAME}}`
+            LIMIT 10000
+        """
+        query_job = client.query(query)
+        results = query_job.result()
+
+        # Convert to list of dicts
+        data = [dict(row) for row in results]
+
+        # Handle date/datetime/Decimal serialization
+        import json
+        from datetime import date, datetime
+        from decimal import Decimal
+
+        def serialize(obj):
+            if isinstance(obj, (date, datetime)):
+                return obj.isoformat()
+            if isinstance(obj, Decimal):
+                return float(obj)
+            raise TypeError(f"Type {{type(obj)}} not serializable")
+
+        return app.response_class(
+            response=json.dumps(data, default=serialize),
+            mimetype='application/json'
+        )
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
+
+if __name__ == '__main__':
+    print("Starting Flask server with BigQuery backend...")
+    print(f"Project: {{PROJECT_ID}}")
+    print(f"Dataset: {{DATASET}}")
+    print(f"Table: {{TABLE_NAME}}")
+    print(f"Dashboard available at: http://localhost:5000")
+    app.run(debug=True, port=5000)
+'''
 
     def _load_colors(self, style_path: str) -> Dict[str, str]:
         """Load colors from style file or return defaults"""

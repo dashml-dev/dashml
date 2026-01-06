@@ -101,6 +101,25 @@ def build_command(args):
             transformer.set_db_config(db_config)
             print(f"✓ Database configuration set")
 
+    # Handle BigQuery configuration
+    elif spec["data"]["type"] == "bigquery":
+        # Validate BigQuery arguments are provided
+        if not getattr(args, "bq_project", None):
+            print(f"Error: BigQuery datasource requires --bq-project argument", file=sys.stderr)
+            return 1
+
+        # Create BigQuery config
+        bq_config = {
+            "type": "bigquery",
+            "project": args.bq_project,
+            "credentials_path": getattr(args, "bq_credentials", None)
+        }
+
+        # Pass to transformer (if it has set_db_config method)
+        if hasattr(transformer, "set_db_config"):
+            transformer.set_db_config(bq_config)
+            print(f"✓ BigQuery configuration set (project: {args.bq_project})")
+
     # Generate code
     try:
         code = transformer.build(spec)
@@ -388,6 +407,16 @@ Examples:
     build_parser.add_argument(
         "--db-password",
         help="Database password (required for SQL datasources)"
+    )
+
+    # BigQuery arguments (for BigQuery datasources)
+    build_parser.add_argument(
+        "--bq-project",
+        help="Google Cloud project ID (required for BigQuery datasources)"
+    )
+    build_parser.add_argument(
+        "--bq-credentials",
+        help="Path to service account JSON credentials file (optional, uses default credentials if not provided)"
     )
 
     # List command

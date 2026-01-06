@@ -7,7 +7,7 @@ app = Flask(__name__)
 # Database configuration
 DATABASE_URL = "postgresql://neondb_owner:npg_fm0ZpyB5CQkT@ep-gentle-glitter-a9duu2r4-pooler.gwc.azure.neon.tech:5432/neondb"
 SCHEMA = "public"
-TABLE_NAME = "orders"
+TABLE_NAME = "orders_one_week"
 
 # Create database engine
 engine = create_engine(DATABASE_URL)

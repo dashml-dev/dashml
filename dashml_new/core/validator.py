@@ -23,7 +23,7 @@ class DashMLValidator:
     # TODO: [Immutability] Use frozenset for constants to prevent accidental modification
     # SUPPORTED_CHART_TYPES = frozenset(["bar", "line", ...])
     SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie", "area", "histogram", "stacked_bar", "grouped_bar"]
-    SUPPORTED_DATA_TYPES = ["csv", "sql"]  # CSV and SQL datasources
+    SUPPORTED_DATA_TYPES = ["csv", "sql", "bigquery"]  # CSV, SQL, and BigQuery datasources
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
 
     def validate(self, spec: Dict[str, Any]) -> None:
@@ -117,6 +117,25 @@ class DashMLValidator:
             # Validate database_id if provided
             if "database_id" in data and not isinstance(data["database_id"], int):
                 raise ValidationError("'database_id' must be an integer")
+
+        elif data_type == "bigquery":
+            # BigQuery requires 'path' field with dataset.table format
+            if "path" not in data:
+                raise ValidationError(
+                    "BigQuery data source requires 'path' field with format: 'dataset.table'\n"
+                    "Example: path: 'my_dataset.my_table'"
+                )
+
+            if not isinstance(data["path"], str):
+                raise ValidationError("'path' must be a string")
+
+            # Validate path format (dataset.table)
+            path = data["path"]
+            if "." not in path:
+                raise ValidationError(
+                    f"Invalid BigQuery path format: '{path}'\n"
+                    "Expected: 'dataset.table' (e.g., 'products_postresql.orders_one_week')"
+                )
 
     def _parse_sql_path(self, path: str) -> tuple:
         """
