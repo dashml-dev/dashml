@@ -859,6 +859,7 @@ class SupersetTransformer(Transformer):
         y = chart.get("y", "")
         agg = chart.get("agg", "sum")
         group = chart.get("group")
+        x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
 
         viz_type = DASHML_TO_SUPERSET_VIZ.get(chart_type, "dist_bar")
 
@@ -910,6 +911,11 @@ class SupersetTransformer(Transformer):
             params["x_axis"] = x
             params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper()}]
 
+            # Configure temporal axis if x_type is date
+            if x_type == "date":
+                params["x_axis_sort_asc"] = True  # Sort ascending for chronological order
+                params["x_axis_time_format"] = "%Y-%m-%d"  # ISO date format
+
             # Set series type based on chart type
             if chart_type == "bar":
                 params["seriesType"] = "bar"
@@ -926,6 +932,10 @@ class SupersetTransformer(Transformer):
             # ECharts area uses x_axis and metrics
             params["x_axis"] = x
             params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper()}]
+            # Configure temporal axis if x_type is date
+            if x_type == "date":
+                params["x_axis_sort_asc"] = True
+                params["x_axis_time_format"] = "%Y-%m-%d"
         elif chart_type == "pie":
             params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper()}]
             params["groupby"] = [x]

@@ -256,6 +256,7 @@ import altair as alt"""
         y = chart["y"]
         agg = chart.get("agg", "sum")
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
+        x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
 
         # Extract colors
         # TODO: [Magic Values] Extract hardcoded defaults to module-level constants
@@ -290,10 +291,22 @@ import altair as alt"""
                 code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
                 code_parts.append(f'    chart_data = df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
 
+            # Sort by x if x_type is date or number (for chronological/numerical ordering)
+            if x_type == "date":
+                code_parts.append(f'    # Sort by date for chronological order')
+                code_parts.append(f'    chart_data["{x}"] = pd.to_datetime(chart_data["{x}"])')
+                code_parts.append(f'    chart_data = chart_data.sort_values("{x}")')
+            elif x_type == "number":
+                code_parts.append(f'    # Sort by number for numerical order')
+                code_parts.append(f'    chart_data = chart_data.sort_values("{x}")')
+
+        # Determine X encoding type based on x_type
+        x_encoding_type = ":T" if x_type == "date" else (":Q" if x_type == "number" else "")
+
         # Altair Chart Generation
         if chart_type == "bar":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
-        x=alt.X("{x}", sort=None),
+        x=alt.X("{x}{x_encoding_type}", sort=None),
         y="{y}",
         tooltip=["{x}", "{y}"]
     ).properties(title="{title}")
@@ -301,7 +314,7 @@ import altair as alt"""
 
         elif chart_type == "line":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
-        x=alt.X("{x}", sort=None),
+        x=alt.X("{x}{x_encoding_type}", sort=None),
         y="{y}",
         tooltip=["{x}", "{y}"]
     ).properties(title="{title}")
@@ -332,7 +345,7 @@ import altair as alt"""
 
         elif chart_type == "area":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
-        x=alt.X("{x}", sort=None),
+        x=alt.X("{x}{x_encoding_type}", sort=None),
         y="{y}",
         tooltip=["{x}", "{y}"]
     ).properties(title="{title}")
@@ -353,7 +366,7 @@ import altair as alt"""
             code_parts.append(f'''    # Stacked bar: stack {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}", sort=None),
+        x=alt.X("{x}{x_encoding_type}", sort=None),
         y=alt.Y("{y}:Q", stack="zero"),
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),
@@ -368,7 +381,7 @@ import altair as alt"""
             code_parts.append(f'''    # Grouped bar: group {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}", sort=None),
+        x=alt.X("{x}{x_encoding_type}", sort=None),
         y="{y}:Q",
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),

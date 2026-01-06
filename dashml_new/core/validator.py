@@ -25,6 +25,7 @@ class DashMLValidator:
     SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie", "area", "histogram", "stacked_bar", "grouped_bar"]
     SUPPORTED_DATA_TYPES = ["csv", "sql", "bigquery"]  # CSV, SQL, and BigQuery datasources
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
+    SUPPORTED_COLUMN_TYPES = ["date", "number", "string"]  # For x_type/y_type hints
 
     def validate(self, spec: Dict[str, Any]) -> None:
         """
@@ -203,6 +204,20 @@ class DashMLValidator:
                 raise ValidationError(
                     f"Chart '{chart['id']}' is type '{chart['type']}' and requires a 'group' field"
                 )
+
+        # x_type validation (optional field)
+        if "x_type" in chart and chart["x_type"] not in self.SUPPORTED_COLUMN_TYPES:
+            raise ValidationError(
+                f"Chart '{chart['id']}' has unsupported x_type: '{chart['x_type']}'. "
+                f"Supported: {', '.join(self.SUPPORTED_COLUMN_TYPES)}"
+            )
+
+        # y_type validation (optional field)
+        if "y_type" in chart and chart["y_type"] not in self.SUPPORTED_COLUMN_TYPES:
+            raise ValidationError(
+                f"Chart '{chart['id']}' has unsupported y_type: '{chart['y_type']}'. "
+                f"Supported: {', '.join(self.SUPPORTED_COLUMN_TYPES)}"
+            )
 
         # ID uniqueness (check against other charts)
         # This is simplified - full implementation would track seen IDs

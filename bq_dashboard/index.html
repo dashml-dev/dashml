@@ -121,7 +121,7 @@
   <script>
     const theme = {"background": "#282a36", "card": "#313343", "text": "#f8f8f2", "primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]};
 
-    function aggregateData(data, xCol, yCol, aggFunc) {
+    function aggregateData(data, xCol, yCol, aggFunc, xType) {
       const groups = {};
       data.forEach(row => {
         const key = row[xCol];
@@ -129,7 +129,7 @@
         groups[key].push(parseFloat(row[yCol]) || 0);
       });
 
-      return Object.entries(groups).map(([key, values]) => {
+      const result = Object.entries(groups).map(([key, values]) => {
         let aggValue;
         switch (aggFunc) {
           case 'mean': aggValue = values.reduce((a, b) => a + b, 0) / values.length; break;
@@ -138,6 +138,16 @@
         }
         return { x: key, y: aggValue };
       });
+
+      // Sort based on x_type (explicit) or default - no sort
+      if (xType === 'date') {
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }
+      // No sort for 'string' or undefined
+
+      return result;
     }
 
     function aggregateDataWithGroup(data, x, y, groupField, agg) {
@@ -164,12 +174,23 @@
         }
         result.push({ x: entry.x, group: entry.group, y: aggregated });
       });
+
+      // Sort by x value (handles dates)
+      result.sort((a, b) => {
+        const aDate = new Date(a.x);
+        const bDate = new Date(b.x);
+        if (!isNaN(aDate) && !isNaN(bDate)) {
+          return aDate - bDate;
+        }
+        return String(a.x).localeCompare(String(b.x));
+      });
+
       return result;
     }
 
 
     function render_total_sales_by_country(data) {
-      const grouped = aggregateData(data, 'shipping_address_state', 'total_amount', 'sum');
+      const grouped = aggregateData(data, 'shipping_address_state', 'total_amount', 'sum', undefined);
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);
 
@@ -206,7 +227,7 @@
       Plotly.newPlot('chart-total_sales_by_country', [trace], layout, { responsive: true });
     }
     function render_country_sales_breakdown(data) {
-      const grouped = aggregateData(data, 'shipping_address_state', 'total_amount', 'sum');
+      const grouped = aggregateData(data, 'shipping_address_state', 'total_amount', 'sum', undefined);
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);
 
@@ -243,7 +264,7 @@
       Plotly.newPlot('chart-country_sales_breakdown', [trace], layout, { responsive: true });
     }
     function render_sales_over_time(data) {
-      const grouped = aggregateData(data, 'order_date', 'total_amount', 'sum');
+      const grouped = aggregateData(data, 'order_date', 'total_amount', 'sum', 'date');
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);
 
@@ -280,7 +301,7 @@
       Plotly.newPlot('chart-sales_over_time', [trace], layout, { responsive: true });
     }
     function render_average_sales_trend(data) {
-      const grouped = aggregateData(data, 'order_date', 'total_amount', 'mean');
+      const grouped = aggregateData(data, 'order_date', 'total_amount', 'mean', 'date');
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);
 

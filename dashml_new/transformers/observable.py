@@ -411,6 +411,7 @@ class ObservablePlotTransformer(Transformer):
         y = chart["y"]
         agg = chart.get("agg", "sum")
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
+        x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
 
         primary_color = colors.get("primary", "#4269d0")
         secondary_colors = colors.get("secondary", ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
@@ -427,10 +428,10 @@ class ObservablePlotTransformer(Transformer):
             data_code = "dashmlData"
         elif chart_type in ["stacked_bar", "grouped_bar"] and group:
             # For stacked/grouped bars, need to group by both x and group field
-            data_code = self._get_aggregation_code_with_group(x, y, group, agg)
+            data_code = self._get_aggregation_code_with_group(x, y, group, agg, x_type)
         else:
             # Aggregate data for other chart types
-            data_code = self._get_aggregation_code(x, y, agg)
+            data_code = self._get_aggregation_code(x, y, agg, x_type)
 
         # Pie charts use D3 directly instead of Observable Plot
         if chart_type == "pie":
@@ -439,11 +440,11 @@ class ObservablePlotTransformer(Transformer):
         # Generate Observable Plot mark based on chart type
         mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name)
 
-        # Detect if x axis is temporal (common date field names)
+        # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
         # TODO: [Magic Values] Extract temporal field names to module-level constant
         # Fix: TEMPORAL_FIELD_NAMES = frozenset(['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at'])
         temporal_fields = ['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at']
-        is_temporal_x = x.lower() in temporal_fields
+        is_temporal_x = x_type == "date" or (x_type is None and x.lower() in temporal_fields)
 
         scale_config = ""
         if is_temporal_x:
@@ -529,7 +530,7 @@ class ObservablePlotTransformer(Transformer):
 
             document.getElementById('{container_id}').appendChild(svg.node());"""
 
-    def _get_aggregation_code(self, x: str, y: str, agg: str) -> str:
+    def _get_aggregation_code(self, x: str, y: str, agg: str, x_type: str = None) -> str:
         """Generate JavaScript code to aggregate data"""
         if agg == "sum":
             agg_expr = f"d3.sum(v, d => d['{y}'])"
@@ -540,13 +541,21 @@ class ObservablePlotTransformer(Transformer):
         else:
             agg_expr = f"d3.sum(v, d => d['{y}'])"
 
+        # Add sorting based on x_type
+        if x_type == "date":
+            sort_code = f".sort((a, b) => new Date(a.{x}) - new Date(b.{x}))"
+        elif x_type == "number":
+            sort_code = f".sort((a, b) => a.{x} - b.{x})"
+        else:
+            sort_code = ""
+
         return f"""d3.rollups(
                 dashmlData,
                 v => {agg_expr},
                 d => d['{x}']
-            ).map(([{x}, {y}]) => ({{ {x}, {y} }}))"""
+            ).map(([{x}, {y}]) => ({{ {x}, {y} }})){sort_code}"""
 
-    def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str) -> str:
+    def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str, x_type: str = None) -> str:
         """Generate JavaScript code to aggregate data with grouping
 
         TODO: [DRY] This if/elif chain is duplicated from _get_aggregation_code
@@ -561,6 +570,14 @@ class ObservablePlotTransformer(Transformer):
         else:
             agg_expr = f"d3.sum(v, d => d['{y}'])"
 
+        # Add sorting based on x_type
+        if x_type == "date":
+            sort_code = f".sort((a, b) => new Date(a.{x}) - new Date(b.{x}))"
+        elif x_type == "number":
+            sort_code = f".sort((a, b) => a.{x} - b.{x})"
+        else:
+            sort_code = ""
+
         return f"""d3.rollups(
                 dashmlData,
                 v => {agg_expr},
@@ -572,7 +589,7 @@ class ObservablePlotTransformer(Transformer):
                     {group}: {group}Val,
                     {y}: {y}Val
                 }}))
-            )"""
+            ){sort_code}"""
 
     def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str) -> str:
         """Generate Observable Plot mark specification

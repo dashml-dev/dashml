@@ -33,6 +33,7 @@ pages:
         type: "line"
         title: "Sales Over Time"
         x: "order_date"
+        x_type: "date"
         y: "total_amount"
         agg: "sum"
 
@@ -40,6 +41,7 @@ pages:
         type: "line"
         title: "Average Daily Sales"
         x: "order_date"
+        x_type: "date"
         y: "total_amount"
         agg: "mean"
 

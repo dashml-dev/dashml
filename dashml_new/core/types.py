@@ -63,6 +63,12 @@ class ChartSpec(TypedDict, total=False):
     - stacked_bar: Stacked bars (requires 'group' field)
     - grouped_bar: Grouped/clustered bars (requires 'group' field)
 
+    Type hints (optional):
+    - x_type: Explicit type for x-axis values ("date", "number", "string")
+    - y_type: Explicit type for y-axis values ("number", "string")
+    
+    When x_type: "date" is specified, data is sorted chronologically.
+
     Note: Using total=False allows optional fields like 'title' and 'agg'.
     The validator ensures required fields are present.
     """
@@ -73,6 +79,8 @@ class ChartSpec(TypedDict, total=False):
     y: str
     agg: str  # sum, mean, or count
     group: str  # Field to group/stack by (required for stacked_bar and grouped_bar)
+    x_type: str  # Optional: "date", "number", or "string" - controls sorting/formatting
+    y_type: str  # Optional: "number" or "string"
 
 
 class PageSpec(TypedDict, total=False):

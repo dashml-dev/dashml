@@ -518,7 +518,7 @@ if __name__ == '__main__':
       return result;
     }
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg) {
+    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {
       const grouped = {};
       data.forEach(row => {
         const xKey = row[x];
@@ -542,6 +542,14 @@ if __name__ == '__main__':
         }
         result.push({ x: entry.x, group: entry.group, y: aggregated });
       });
+
+      // Sort based on x_type
+      if (xType === 'date') {
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }
+
       return result;
     }'''
 
@@ -711,14 +719,16 @@ if __name__ == '__main__':
             agg = chart.get("agg", "sum")
             group = chart.get("group")
             title = chart.get("title", chart_id)
+            x_type = chart.get("x_type")  # Optional: "date", "number", "string"
 
             # Check if this is stacked/grouped bar
             if chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
+                x_type_js = f"'{x_type}'" if x_type else "undefined"
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
       // Stacked/grouped bars need multiple traces
-      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}');
+      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', {x_type_js});
       const groupValues = [...new Set(aggregated.map(d => d.group))];
 
       const traces = [];
@@ -747,6 +757,7 @@ if __name__ == '__main__':
     }}''')
             else:
                 # Standard single-trace charts
+                x_type_js = f"'{x_type}'" if x_type else "undefined"
                 if chart_type in CHARTS_USE_RAW_DATA:
                     data_prep = f'''
       // Use raw data for {chart_type}
@@ -754,7 +765,7 @@ if __name__ == '__main__':
       const yValues = data.map(d => d['{y}']);'''
                 else:
                     data_prep = f'''
-      const grouped = aggregateData(data, '{x}', '{y}', '{agg}');
+      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', {x_type_js});
       const xValues = grouped.map(d => d.{x});
       const yValues = grouped.map(d => d.{y});'''
 
@@ -822,7 +833,7 @@ if __name__ == '__main__':
         return f'''  <script>
     const theme = {theme_json};
 
-    function aggregateData(data, xCol, yCol, aggFunc) {{
+    function aggregateData(data, xCol, yCol, aggFunc, xType) {{
       const groups = {{}};
       data.forEach(row => {{
         const key = row[xCol];
@@ -830,7 +841,7 @@ if __name__ == '__main__':
         groups[key].push(parseFloat(row[yCol]) || 0);
       }});
 
-      return Object.entries(groups).map(([key, values]) => {{
+      const result = Object.entries(groups).map(([key, values]) => {{
         let aggValue;
         switch (aggFunc) {{
           case 'mean': aggValue = values.reduce((a, b) => a + b, 0) / values.length; break;
@@ -839,9 +850,19 @@ if __name__ == '__main__':
         }}
         return {{ [xCol]: key, [yCol]: aggValue }};
       }});
+
+      // Sort based on x_type (explicit) or default string sort
+      if (xType === 'date') {{
+        result.sort((a, b) => new Date(a[xCol]) - new Date(b[xCol]));
+      }} else if (xType === 'number') {{
+        result.sort((a, b) => parseFloat(a[xCol]) - parseFloat(b[xCol]));
+      }}
+      // No sort for 'string' or undefined - keep aggregation order
+
+      return result;
     }}
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg) {{
+    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {{
       const grouped = {{}};
       data.forEach(row => {{
         const xKey = row[x];
@@ -865,6 +886,14 @@ if __name__ == '__main__':
         }}
         result.push({{ x: entry.x, group: entry.group, y: aggregated }});
       }});
+
+      // Sort based on x_type
+      if (xType === 'date') {{
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      }} else if (xType === 'number') {{
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }}
+
       return result;
     }}
 
@@ -1092,14 +1121,16 @@ if __name__ == '__main__':
             agg = chart.get("agg", "sum")
             group = chart.get("group")
             title = chart.get("title", chart_id)
+            x_type = chart.get("x_type")  # Optional: "date", "number", "string"
 
             # Check if this is stacked/grouped bar
             if chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
+                x_type_js = f"'{x_type}'" if x_type else "undefined"
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
       // Stacked/grouped bars need multiple traces
-      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}');
+      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', {x_type_js});
       const groupValues = [...new Set(aggregated.map(d => d.group))];
 
       const traces = [];
@@ -1128,6 +1159,7 @@ if __name__ == '__main__':
     }}''')
             else:
                 # Standard single-trace charts
+                x_type_js = f"'{x_type}'" if x_type else "undefined"
                 if chart_type in CHARTS_USE_RAW_DATA:
                     data_prep = f'''
       // Use raw data for {chart_type}
@@ -1135,7 +1167,7 @@ if __name__ == '__main__':
       const yValues = data.map(d => d['{y}'] || d.{y});'''
                 else:
                     data_prep = f'''
-      const grouped = aggregateData(data, '{x}', '{y}', '{agg}');
+      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', {x_type_js});
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);'''
 
@@ -1203,7 +1235,7 @@ if __name__ == '__main__':
         return f'''  <script>
     const theme = {theme_json};
 
-    function aggregateData(data, xCol, yCol, aggFunc) {{
+    function aggregateData(data, xCol, yCol, aggFunc, xType) {{
       const groups = {{}};
       data.forEach(row => {{
         const key = row[xCol];
@@ -1211,7 +1243,7 @@ if __name__ == '__main__':
         groups[key].push(parseFloat(row[yCol]) || 0);
       }});
 
-      return Object.entries(groups).map(([key, values]) => {{
+      const result = Object.entries(groups).map(([key, values]) => {{
         let aggValue;
         switch (aggFunc) {{
           case 'mean': aggValue = values.reduce((a, b) => a + b, 0) / values.length; break;
@@ -1220,6 +1252,16 @@ if __name__ == '__main__':
         }}
         return {{ x: key, y: aggValue }};
       }});
+
+      // Sort based on x_type (explicit) or default - no sort
+      if (xType === 'date') {{
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      }} else if (xType === 'number') {{
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }}
+      // No sort for 'string' or undefined
+
+      return result;
     }}
 
     function aggregateDataWithGroup(data, x, y, groupField, agg) {{
@@ -1246,6 +1288,17 @@ if __name__ == '__main__':
         }}
         result.push({{ x: entry.x, group: entry.group, y: aggregated }});
       }});
+
+      // Sort by x value (handles dates)
+      result.sort((a, b) => {{
+        const aDate = new Date(a.x);
+        const bDate = new Date(b.x);
+        if (!isNaN(aDate) && !isNaN(bDate)) {{
+          return aDate - bDate;
+        }}
+        return String(a.x).localeCompare(String(b.x));
+      }});
+
       return result;
     }}
 
