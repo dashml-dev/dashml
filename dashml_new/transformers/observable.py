@@ -541,19 +541,26 @@ class ObservablePlotTransformer(Transformer):
         else:
             agg_expr = f"d3.sum(v, d => d['{y}'])"
 
-        # Add sorting based on x_type
-        if x_type == "date":
-            sort_code = f".sort((a, b) => new Date(a.{x}) - new Date(b.{x}))"
-        elif x_type == "number":
-            sort_code = f".sort((a, b) => a.{x} - b.{x})"
-        else:
-            sort_code = ""
+        # Generate sorting based on x_type (explicit or schema-detected via getEffectiveType)
+        x_type_js = f"'{x_type}'" if x_type else "undefined"
 
-        return f"""d3.rollups(
-                dashmlData,
-                v => {agg_expr},
-                d => d['{x}']
-            ).map(([{x}, {y}]) => ({{ {x}, {y} }})){sort_code}"""
+        # Use function to sort based on effective type (explicit > schema-detected)
+        return f"""(() => {{
+                const effectiveXType = getEffectiveType('{x}', {x_type_js});
+                const result = d3.rollups(
+                    dashmlData,
+                    v => {agg_expr},
+                    d => d['{x}']
+                ).map(([{x}, {y}]) => ({{ {x}, {y} }}));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {{
+                    result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
+                }} else if (effectiveXType === 'number') {{
+                    result.sort((a, b) => a.{x} - b.{x});
+                }}
+                return result;
+            }})()"""
 
     def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str, x_type: str = None) -> str:
         """Generate JavaScript code to aggregate data with grouping
@@ -570,26 +577,32 @@ class ObservablePlotTransformer(Transformer):
         else:
             agg_expr = f"d3.sum(v, d => d['{y}'])"
 
-        # Add sorting based on x_type
-        if x_type == "date":
-            sort_code = f".sort((a, b) => new Date(a.{x}) - new Date(b.{x}))"
-        elif x_type == "number":
-            sort_code = f".sort((a, b) => a.{x} - b.{x})"
-        else:
-            sort_code = ""
+        # Generate sorting based on x_type (explicit or schema-detected via getEffectiveType)
+        x_type_js = f"'{x_type}'" if x_type else "undefined"
 
-        return f"""d3.rollups(
-                dashmlData,
-                v => {agg_expr},
-                d => d['{x}'],
-                d => d['{group}']
-            ).flatMap(([{x}Val, groupData]) =>
-                groupData.map(([{group}Val, {y}Val]) => ({{
-                    {x}: {x}Val,
-                    {group}: {group}Val,
-                    {y}: {y}Val
-                }}))
-            ){sort_code}"""
+        return f"""(() => {{
+                const effectiveXType = getEffectiveType('{x}', {x_type_js});
+                const result = d3.rollups(
+                    dashmlData,
+                    v => {agg_expr},
+                    d => d['{x}'],
+                    d => d['{group}']
+                ).flatMap(([{x}Val, groupData]) =>
+                    groupData.map(([{group}Val, {y}Val]) => ({{
+                        {x}: {x}Val,
+                        {group}: {group}Val,
+                        {y}: {y}Val
+                    }}))
+                );
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {{
+                    result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
+                }} else if (effectiveXType === 'number') {{
+                    result.sort((a, b) => a.{x} - b.{x});
+                }}
+                return result;
+            }})()"""
 
     def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str) -> str:
         """Generate Observable Plot mark specification
@@ -787,10 +800,59 @@ TABLE_NAME = "{table_name}"
 # Create database engine
 engine = create_engine(DATABASE_URL)
 
+# Cache for column types (fetched once from information_schema)
+_column_types_cache = None
+
+def get_column_types():
+    """Fetch column types from information_schema and map to simple types"""
+    global _column_types_cache
+    if _column_types_cache is not None:
+        return _column_types_cache
+
+    try:
+        query = f"""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = '{{SCHEMA}}' AND table_name = '{{TABLE_NAME}}'
+        """
+        df = pd.read_sql(query, engine)
+
+        # Map SQL types to simple types: date, number, string
+        type_mapping = {{}}
+        for _, row in df.iterrows():
+            col_name = row['column_name']
+            data_type = str(row['data_type']).upper()
+
+            # Date types (PostgreSQL, MySQL, etc.)
+            if any(dt in data_type for dt in ['DATE', 'TIME', 'TIMESTAMP', 'INTERVAL']):
+                type_mapping[col_name] = 'date'
+            # Numeric types
+            elif any(dt in data_type for dt in ['INT', 'FLOAT', 'NUMERIC', 'DECIMAL',
+                                                  'REAL', 'DOUBLE', 'SERIAL', 'MONEY']):
+                type_mapping[col_name] = 'number'
+            # Everything else is string
+            else:
+                type_mapping[col_name] = 'string'
+
+        _column_types_cache = type_mapping
+        return type_mapping
+    except Exception as e:
+        print(f"Warning: Could not fetch column types: {{e}}")
+        return {{}}
+
 @app.route('/')
 def index():
     """Serve the HTML frontend"""
     return send_from_directory('.', 'index.html')
+
+@app.route('/api/schema')
+def get_schema():
+    """Return column types from information_schema"""
+    try:
+        column_types = get_column_types()
+        return jsonify(column_types)
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
 
 @app.route('/api/data')
 def get_data():
@@ -837,13 +899,26 @@ if __name__ == '__main__':
         """Generate JavaScript to load data from Flask API"""
         return """
     <script>
+        // Column types from INFORMATION_SCHEMA (auto-detected)
+        let columnTypes = {};
         // Load data from Flask API
         let dashmlData = [];
 
-        fetch('/api/data')
-            .then(response => response.json())
-            .then(data => {
+        // Get effective type: explicit > schema-detected > undefined
+        function getEffectiveType(column, explicitType) {
+            if (explicitType) return explicitType;
+            return columnTypes[column] || undefined;
+        }
+
+        // Fetch schema first, then data
+        Promise.all([
+            fetch('/api/schema').then(r => r.json()),
+            fetch('/api/data').then(r => r.json())
+        ])
+            .then(([schema, data]) => {
+                columnTypes = schema;
                 dashmlData = data;
+                console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
                 renderAllCharts();
             })
             .catch(error => {

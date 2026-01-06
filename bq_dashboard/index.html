@@ -120,8 +120,19 @@
   </div>
   <script>
     const theme = {"background": "#282a36", "card": "#313343", "text": "#f8f8f2", "primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]};
+    // Column types from INFORMATION_SCHEMA (auto-detected)
+    let columnTypes = {};
+
+    // Get effective x_type: explicit > schema-detected > undefined
+    function getEffectiveXType(xColumn, explicitXType) {
+      if (explicitXType) return explicitXType;
+      return columnTypes[xColumn] || undefined;
+    }
 
     function aggregateData(data, xCol, yCol, aggFunc, xType) {
+      // Use schema-detected type if no explicit type provided
+      const effectiveXType = getEffectiveXType(xCol, xType);
+
       const groups = {};
       data.forEach(row => {
         const key = row[xCol];
@@ -139,10 +150,10 @@
         return { x: key, y: aggValue };
       });
 
-      // Sort based on x_type (explicit) or default - no sort
-      if (xType === 'date') {
+      // Sort based on effective x_type (explicit or schema-detected)
+      if (effectiveXType === 'date') {
         result.sort((a, b) => new Date(a.x) - new Date(b.x));
-      } else if (xType === 'number') {
+      } else if (effectiveXType === 'number') {
         result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
       }
       // No sort for 'string' or undefined
@@ -150,7 +161,10 @@
       return result;
     }
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg) {
+    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {
+      // Use schema-detected type if no explicit type provided
+      const effectiveXType = getEffectiveXType(x, xType);
+
       const grouped = {};
       data.forEach(row => {
         const xKey = row[x];
@@ -175,15 +189,12 @@
         result.push({ x: entry.x, group: entry.group, y: aggregated });
       });
 
-      // Sort by x value (handles dates)
-      result.sort((a, b) => {
-        const aDate = new Date(a.x);
-        const bDate = new Date(b.x);
-        if (!isNaN(aDate) && !isNaN(bDate)) {
-          return aDate - bDate;
-        }
-        return String(a.x).localeCompare(String(b.x));
-      });
+      // Sort based on effective x_type (explicit or schema-detected)
+      if (effectiveXType === 'date') {
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (effectiveXType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }
 
       return result;
     }
@@ -264,7 +275,7 @@
       Plotly.newPlot('chart-country_sales_breakdown', [trace], layout, { responsive: true });
     }
     function render_sales_over_time(data) {
-      const grouped = aggregateData(data, 'order_date', 'total_amount', 'sum', 'date');
+      const grouped = aggregateData(data, 'order_date', 'total_amount', 'sum', undefined);
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);
 
@@ -301,7 +312,7 @@
       Plotly.newPlot('chart-sales_over_time', [trace], layout, { responsive: true });
     }
     function render_average_sales_trend(data) {
-      const grouped = aggregateData(data, 'order_date', 'total_amount', 'mean', 'date');
+      const grouped = aggregateData(data, 'order_date', 'total_amount', 'mean', undefined);
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);
 
@@ -360,9 +371,14 @@
       render_average_sales_trend(data);
     }
 
-    fetch('/api/data')
-      .then(response => response.json())
-      .then(data => {
+    // Fetch schema first, then data
+    Promise.all([
+      fetch('/api/schema').then(r => r.json()),
+      fetch('/api/data').then(r => r.json())
+    ])
+      .then(([schema, data]) => {
+        columnTypes = schema;
+        console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
         renderAllPages(data);
       })
       .catch(error => console.error('Error loading data:', error));

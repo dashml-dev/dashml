@@ -196,6 +196,25 @@ import altair as alt"""
             return f'''    # Load data from CSV
     try:
         df = pd.read_csv("{path}")
+
+        # Infer column types from pandas dtypes for auto type detection
+        column_types = {{}}
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            if 'datetime' in dtype or 'date' in dtype:
+                column_types[col] = 'date'
+            elif 'int' in dtype or 'float' in dtype:
+                column_types[col] = 'number'
+            else:
+                # Try to detect date strings
+                if df[col].dtype == 'object':
+                    try:
+                        pd.to_datetime(df[col].dropna().head(10))
+                        column_types[col] = 'date'
+                    except:
+                        column_types[col] = 'string'
+                else:
+                    column_types[col] = 'string'
     except FileNotFoundError:
         st.error("Data file not found: {path}")
         return
@@ -234,11 +253,31 @@ import altair as alt"""
                 return f'''    st.error("Unsupported database type: {db_type}")
     return'''
 
-            # Generate data loading code
+            # Generate data loading code with schema detection
             return f'''    # Load data from SQL database
     try:
         engine = create_engine("{conn_str}")
         df = pd.read_sql("SELECT * FROM {schema}.{table_name}", engine)
+
+        # Fetch column types from information_schema for auto type detection
+        schema_query = """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = '{schema}' AND table_name = '{table_name}'
+        """
+        schema_df = pd.read_sql(schema_query, engine)
+
+        # Build column type mapping: date, number, string
+        column_types = {{}}
+        for _, row in schema_df.iterrows():
+            col_name = row['column_name']
+            data_type = str(row['data_type']).upper()
+            if any(dt in data_type for dt in ['DATE', 'TIME', 'TIMESTAMP', 'INTERVAL']):
+                column_types[col_name] = 'date'
+            elif any(dt in data_type for dt in ['INT', 'FLOAT', 'NUMERIC', 'DECIMAL', 'REAL', 'DOUBLE', 'SERIAL', 'MONEY']):
+                column_types[col_name] = 'number'
+            else:
+                column_types[col_name] = 'string'
     except Exception as e:
         st.error(f"Error loading data from database: {{e}}")
         return'''
@@ -269,6 +308,9 @@ import altair as alt"""
         code_parts.append(f'    # Chart: {chart_id}')
         code_parts.append(f'    st.subheader("{title}")')
 
+        # Get effective x_type: explicit > schema-detected > None (used for sorting and encoding)
+        code_parts.append(f'    effective_x_type = "{x_type}" if "{x_type}" != "None" else column_types.get("{x}")')
+
         # Aggregation (only for chart types that need it)
         if chart_type in CHARTS_NEED_AGGREGATION:
             # TODO: [DRY] Replace if/elif chain with dictionary lookup
@@ -292,21 +334,25 @@ import altair as alt"""
                 code_parts.append(f'    chart_data = df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
 
             # Sort by x if x_type is date or number (for chronological/numerical ordering)
-            if x_type == "date":
-                code_parts.append(f'    # Sort by date for chronological order')
-                code_parts.append(f'    chart_data["{x}"] = pd.to_datetime(chart_data["{x}"])')
-                code_parts.append(f'    chart_data = chart_data.sort_values("{x}")')
-            elif x_type == "number":
-                code_parts.append(f'    # Sort by number for numerical order')
-                code_parts.append(f'    chart_data = chart_data.sort_values("{x}")')
+            code_parts.append(f'    if effective_x_type == "date":')
+            code_parts.append(f'        # Sort by date for chronological order')
+            code_parts.append(f'        chart_data["{x}"] = pd.to_datetime(chart_data["{x}"])')
+            code_parts.append(f'        chart_data = chart_data.sort_values("{x}")')
+            code_parts.append(f'    elif effective_x_type == "number":')
+            code_parts.append(f'        # Sort by number for numerical order')
+            code_parts.append(f'        chart_data = chart_data.sort_values("{x}")')
 
-        # Determine X encoding type based on x_type
-        x_encoding_type = ":T" if x_type == "date" else (":Q" if x_type == "number" else "")
+        # Determine X encoding type based on effective_x_type (will be computed at runtime)
+        # For Altair: :T = temporal, :Q = quantitative, :N = nominal
+        # We'll compute this at runtime based on effective_x_type
+        code_parts.append(f'    # Determine Altair encoding type based on effective x_type')
+        code_parts.append(f'    x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")')
+        x_encoding_type = ""  # Will be added dynamically at runtime
 
         # Altair Chart Generation
         if chart_type == "bar":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
-        x=alt.X("{x}{x_encoding_type}", sort=None),
+        x=alt.X("{x}" + x_encoding_suffix, sort=None),
         y="{y}",
         tooltip=["{x}", "{y}"]
     ).properties(title="{title}")
@@ -314,7 +360,7 @@ import altair as alt"""
 
         elif chart_type == "line":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
-        x=alt.X("{x}{x_encoding_type}", sort=None),
+        x=alt.X("{x}" + x_encoding_suffix, sort=None),
         y="{y}",
         tooltip=["{x}", "{y}"]
     ).properties(title="{title}")
@@ -345,7 +391,7 @@ import altair as alt"""
 
         elif chart_type == "area":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
-        x=alt.X("{x}{x_encoding_type}", sort=None),
+        x=alt.X("{x}" + x_encoding_suffix, sort=None),
         y="{y}",
         tooltip=["{x}", "{y}"]
     ).properties(title="{title}")
@@ -366,7 +412,7 @@ import altair as alt"""
             code_parts.append(f'''    # Stacked bar: stack {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}{x_encoding_type}", sort=None),
+        x=alt.X("{x}" + x_encoding_suffix, sort=None),
         y=alt.Y("{y}:Q", stack="zero"),
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),
@@ -381,7 +427,7 @@ import altair as alt"""
             code_parts.append(f'''    # Grouped bar: group {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}{x_encoding_type}", sort=None),
+        x=alt.X("{x}" + x_encoding_suffix, sort=None),
         y="{y}:Q",
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),

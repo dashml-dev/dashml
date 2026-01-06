@@ -221,10 +221,61 @@ PROJECT_ID = "{project}"
 DATASET = "{dataset}"
 TABLE_NAME = "{table_name}"
 {credentials_code}
+
+# Cache for column types (fetched once from INFORMATION_SCHEMA)
+_column_types_cache = None
+
+def get_column_types():
+    """Fetch column types from INFORMATION_SCHEMA and map to simple types"""
+    global _column_types_cache
+    if _column_types_cache is not None:
+        return _column_types_cache
+
+    try:
+        query = f"""
+            SELECT column_name, data_type
+            FROM `{{PROJECT_ID}}.{{DATASET}}.INFORMATION_SCHEMA.COLUMNS`
+            WHERE table_name = '{{TABLE_NAME}}'
+        """
+        query_job = client.query(query)
+        results = query_job.result()
+
+        # Map BigQuery types to simple types: date, number, string
+        type_mapping = {{}}
+        for row in results:
+            col_name = row.column_name
+            data_type = row.data_type.upper()
+
+            # Date types
+            if data_type in ('DATE', 'DATETIME', 'TIMESTAMP', 'TIME'):
+                type_mapping[col_name] = 'date'
+            # Numeric types
+            elif data_type in ('INT64', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC', 'INT', 'INTEGER',
+                             'SMALLINT', 'BIGINT', 'FLOAT', 'DECIMAL', 'REAL', 'DOUBLE'):
+                type_mapping[col_name] = 'number'
+            # Everything else is string
+            else:
+                type_mapping[col_name] = 'string'
+
+        _column_types_cache = type_mapping
+        return type_mapping
+    except Exception as e:
+        print(f"Warning: Could not fetch column types: {{e}}")
+        return {{}}
+
 @app.route('/')
 def index():
     """Serve the HTML frontend"""
     return send_from_directory('.', 'index.html')
+
+@app.route('/api/schema')
+def get_schema():
+    """Return column types from INFORMATION_SCHEMA"""
+    try:
+        column_types = get_column_types()
+        return jsonify(column_types)
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
 
 @app.route('/api/data')
 def get_data():
@@ -547,6 +598,87 @@ if __name__ == '__main__':
       if (xType === 'date') {
         result.sort((a, b) => new Date(a.x) - new Date(b.x));
       } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }
+
+      return result;
+    }'''
+
+    def _generate_aggregator_with_schema(self) -> str:
+        """Generate aggregator functions that use INFORMATION_SCHEMA for auto type detection"""
+        return '''    // Get effective x_type: explicit > schema-detected > undefined
+    function getEffectiveXType(xColumn, explicitXType) {
+      if (explicitXType) return explicitXType;
+      return columnTypes[xColumn] || undefined;
+    }
+
+    function aggregateData(data, x, y, agg, xType) {
+      // Use schema-detected type if no explicit type provided
+      const effectiveXType = getEffectiveXType(x, xType);
+
+      const grouped = {};
+      data.forEach(row => {
+        const key = row[x];
+        if (!grouped[key]) grouped[key] = { values: [], count: 0 };
+        grouped[key].values.push(row[y]);
+        grouped[key].count++;
+      });
+
+      const result = [];
+      Object.keys(grouped).forEach(key => {
+        const values = grouped[key].values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = grouped[key].count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        result.push({ x: key, y: aggregated });
+      });
+
+      // Sort based on effective x_type (explicit or schema-detected)
+      if (effectiveXType === 'date') {
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (effectiveXType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }
+
+      return result;
+    }
+
+    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {
+      // Use schema-detected type if no explicit type provided
+      const effectiveXType = getEffectiveXType(x, xType);
+
+      const grouped = {};
+      data.forEach(row => {
+        const xKey = row[x];
+        const groupKey = row[groupField];
+        const compositeKey = xKey + '|||' + groupKey;
+        if (!grouped[compositeKey]) grouped[compositeKey] = { x: xKey, group: groupKey, values: [], count: 0 };
+        grouped[compositeKey].values.push(row[y]);
+        grouped[compositeKey].count++;
+      });
+
+      const result = [];
+      Object.keys(grouped).forEach(key => {
+        const entry = grouped[key];
+        const values = entry.values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = entry.count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        result.push({ x: entry.x, group: entry.group, y: aggregated });
+      });
+
+      // Sort based on effective x_type (explicit or schema-detected)
+      if (effectiveXType === 'date') {
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (effectiveXType === 'number') {
         result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
       }
 
@@ -1002,10 +1134,59 @@ TABLE_NAME = "{table_name}"
 # Create database engine
 engine = create_engine(DATABASE_URL)
 
+# Cache for column types (fetched once from information_schema)
+_column_types_cache = None
+
+def get_column_types():
+    """Fetch column types from information_schema and map to simple types"""
+    global _column_types_cache
+    if _column_types_cache is not None:
+        return _column_types_cache
+
+    try:
+        query = f"""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = '{{SCHEMA}}' AND table_name = '{{TABLE_NAME}}'
+        """
+        df = pd.read_sql(query, engine)
+
+        # Map SQL types to simple types: date, number, string
+        type_mapping = {{}}
+        for _, row in df.iterrows():
+            col_name = row['column_name']
+            data_type = str(row['data_type']).upper()
+
+            # Date types (PostgreSQL, MySQL, etc.)
+            if any(dt in data_type for dt in ['DATE', 'TIME', 'TIMESTAMP', 'INTERVAL']):
+                type_mapping[col_name] = 'date'
+            # Numeric types
+            elif any(dt in data_type for dt in ['INT', 'FLOAT', 'NUMERIC', 'DECIMAL',
+                                                  'REAL', 'DOUBLE', 'SERIAL', 'MONEY']):
+                type_mapping[col_name] = 'number'
+            # Everything else is string
+            else:
+                type_mapping[col_name] = 'string'
+
+        _column_types_cache = type_mapping
+        return type_mapping
+    except Exception as e:
+        print(f"Warning: Could not fetch column types: {{e}}")
+        return {{}}
+
 @app.route('/')
 def index():
     """Serve the HTML frontend"""
     return send_from_directory('.', 'index.html')
+
+@app.route('/api/schema')
+def get_schema():
+    """Return column types from information_schema"""
+    try:
+        column_types = get_column_types()
+        return jsonify(column_types)
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
 
 @app.route('/api/data')
 def get_data():
@@ -1076,15 +1257,22 @@ if __name__ == '__main__':
         js_parts.append(f"    const theme = {theme_json};")
         js_parts.append("    // Chart definitions")
         js_parts.append(f"    const charts = {self._charts_to_json(charts)};")
+        js_parts.append("    // Column types from INFORMATION_SCHEMA (auto-detected)")
+        js_parts.append("    let columnTypes = {};")
         js_parts.append("")
-        js_parts.append(self._generate_aggregator())
+        js_parts.append(self._generate_aggregator_with_schema())
         js_parts.append("")
         js_parts.append(self._generate_renderer(multi_page=False))
         js_parts.append("")
-        js_parts.append('''    fetch('/api/data')
-      .then(response => response.json())
-      .then(data => {
+        js_parts.append('''    // Fetch schema first, then data
+    Promise.all([
+      fetch('/api/schema').then(r => r.json()),
+      fetch('/api/data').then(r => r.json())
+    ])
+      .then(([schema, data]) => {
+        columnTypes = schema;
         window.dashmlData = data;
+        console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
         renderChart(charts[0]);
       })
       .catch(error => {
@@ -1234,8 +1422,19 @@ if __name__ == '__main__':
 
         return f'''  <script>
     const theme = {theme_json};
+    // Column types from INFORMATION_SCHEMA (auto-detected)
+    let columnTypes = {{}};
+
+    // Get effective x_type: explicit > schema-detected > undefined
+    function getEffectiveXType(xColumn, explicitXType) {{
+      if (explicitXType) return explicitXType;
+      return columnTypes[xColumn] || undefined;
+    }}
 
     function aggregateData(data, xCol, yCol, aggFunc, xType) {{
+      // Use schema-detected type if no explicit type provided
+      const effectiveXType = getEffectiveXType(xCol, xType);
+
       const groups = {{}};
       data.forEach(row => {{
         const key = row[xCol];
@@ -1253,10 +1452,10 @@ if __name__ == '__main__':
         return {{ x: key, y: aggValue }};
       }});
 
-      // Sort based on x_type (explicit) or default - no sort
-      if (xType === 'date') {{
+      // Sort based on effective x_type (explicit or schema-detected)
+      if (effectiveXType === 'date') {{
         result.sort((a, b) => new Date(a.x) - new Date(b.x));
-      }} else if (xType === 'number') {{
+      }} else if (effectiveXType === 'number') {{
         result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
       }}
       // No sort for 'string' or undefined
@@ -1264,7 +1463,10 @@ if __name__ == '__main__':
       return result;
     }}
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg) {{
+    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {{
+      // Use schema-detected type if no explicit type provided
+      const effectiveXType = getEffectiveXType(x, xType);
+
       const grouped = {{}};
       data.forEach(row => {{
         const xKey = row[x];
@@ -1289,15 +1491,12 @@ if __name__ == '__main__':
         result.push({{ x: entry.x, group: entry.group, y: aggregated }});
       }});
 
-      // Sort by x value (handles dates)
-      result.sort((a, b) => {{
-        const aDate = new Date(a.x);
-        const bDate = new Date(b.x);
-        if (!isNaN(aDate) && !isNaN(bDate)) {{
-          return aDate - bDate;
-        }}
-        return String(a.x).localeCompare(String(b.x));
-      }});
+      // Sort based on effective x_type (explicit or schema-detected)
+      if (effectiveXType === 'date') {{
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      }} else if (effectiveXType === 'number') {{
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }}
 
       return result;
     }}
@@ -1308,9 +1507,14 @@ if __name__ == '__main__':
 
 {render_all}
 
-    fetch('/api/data')
-      .then(response => response.json())
-      .then(data => {{
+    // Fetch schema first, then data
+    Promise.all([
+      fetch('/api/schema').then(r => r.json()),
+      fetch('/api/data').then(r => r.json())
+    ])
+      .then(([schema, data]) => {{
+        columnTypes = schema;
+        console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
         renderAllPages(data);
       }})
       .catch(error => console.error('Error loading data:', error));
