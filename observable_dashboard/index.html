@@ -94,13 +94,42 @@
     <h1>Sales Analytics Dashboard</h1>
 
     <script>
+        // Column types from INFORMATION_SCHEMA (auto-detected)
+        let columnTypes = {};
         // Load data from Flask API
         let dashmlData = [];
 
-        fetch('/api/data')
-            .then(response => response.json())
-            .then(data => {
-                dashmlData = data;
+        // Get effective type: explicit > schema-detected > undefined
+        function getEffectiveType(column, explicitType) {
+            if (explicitType) return explicitType;
+            return columnTypes[column] || undefined;
+        }
+
+        // Fetch schema first, then data
+        Promise.all([
+            fetch('/api/schema').then(r => r.json()),
+            fetch('/api/data').then(r => r.json())
+        ])
+            .then(([schema, data]) => {
+                columnTypes = schema;
+
+                // Parse date columns based on schema
+                dashmlData = data.map(row => {
+                    const parsedRow = {};
+                    for (const [column, value] of Object.entries(row)) {
+                        if (columnTypes[column] === 'date' && value !== null) {
+                            parsedRow[column] = new Date(value);
+                        } else if (columnTypes[column] === 'number' && value !== null) {
+                            parsedRow[column] = parseFloat(value);
+                        } else {
+                            parsedRow[column] = value;
+                        }
+                    }
+                    return parsedRow;
+                });
+
+                console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
+                console.log('Parsed data (first row):', dashmlData[0]);
                 renderAllCharts();
             })
             .catch(error => {
@@ -153,11 +182,42 @@
 
         function renderAllCharts() {
             // Chart: total_sales_by_country
-            const data_total_sales_by_country = d3.rollups(
-                dashmlData,
-                v => d3.sum(v, d => d['total_amount']),
-                d => d['shipping_address_state']
-            ).map(([shipping_address_state, total_amount]) => ({ shipping_address_state, total_amount }));
+            const data_total_sales_by_country = (() => {
+                const effectiveXType = getEffectiveType('shipping_address_state', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.sum(v, d => d['total_amount']),
+                    d => d['shipping_address_state']
+                ).map(([shipping_address_state, total_amount]) => ({ shipping_address_state, total_amount }));
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.shipping_address_state));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.shipping_address_state) - new Date(b.shipping_address_state));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.shipping_address_state - b.shipping_address_state);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].shipping_address_state;
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.shipping_address_state - b.shipping_address_state);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.shipping_address_state - b.shipping_address_state);
+                        } else {
+                            result.sort((a, b) => String(a.shipping_address_state).localeCompare(String(b.shipping_address_state)));
+                        }
+                    }
+                }
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.shipping_address_state));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.shipping_address_state));
+                return result;
+            })();
             const plot_total_sales_by_country = Plot.plot({
                 marks: [
                     Plot.barY(data_total_sales_by_country, {
@@ -178,11 +238,42 @@
             });
             document.getElementById('chart-overview-total_sales_by_country').appendChild(plot_total_sales_by_country);
             // D3 Pie Chart
-            const data_country_sales_breakdown = d3.rollups(
-                dashmlData,
-                v => d3.sum(v, d => d['total_amount']),
-                d => d['shipping_address_state']
-            ).map(([shipping_address_state, total_amount]) => ({ shipping_address_state, total_amount }));
+            const data_country_sales_breakdown = (() => {
+                const effectiveXType = getEffectiveType('shipping_address_state', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.sum(v, d => d['total_amount']),
+                    d => d['shipping_address_state']
+                ).map(([shipping_address_state, total_amount]) => ({ shipping_address_state, total_amount }));
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.shipping_address_state));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.shipping_address_state) - new Date(b.shipping_address_state));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.shipping_address_state - b.shipping_address_state);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].shipping_address_state;
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.shipping_address_state - b.shipping_address_state);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.shipping_address_state - b.shipping_address_state);
+                        } else {
+                            result.sort((a, b) => String(a.shipping_address_state).localeCompare(String(b.shipping_address_state)));
+                        }
+                    }
+                }
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.shipping_address_state));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.shipping_address_state));
+                return result;
+            })();
             const pieWidth = 400;
             const pieHeight = 400;
             const legendWidth = 150;
@@ -242,11 +333,42 @@
 
             document.getElementById('chart-overview-country_sales_breakdown').appendChild(svg.node());
             // Chart: sales_over_time
-            const data_sales_over_time = d3.rollups(
-                dashmlData,
-                v => d3.sum(v, d => d['total_amount']),
-                d => d['order_date']
-            ).map(([order_date, total_amount]) => ({ order_date, total_amount }));
+            const data_sales_over_time = (() => {
+                const effectiveXType = getEffectiveType('order_date', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.sum(v, d => d['total_amount']),
+                    d => d['order_date']
+                ).map(([order_date, total_amount]) => ({ order_date, total_amount }));
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.order_date));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.order_date) - new Date(b.order_date));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.order_date - b.order_date);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].order_date;
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.order_date - b.order_date);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.order_date - b.order_date);
+                        } else {
+                            result.sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)));
+                        }
+                    }
+                }
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.order_date));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.order_date));
+                return result;
+            })();
             const plot_sales_over_time = Plot.plot({
                 marks: [
                     Plot.line(data_sales_over_time, {
@@ -254,6 +376,7 @@
                         y: "total_amount",
                         stroke: "#bd93f9",
                         strokeWidth: 2,
+                        sort: "order_date",
                         tip: true
                     }),
                     Plot.dot(data_sales_over_time, {
@@ -274,11 +397,42 @@
             });
             document.getElementById('chart-trends-sales_over_time').appendChild(plot_sales_over_time);
             // Chart: average_sales_trend
-            const data_average_sales_trend = d3.rollups(
-                dashmlData,
-                v => d3.mean(v, d => d['total_amount']),
-                d => d['order_date']
-            ).map(([order_date, total_amount]) => ({ order_date, total_amount }));
+            const data_average_sales_trend = (() => {
+                const effectiveXType = getEffectiveType('order_date', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.mean(v, d => d['total_amount']),
+                    d => d['order_date']
+                ).map(([order_date, total_amount]) => ({ order_date, total_amount }));
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.order_date));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.order_date) - new Date(b.order_date));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.order_date - b.order_date);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].order_date;
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.order_date - b.order_date);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.order_date - b.order_date);
+                        } else {
+                            result.sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)));
+                        }
+                    }
+                }
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.order_date));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.order_date));
+                return result;
+            })();
             const plot_average_sales_trend = Plot.plot({
                 marks: [
                     Plot.line(data_average_sales_trend, {
@@ -286,6 +440,7 @@
                         y: "total_amount",
                         stroke: "#bd93f9",
                         strokeWidth: 2,
+                        sort: "order_date",
                         tip: true
                     }),
                     Plot.dot(data_average_sales_trend, {
