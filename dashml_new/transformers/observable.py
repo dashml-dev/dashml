@@ -264,6 +264,14 @@ class ObservablePlotTransformer(Transformer):
         // Load and parse CSV data
         let dashmlData = [];
 
+        // For CSV, getEffectiveType returns explicit type or detects from data
+        function getEffectiveType(column, explicitType) {{
+            if (explicitType) return explicitType;
+            // For CSV, we don't have schema info, so return undefined
+            // The sorting logic will handle runtime type detection
+            return undefined;
+        }}
+
         fetch('{path}')
             .then(response => response.text())
             .then(csvText => {{
@@ -544,7 +552,7 @@ class ObservablePlotTransformer(Transformer):
         # Generate sorting based on x_type (explicit or schema-detected via getEffectiveType)
         x_type_js = f"'{x_type}'" if x_type else "undefined"
 
-        # Use function to sort based on effective type (explicit > schema-detected)
+        # Use function to sort based on effective type (explicit > schema-detected > runtime)
         return f"""(() => {{
                 const effectiveXType = getEffectiveType('{x}', {x_type_js});
                 const result = d3.rollups(
@@ -553,12 +561,32 @@ class ObservablePlotTransformer(Transformer):
                     d => d['{x}']
                 ).map(([{x}, {y}]) => ({{ {x}, {y} }}));
 
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+
                 // Sort based on effective x_type
                 if (effectiveXType === 'date') {{
                     result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
                 }} else if (effectiveXType === 'number') {{
                     result.sort((a, b) => a.{x} - b.{x});
+                }} else {{
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {{
+                        const firstVal = result[0].{x};
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {{
+                            result.sort((a, b) => a.{x} - b.{x});
+                        }} else if (typeof firstVal === 'number') {{
+                            result.sort((a, b) => a.{x} - b.{x});
+                        }} else {{
+                            result.sort((a, b) => String(a.{x}).localeCompare(String(b.{x})));
+                        }}
+                    }}
                 }}
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.{x}));
                 return result;
             }})()"""
 
@@ -595,12 +623,32 @@ class ObservablePlotTransformer(Transformer):
                     }}))
                 );
 
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('GROUPED - BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('GROUPED - BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+
                 // Sort based on effective x_type
                 if (effectiveXType === 'date') {{
                     result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
                 }} else if (effectiveXType === 'number') {{
                     result.sort((a, b) => a.{x} - b.{x});
+                }} else {{
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {{
+                        const firstVal = result[0].{x};
+                        console.log('GROUPED - RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {{
+                            result.sort((a, b) => a.{x} - b.{x});
+                        }} else if (typeof firstVal === 'number') {{
+                            result.sort((a, b) => a.{x} - b.{x});
+                        }} else {{
+                            result.sort((a, b) => String(a.{x}).localeCompare(String(b.{x})));
+                        }}
+                    }}
                 }}
+
+                console.log('GROUPED - AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+                console.log('GROUPED - AFTER SORT - last 5 values:', result.slice(-5).map(d => d.{x}));
                 return result;
             }})()"""
 
@@ -629,6 +677,7 @@ class ObservablePlotTransformer(Transformer):
                         y: "{y}",
                         stroke: "{color}",
                         strokeWidth: 2,
+                        sort: "{x}",
                         tip: true
                     }}),
                     Plot.dot(data_{data_var}, {{
@@ -659,6 +708,7 @@ class ObservablePlotTransformer(Transformer):
                         y: "{y}",
                         fill: "{color}",
                         fillOpacity: 0.7,
+                        sort: "{x}",
                         tip: true
                     }}),
                     Plot.ruleY([0])
@@ -917,8 +967,24 @@ if __name__ == '__main__':
         ])
             .then(([schema, data]) => {
                 columnTypes = schema;
-                dashmlData = data;
+
+                // Parse date columns based on schema
+                dashmlData = data.map(row => {
+                    const parsedRow = {};
+                    for (const [column, value] of Object.entries(row)) {
+                        if (columnTypes[column] === 'date' && value !== null) {
+                            parsedRow[column] = new Date(value);
+                        } else if (columnTypes[column] === 'number' && value !== null) {
+                            parsedRow[column] = parseFloat(value);
+                        } else {
+                            parsedRow[column] = value;
+                        }
+                    }
+                    return parsedRow;
+                });
+
                 console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
+                console.log('Parsed data (first row):', dashmlData[0]);
                 renderAllCharts();
             })
             .catch(error => {
@@ -926,3 +992,4 @@ if __name__ == '__main__':
                 document.body.innerHTML += '<p style="color: red;">Error loading data from database</p>';
             });
     </script>"""
+

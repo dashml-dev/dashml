@@ -1271,7 +1271,22 @@ if __name__ == '__main__':
     ])
       .then(([schema, data]) => {
         columnTypes = schema;
-        window.dashmlData = data;
+
+        // Parse date and number columns based on schema
+        window.dashmlData = data.map(row => {
+          const parsedRow = {};
+          for (const [column, value] of Object.entries(row)) {
+            if (columnTypes[column] === 'date' && value !== null) {
+              parsedRow[column] = new Date(value);
+            } else if (columnTypes[column] === 'number' && value !== null) {
+              parsedRow[column] = parseFloat(value);
+            } else {
+              parsedRow[column] = value;
+            }
+          }
+          return parsedRow;
+        });
+
         console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
         renderChart(charts[0]);
       })
@@ -1514,8 +1529,24 @@ if __name__ == '__main__':
     ])
       .then(([schema, data]) => {{
         columnTypes = schema;
+
+        // Parse date and number columns based on schema
+        const parsedData = data.map(row => {{
+          const parsedRow = {{}};
+          for (const [column, value] of Object.entries(row)) {{
+            if (columnTypes[column] === 'date' && value !== null) {{
+              parsedRow[column] = new Date(value);
+            }} else if (columnTypes[column] === 'number' && value !== null) {{
+              parsedRow[column] = parseFloat(value);
+            }} else {{
+              parsedRow[column] = value;
+            }}
+          }}
+          return parsedRow;
+        }});
+
         console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
-        renderAllPages(data);
+        renderAllPages(parsedData);
       }})
       .catch(error => console.error('Error loading data:', error));
   </script>'''
