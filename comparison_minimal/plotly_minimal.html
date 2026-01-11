@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Simple Dashboard</title>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+</head>
+<body>
+  <h1>Simple Dashboard</h1>
+  <div id="chart"></div>
+  <script>
+    fetch('/api/data')
+      .then(r => r.json())
+      .then(data => {
+        // Aggregate: sum sales by country
+        const grouped = {};
+        data.forEach(row => {
+          grouped[row.country] = (grouped[row.country] || 0) + row.sales;
+        });
+        
+        Plotly.newPlot('chart', [{
+          x: Object.keys(grouped),
+          y: Object.values(grouped),
+          type: 'bar'
+        }], { title: 'Sales by Country' });
+      });
+  </script>
+</body>
+</html>
+

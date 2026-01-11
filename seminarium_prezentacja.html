@@ -1,0 +1,1588 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DashML - Seminarium Dyplomowe</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a1a;
+            --bg-secondary: #12122a;
+            --bg-card: #1a1a3a;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-secondary: #22d3ee;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --code-bg: #0f0f1f;
+            --border: rgba(99, 102, 241, 0.2);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+            scroll-snap-type: y mandatory;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            padding: 0.75rem 2rem;
+            background: rgba(10, 10, 26, 0.95);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .nav-title {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .nav-controls {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        .slide-indicator {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            min-width: 60px;
+            text-align: center;
+        }
+
+        .nav-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--accent-light);
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+
+        .nav-btn:hover {
+            background: rgba(99, 102, 241, 0.15);
+            border-color: var(--accent);
+        }
+
+        /* Slides */
+        .slide {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 5rem 4rem 3rem;
+            scroll-snap-align: start;
+            position: relative;
+        }
+
+        .slide::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(ellipse at 10% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 90% 80%, rgba(34, 211, 238, 0.05) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .slide-content {
+            max-width: 1300px;
+            width: 100%;
+            margin: 0 auto;
+            z-index: 1;
+        }
+
+        /* Typography */
+        h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 1rem;
+        }
+
+        h2 {
+            font-size: 2.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        h2 .num {
+            background: var(--accent);
+            color: white;
+            width: 2.5rem;
+            height: 2.5rem;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        h3 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+
+        h4 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--accent-light);
+            margin-bottom: 0.5rem;
+        }
+
+        p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 900px;
+        }
+
+        /* Title Slide */
+        .title-slide {
+            text-align: center;
+        }
+
+        .title-slide h1 {
+            font-size: 4rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 1.5rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .meta-info {
+            font-size: 1rem;
+            color: var(--text-muted);
+            margin-top: 2rem;
+        }
+
+        .authors {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            margin-top: 2rem;
+        }
+
+        .author {
+            text-align: center;
+        }
+
+        .author-name {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .author-role {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .badge-row {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: center;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            color: var(--accent-light);
+        }
+
+        /* Grids */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            align-items: start;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1.25rem;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+        }
+
+        .card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .card-icon {
+            font-size: 2rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .card h4 {
+            margin-bottom: 0.5rem;
+        }
+
+        .card p {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+        }
+
+        /* Timeline */
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, var(--accent), var(--accent-secondary));
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-bottom: 1.5rem;
+            padding-left: 1.5rem;
+        }
+
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -2rem;
+            top: 0.3rem;
+            width: 12px;
+            height: 12px;
+            background: var(--accent);
+            border-radius: 50%;
+            border: 3px solid var(--bg-primary);
+        }
+
+        .timeline-item.completed::before {
+            background: var(--success);
+        }
+
+        .timeline-item.current::before {
+            background: var(--warning);
+            box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.3);
+        }
+
+        .timeline-date {
+            font-size: 0.85rem;
+            color: var(--accent-light);
+            font-weight: 500;
+        }
+
+        .timeline-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0.25rem 0;
+        }
+
+        .timeline-desc {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+        }
+
+        /* Tables */
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison-table th {
+            background: var(--bg-card);
+            color: var(--accent-light);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .comparison-table td {
+            color: var(--text-secondary);
+        }
+
+        .comparison-table tr:hover td {
+            background: rgba(99, 102, 241, 0.05);
+        }
+
+        /* Status indicators */
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.85rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+        }
+
+        .status-done {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
+        }
+
+        .status-progress {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--warning);
+        }
+
+        .status-todo {
+            background: rgba(100, 116, 139, 0.15);
+            color: var(--text-muted);
+        }
+
+        /* Code blocks */
+        .code-block {
+            background: var(--code-bg);
+            border-radius: 8px;
+            padding: 1.25rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+        }
+
+        .code-block .comment { color: #6b7280; }
+        .code-block .keyword { color: #c084fc; }
+        .code-block .string { color: #67e8f9; }
+        .code-block .key { color: #86efac; }
+
+        /* Lists */
+        .feature-list {
+            list-style: none;
+        }
+
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .feature-list .icon {
+            color: var(--accent);
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        /* Architecture diagram */
+        .arch-diagram {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+            padding: 2rem;
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .arch-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem 1.25rem;
+            text-align: center;
+            min-width: 100px;
+        }
+
+        .arch-box.highlight {
+            border-color: var(--accent);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .arch-arrow {
+            color: var(--accent);
+            font-size: 1.25rem;
+        }
+
+        .arch-branch {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        /* Difficulty rating */
+        .difficulty {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .difficulty-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--border);
+        }
+
+        .difficulty-dot.active {
+            background: var(--accent);
+        }
+
+        /* Progress bars */
+        .progress-bar {
+            height: 8px;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        /* Slide number */
+        .slide-number {
+            position: absolute;
+            bottom: 1.5rem;
+            right: 2rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Manifesto */
+        .manifesto-item {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent);
+        }
+
+        .manifesto-num {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+            min-width: 2rem;
+        }
+
+        .manifesto-content h4 {
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+        }
+
+        .manifesto-content p {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+        }
+
+        /* Screenshot placeholder */
+        .screenshot {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .screenshot-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Literature */
+        .lit-item {
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            border-left: 3px solid var(--accent-secondary);
+        }
+
+        .lit-authors {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .lit-title {
+            font-style: italic;
+            color: var(--text-secondary);
+        }
+
+        .lit-meta {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 1000px) {
+            .grid-2, .grid-3, .grid-4 {
+                grid-template-columns: 1fr;
+            }
+
+            h1 { font-size: 2.5rem; }
+            h2 { font-size: 1.75rem; }
+
+            .slide {
+                padding: 4rem 1.5rem 2rem;
+            }
+
+            .authors {
+                flex-direction: column;
+                gap: 1rem;
+            }
+        }
+
+        /* University header */
+        .university-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .university-header img {
+            height: 40px;
+            opacity: 0.8;
+        }
+
+        /* Tool comparison special */
+        .tool-row {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr 1fr 2fr;
+            gap: 1rem;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+        }
+
+        .tool-row.header {
+            font-weight: 600;
+            color: var(--accent-light);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+        }
+
+        .tool-name {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .checkmark { color: var(--success); }
+        .crossmark { color: var(--danger); }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="nav-left">
+            <span class="logo">DashML</span>
+            <span class="nav-title">Seminarium Dyplomowe • CDV 2025/2026</span>
+        </div>
+        <div class="nav-controls">
+            <span class="slide-indicator" id="slideIndicator">1 / 14</span>
+            <button class="nav-btn" onclick="prevSlide()">← Wstecz</button>
+            <button class="nav-btn" onclick="nextSlide()">Dalej →</button>
+        </div>
+    </nav>
+
+    <!-- Slide 1: Strona tytułowa -->
+    <section class="slide title-slide" id="slide1">
+        <div class="slide-content">
+            <div class="university-header">
+                <span>Collegium Da Vinci • Wydział Nauk Stosowanych • Informatyka</span>
+            </div>
+            <h1>DashML</h1>
+            <p class="subtitle">Projekt deklaratywnego języka specyfikacji<br>dashboardów do wizualizacji danych</p>
+            <p class="meta-info">Praca inżynierska • Rok akademicki 2025/2026</p>
+            
+            <div class="authors">
+                <div class="author">
+                    <div class="author-name">Dawid Olejniczak</div>
+                    <div class="author-role">Projektant & Developer</div>
+                </div>
+                <div class="author">
+                    <div class="author-name">Szymon Nowaczyk</div>
+                    <div class="author-role">Projektant & Developer</div>
+                </div>
+            </div>
+
+            <div class="badge-row">
+                <span class="badge">📄 Język deklaratywny</span>
+                <span class="badge">🔄 Multi-platform</span>
+                <span class="badge">🤖 LLM-friendly</span>
+                <span class="badge">📊 Data Visualization</span>
+            </div>
+        </div>
+        <div class="slide-number">1 / 14</div>
+    </section>
+
+    <!-- Slide 2: Agenda -->
+    <section class="slide" id="slide2">
+        <div class="slide-content">
+            <h2>Agenda</h2>
+            <div class="grid-2">
+                <div>
+                    <h3>Wymagane elementy</h3>
+                    <ul class="feature-list">
+                        <li><span class="icon">1.</span> Harmonogram prac</li>
+                        <li><span class="icon">2.</span> Plan pracy dyplomowej</li>
+                        <li><span class="icon">3.</span> Przegląd literatury</li>
+                        <li><span class="icon">4.</span> Analiza rynku</li>
+                        <li><span class="icon">5.</span> Przegląd i dobór technologii</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3>Elementy dodatkowe</h3>
+                    <ul class="feature-list">
+                        <li><span class="icon">6.</span> Lista zadań do realizacji</li>
+                        <li><span class="icon">7.</span> Wstępny wygląd interfejsu</li>
+                        <li><span class="icon">8.</span> Demo działającego systemu</li>
+                    </ul>
+                    <div style="margin-top: 2rem; padding: 1rem; background: var(--bg-card); border-radius: 8px; border-left: 3px solid var(--success);">
+                        <h4 style="color: var(--success);">Status projektu</h4>
+                        <p style="font-size: 0.95rem;">Prototyp w wersji v0.1 — działające 4 backendy, 8 typów wykresów, 3 źródła danych</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">2 / 14</div>
+    </section>
+
+    <!-- Slide 3: Problem i wizja -->
+    <section class="slide" id="slide3">
+        <div class="slide-content">
+            <h2><span class="num">0</span> Problem i wizja projektu</h2>
+            <div class="grid-2">
+                <div>
+                    <h3 style="color: var(--danger);">❌ Problem</h3>
+                    <ul class="feature-list">
+                        <li><span class="icon">•</span> Dashboardy tworzone osobno dla każdej platformy</li>
+                        <li><span class="icon">•</span> Ten sam dashboard = 3× kod (Streamlit, Plotly, Looker)</li>
+                        <li><span class="icon">•</span> Brak jednolitego źródła prawdy</li>
+                        <li><span class="icon">•</span> Różne API, różne paradygmaty</li>
+                        <li><span class="icon">•</span> Trudność w wersjonowaniu dashboardów</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 style="color: var(--success);">✅ Rozwiązanie DashML</h3>
+                    <ul class="feature-list">
+                        <li><span class="icon">•</span> Jeden plik .dashml → wiele platform</li>
+                        <li><span class="icon">•</span> Kompilator, nie runtime</li>
+                        <li><span class="icon">•</span> Deklaratywny YAML — czytelny dla ludzi i AI</li>
+                        <li><span class="icon">•</span> Pełna kontrola wersji (Git)</li>
+                        <li><span class="icon">•</span> Rozszerzalny system transformerów</li>
+                    </ul>
+                </div>
+            </div>
+            <div style="margin-top: 2rem; text-align: center;">
+                <div class="arch-diagram">
+                    <div class="arch-box highlight">📄 .dashml</div>
+                    <span class="arch-arrow">→</span>
+                    <div class="arch-box">Parser</div>
+                    <span class="arch-arrow">→</span>
+                    <div class="arch-box">Validator</div>
+                    <span class="arch-arrow">→</span>
+                    <div class="arch-box highlight">Transformer</div>
+                    <span class="arch-arrow">→</span>
+                    <div class="arch-branch">
+                        <div class="arch-box">Streamlit</div>
+                        <div class="arch-box">Plotly</div>
+                        <div class="arch-box">Observable</div>
+                        <div class="arch-box">Superset</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">3 / 14</div>
+    </section>
+
+    <!-- Slide 4: Harmonogram prac -->
+    <section class="slide" id="slide4">
+        <div class="slide-content">
+            <h2><span class="num">1</span> Harmonogram prac</h2>
+            <div class="grid-2">
+                <div class="timeline">
+                    <div class="timeline-item completed">
+                        <div class="timeline-date">Sierpień 2025</div>
+                        <div class="timeline-title">Kick-off projektu</div>
+                        <div class="timeline-desc">Analiza wymagań, research deep dive, definicja zakresu</div>
+                    </div>
+                    <div class="timeline-item completed">
+                        <div class="timeline-date">Wrzesień - Październik 2025</div>
+                        <div class="timeline-title">Architektura & Prototyp v0.1</div>
+                        <div class="timeline-desc">Hexagonal architecture, parser YAML, pierwszy transformer (Streamlit)</div>
+                    </div>
+                    <div class="timeline-item completed">
+                        <div class="timeline-date">Listopad 2025</div>
+                        <div class="timeline-title">Rozszerzenie transformerów</div>
+                        <div class="timeline-desc">Plotly, Observable Plot, system motywów</div>
+                    </div>
+                    <div class="timeline-item completed">
+                        <div class="timeline-date">Grudzień 2025</div>
+                        <div class="timeline-title">Integracja danych</div>
+                        <div class="timeline-desc">SQL (PostgreSQL), BigQuery, auto-detekcja schematów</div>
+                    </div>
+                    <div class="timeline-item current">
+                        <div class="timeline-date">Styczeń 2026</div>
+                        <div class="timeline-title">Superset & Dokumentacja</div>
+                        <div class="timeline-desc">Transformer Superset, testy, dokumentacja techniczna</div>
+                    </div>
+                </div>
+                <div class="timeline">
+                    <div class="timeline-item">
+                        <div class="timeline-date">Luty 2026</div>
+                        <div class="timeline-title">Rozszerzenia funkcjonalności</div>
+                        <div class="timeline-desc">Dodatkowe typy wykresów, filtrowanie, interakcje</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-date">Marzec 2026</div>
+                        <div class="timeline-title">Testy użytkowników</div>
+                        <div class="timeline-desc">Walidacja UX, zbieranie feedbacku, iteracje</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-date">Kwiecień 2026</div>
+                        <div class="timeline-title">Finalizacja implementacji</div>
+                        <div class="timeline-desc">Bug fixes, optymalizacja, edge cases</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-date">Maj 2026</div>
+                        <div class="timeline-title">Dokumentacja & Praca pisemna</div>
+                        <div class="timeline-desc">Finalizacja pracy dyplomowej</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-date">Czerwiec 2026</div>
+                        <div class="timeline-title">Obrona pracy</div>
+                        <div class="timeline-desc">Prezentacja końcowa, obrona</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">4 / 14</div>
+    </section>
+
+    <!-- Slide 5: Plan pracy dyplomowej -->
+    <section class="slide" id="slide5">
+        <div class="slide-content">
+            <h2><span class="num">2</span> Plan pracy dyplomowej</h2>
+            <div class="grid-2">
+                <div>
+                    <h3>Struktura pracy</h3>
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <h4>1. Wstęp</h4>
+                        <p>Cel pracy, zakres, uzasadnienie tematu</p>
+                    </div>
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <h4>2. Analiza problemu</h4>
+                        <p>Przegląd istniejących rozwiązań, analiza rynku BI</p>
+                    </div>
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <h4>3. Projekt języka DashML</h4>
+                        <p>Specyfikacja składni, gramatyka, semantyka</p>
+                    </div>
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <h4>4. Architektura systemu</h4>
+                        <p>Microkernel, transformery, pipeline kompilacji</p>
+                    </div>
+                </div>
+                <div>
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <h4>5. Implementacja</h4>
+                        <p>Parser, validator, transformery (Streamlit, Plotly, Observable, Superset)</p>
+                    </div>
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <h4>6. Testy i walidacja</h4>
+                        <p>Testy jednostkowe, integracyjne, testy z użytkownikami</p>
+                    </div>
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <h4>7. Podsumowanie</h4>
+                        <p>Wnioski, kierunki rozwoju, ograniczenia</p>
+                    </div>
+                    <div class="card" style="background: rgba(99, 102, 241, 0.1); border-color: var(--accent);">
+                        <h4>Załączniki</h4>
+                        <p>Specyfikacja DashML, dokumentacja API, przykłady użycia</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">5 / 14</div>
+    </section>
+
+    <!-- Slide 6: Przegląd literatury -->
+    <section class="slide" id="slide6">
+        <div class="slide-content">
+            <h2><span class="num">3</span> Przegląd literatury</h2>
+            <div class="grid-2">
+                <div>
+                    <h3>Fundamenty teoretyczne</h3>
+                    <div class="lit-item">
+                        <div class="lit-authors">Satyanarayan, A., Moritz, D., Wongsuphasawat, K., & Heer, J.</div>
+                        <div class="lit-title">Vega-Lite: A Grammar of Interactive Graphics</div>
+                        <div class="lit-meta">IEEE VIS 2017 • Podstawa gramatyki wizualizacji</div>
+                    </div>
+                    <div class="lit-item">
+                        <div class="lit-authors">Wilkinson, L.</div>
+                        <div class="lit-title">The Grammar of Graphics</div>
+                        <div class="lit-meta">Springer 2005 • Teoria języka grafik</div>
+                    </div>
+                    <div class="lit-item">
+                        <div class="lit-authors">Fowler, M.</div>
+                        <div class="lit-title">Domain-Specific Languages</div>
+                        <div class="lit-meta">Addison-Wesley 2010 • Metodyka projektowania DSL</div>
+                    </div>
+                </div>
+                <div>
+                    <h3>Technologie i implementacja</h3>
+                    <div class="lit-item">
+                        <div class="lit-authors">Sommerville, I.</div>
+                        <div class="lit-title">Inżynieria oprogramowania (Wyd. 10)</div>
+                        <div class="lit-meta">WNT 2020 • Architektura systemów</div>
+                    </div>
+                    <div class="lit-item">
+                        <div class="lit-authors">VanderPlas, J.</div>
+                        <div class="lit-title">Altair: Declarative Visualization in Python</div>
+                        <div class="lit-meta">JOSS 2018 • Implementacja Vega-Lite w Python</div>
+                    </div>
+                    <div class="lit-item">
+                        <div class="lit-authors">Dokumentacja techniczna</div>
+                        <div class="lit-title">Looker LookML, Apache Superset, Streamlit, Plotly</div>
+                        <div class="lit-meta">Oficjalna dokumentacja narzędzi</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">6 / 14</div>
+    </section>
+
+    <!-- Slide 7: Analiza rynku -->
+    <section class="slide" id="slide7">
+        <div class="slide-content">
+            <h2><span class="num">4</span> Analiza rynku narzędzi BI</h2>
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Narzędzie</th>
+                        <th>Typ</th>
+                        <th>Transformer możliwy?</th>
+                        <th>Trudność (1-5)</th>
+                        <th>Uzasadnienie</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Streamlit</strong></td>
+                        <td>Python framework</td>
+                        <td><span class="checkmark">✓</span> Tak</td>
+                        <td>
+                            <div class="difficulty">
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                            </div>
+                        </td>
+                        <td>Proste API, generacja .py</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Plotly / Dash</strong></td>
+                        <td>Python/JS framework</td>
+                        <td><span class="checkmark">✓</span> Tak</td>
+                        <td>
+                            <div class="difficulty">
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                            </div>
+                        </td>
+                        <td>Wymaga konfiguracji callbacków</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Apache Superset</strong></td>
+                        <td>Open-source BI</td>
+                        <td><span class="checkmark">✓</span> Tak</td>
+                        <td>
+                            <div class="difficulty">
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                            </div>
+                        </td>
+                        <td>REST API + JSON metadata</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Metabase</strong></td>
+                        <td>Lightweight BI</td>
+                        <td><span class="checkmark">✓</span> Tak</td>
+                        <td>
+                            <div class="difficulty">
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                                <div class="difficulty-dot"></div>
+                            </div>
+                        </td>
+                        <td>API dla dashboardów i kart</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Looker</strong></td>
+                        <td>Enterprise BI</td>
+                        <td><span class="checkmark">✓</span> Tak</td>
+                        <td>
+                            <div class="difficulty">
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot"></div>
+                            </div>
+                        </td>
+                        <td>LookML + API, wymaga licencji</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Power BI</strong></td>
+                        <td>Enterprise BI (MS)</td>
+                        <td><span class="crossmark">~</span> Częściowo</td>
+                        <td>
+                            <div class="difficulty">
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                                <div class="difficulty-dot active"></div>
+                            </div>
+                        </td>
+                        <td>Wymaga PBIX, ograniczone API</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p style="margin-top: 1.5rem; font-size: 0.95rem; color: var(--text-muted);">
+                <strong>Wniosek:</strong> Streamlit, Plotly, Observable i Superset — najlepszy stosunek możliwości do trudności implementacji
+            </p>
+        </div>
+        <div class="slide-number">7 / 14</div>
+    </section>
+
+    <!-- Slide 8: Dobór technologii -->
+    <section class="slide" id="slide8">
+        <div class="slide-content">
+            <h2><span class="num">5</span> Przegląd i dobór technologii</h2>
+            <div class="grid-3">
+                <div class="card">
+                    <div class="card-icon">🐍</div>
+                    <h4>Python 3.10+</h4>
+                    <p>Język implementacji core engine, parser, transformery</p>
+                </div>
+                <div class="card">
+                    <div class="card-icon">📄</div>
+                    <h4>YAML</h4>
+                    <p>Format specyfikacji DashML — czytelny, LLM-friendly</p>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🔧</div>
+                    <h4>TypedDict</h4>
+                    <p>Type hints bez runtime overhead</p>
+                </div>
+                <div class="card">
+                    <div class="card-icon">📊</div>
+                    <h4>Altair / Vega-Lite</h4>
+                    <p>Backend dla Streamlit</p>
+                </div>
+                <div class="card">
+                    <div class="card-icon">📈</div>
+                    <h4>Plotly.js</h4>
+                    <p>Backend dla standalone HTML</p>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🔭</div>
+                    <h4>Observable Plot</h4>
+                    <p>Modern D3-based vizualization</p>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🐘</div>
+                    <h4>PostgreSQL</h4>
+                    <p>SQL data source via SQLAlchemy</p>
+                </div>
+                <div class="card">
+                    <div class="card-icon">☁️</div>
+                    <h4>BigQuery</h4>
+                    <p>Google Cloud data warehouse</p>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🌐</div>
+                    <h4>Flask</h4>
+                    <p>API backend dla SQL/BQ</p>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">8 / 14</div>
+    </section>
+
+    <!-- Slide 9: Lista zadań -->
+    <section class="slide" id="slide9">
+        <div class="slide-content">
+            <h2><span class="num">6</span> Lista zadań do realizacji</h2>
+            <div class="grid-2">
+                <div>
+                    <h3>✅ Zrealizowane</h3>
+                    <table class="comparison-table">
+                        <tr>
+                            <td>Parser YAML → Python dict</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>Validator semantyczny</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>Transformer: Streamlit</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>Transformer: Plotly HTML</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>Transformer: Observable Plot</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>Transformer: Superset API</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>8 typów wykresów</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>System motywów (6 themes)</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>Multi-page dashboards</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>SQL & BigQuery integration</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                        <tr>
+                            <td>Auto-detekcja schematów</td>
+                            <td><span class="status status-done">✓ Done</span></td>
+                        </tr>
+                    </table>
+                </div>
+                <div>
+                    <h3>🚧 Do zrealizowania</h3>
+                    <table class="comparison-table">
+                        <tr>
+                            <td>Filtrowanie interaktywne</td>
+                            <td><span class="status status-todo">○ TODO</span></td>
+                        </tr>
+                        <tr>
+                            <td>Cross-filtering</td>
+                            <td><span class="status status-todo">○ TODO</span></td>
+                        </tr>
+                        <tr>
+                            <td>Dodatkowe wykresy (box, geo)</td>
+                            <td><span class="status status-todo">○ TODO</span></td>
+                        </tr>
+                        <tr>
+                            <td>Transformer: Metabase</td>
+                            <td><span class="status status-todo">○ TODO</span></td>
+                        </tr>
+                        <tr>
+                            <td>CLI improvements (watch mode)</td>
+                            <td><span class="status status-todo">○ TODO</span></td>
+                        </tr>
+                        <tr>
+                            <td>Dokumentacja użytkownika</td>
+                            <td><span class="status status-progress">◐ In progress</span></td>
+                        </tr>
+                        <tr>
+                            <td>Testy jednostkowe</td>
+                            <td><span class="status status-progress">◐ In progress</span></td>
+                        </tr>
+                        <tr>
+                            <td>Testy z użytkownikami</td>
+                            <td><span class="status status-todo">○ TODO</span></td>
+                        </tr>
+                    </table>
+                    <div style="margin-top: 1.5rem;">
+                        <h4>Postęp ogólny</h4>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: 70%;"></div>
+                        </div>
+                        <p style="font-size: 0.9rem; color: var(--text-muted); margin-top: 0.5rem;">~70% funkcjonalności core</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">9 / 14</div>
+    </section>
+
+    <!-- Slide 10: Manifesto (zaktualizowane) -->
+    <section class="slide" id="slide10">
+        <div class="slide-content">
+            <h2>DashML Manifesto</h2>
+            <p style="margin-bottom: 1.5rem;">Zasady projektowe języka DashML</p>
+            <div class="grid-2">
+                <div>
+                    <div class="manifesto-item">
+                        <div class="manifesto-num">1</div>
+                        <div class="manifesto-content">
+                            <h4>Kompilator, nie runtime</h4>
+                            <p>DashML generuje kod, nie wykonuje go. Brak zależności runtime.</p>
+                        </div>
+                    </div>
+                    <div class="manifesto-item">
+                        <div class="manifesto-num">2</div>
+                        <div class="manifesto-content">
+                            <h4>DashML nigdy nie zwraca danych</h4>
+                            <p>Semantyka, nie DataFrame. Dane są pobierane przez wygenerowany kod.</p>
+                        </div>
+                    </div>
+                    <div class="manifesto-item">
+                        <div class="manifesto-num">3</div>
+                        <div class="manifesto-content">
+                            <h4>Deklaratywny, nie imperatywny</h4>
+                            <p>Opisuje CO chcemy zobaczyć, nie JAK to zbudować.</p>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="manifesto-item">
+                        <div class="manifesto-num">4</div>
+                        <div class="manifesto-content">
+                            <h4>Source-agnostic</h4>
+                            <p>CSV, SQL, BigQuery — źródło danych to konfiguracja, nie kod.</p>
+                        </div>
+                    </div>
+                    <div class="manifesto-item">
+                        <div class="manifesto-num">5</div>
+                        <div class="manifesto-content">
+                            <h4>LLM- i human-friendly</h4>
+                            <p>YAML — prosty, przewidywalny, łatwy do generowania przez AI.</p>
+                        </div>
+                    </div>
+                    <div class="manifesto-item">
+                        <div class="manifesto-num">6</div>
+                        <div class="manifesto-content">
+                            <h4>Backend-neutral, rozszerzalny</h4>
+                            <p>Microkernel + pluginy. Nowy backend = nowy transformer.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">10 / 14</div>
+    </section>
+
+    <!-- Slide 11: Przykład specyfikacji -->
+    <section class="slide" id="slide11">
+        <div class="slide-content">
+            <h2><span class="num">7</span> Składnia DashML — przykład</h2>
+            <div class="grid-2">
+                <div>
+                    <h4 style="margin-bottom: 0.75rem;">Plik: dashboard.dashml</h4>
+                    <div class="code-block">
+<span class="key">version</span>: <span class="string">0.1</span>
+<span class="key">title</span>: <span class="string">"Sales Analytics Dashboard"</span>
+<span class="key">style</span>: <span class="string">"styles/dracula.dmls"</span>
+
+<span class="key">data</span>:
+  <span class="key">type</span>: bigquery
+  <span class="key">path</span>: <span class="string">products.orders_one_week</span>
+
+<span class="key">pages</span>:
+  - <span class="key">id</span>: <span class="string">"overview"</span>
+    <span class="key">title</span>: <span class="string">"📊 Overview"</span>
+    <span class="key">charts</span>:
+      - <span class="key">id</span>: <span class="string">"sales_by_state"</span>
+        <span class="key">type</span>: <span class="string">"bar"</span>
+        <span class="key">title</span>: <span class="string">"Sales by State"</span>
+        <span class="key">x</span>: <span class="string">"state"</span>
+        <span class="key">y</span>: <span class="string">"total_amount"</span>
+        <span class="key">agg</span>: <span class="string">"sum"</span>
+
+  - <span class="key">id</span>: <span class="string">"trends"</span>
+    <span class="key">title</span>: <span class="string">"📈 Trends"</span>
+    <span class="key">charts</span>:
+      - <span class="key">id</span>: <span class="string">"sales_over_time"</span>
+        <span class="key">type</span>: <span class="string">"line"</span>
+        <span class="key">x</span>: <span class="string">"order_date"</span>
+        <span class="key">y</span>: <span class="string">"total_amount"</span>
+        <span class="key">agg</span>: <span class="string">"sum"</span>
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 0.75rem;">Komendy CLI</h4>
+                    <div class="code-block" style="margin-bottom: 1rem;">
+<span class="comment"># Generuj Streamlit</span>
+python -m dashml_new.cli build dashboard.dashml \
+  --target streamlit --output app.py
+
+<span class="comment"># Generuj Plotly HTML</span>
+python -m dashml_new.cli build dashboard.dashml \
+  --target plotly --output dashboard.html
+
+<span class="comment"># Utwórz dashboard w Superset</span>
+python -m dashml_new.cli build dashboard.dashml \
+  --target superset --superset-user admin
+                    </div>
+                    <h4 style="margin-bottom: 0.75rem; margin-top: 1.5rem;">Obsługiwane typy wykresów</h4>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                        <span class="badge">bar</span>
+                        <span class="badge">line</span>
+                        <span class="badge">scatter</span>
+                        <span class="badge">pie</span>
+                        <span class="badge">area</span>
+                        <span class="badge">histogram</span>
+                        <span class="badge">stacked_bar</span>
+                        <span class="badge">grouped_bar</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">11 / 14</div>
+    </section>
+
+    <!-- Slide 12: Wstępny wygląd interfejsu -->
+    <section class="slide" id="slide12">
+        <div class="slide-content">
+            <h2><span class="num">7</span> Wstępny wygląd interfejsu</h2>
+            <p style="margin-bottom: 1.5rem;">Przykłady wygenerowanych dashboardów</p>
+            <div class="grid-3">
+                <div class="screenshot">
+                    <div class="screenshot-icon">🐍</div>
+                    <h4>Streamlit</h4>
+                    <p style="font-size: 0.9rem;">Python app z interaktywnymi widgetami, Altair charts</p>
+                    <div class="badge-row" style="margin-top: 1rem;">
+                        <span class="badge" style="font-size: 0.75rem;">app.py</span>
+                    </div>
+                </div>
+                <div class="screenshot">
+                    <div class="screenshot-icon">📊</div>
+                    <h4>Plotly HTML</h4>
+                    <p style="font-size: 0.9rem;">Standalone HTML, responsywny, hover tooltips</p>
+                    <div class="badge-row" style="margin-top: 1rem;">
+                        <span class="badge" style="font-size: 0.75rem;">index.html</span>
+                    </div>
+                </div>
+                <div class="screenshot">
+                    <div class="screenshot-icon">🔭</div>
+                    <h4>Observable Plot</h4>
+                    <p style="font-size: 0.9rem;">Modern D3-based, minimalistyczny design</p>
+                    <div class="badge-row" style="margin-top: 1rem;">
+                        <span class="badge" style="font-size: 0.75rem;">dashboard.html</span>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 2rem; padding: 1.5rem; background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border);">
+                <h4 style="margin-bottom: 1rem;">System motywów (6 themes)</h4>
+                <div style="display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center;">
+                    <div style="text-align: center;">
+                        <div style="display: flex; border-radius: 6px; overflow: hidden;">
+                            <div style="width: 25px; height: 40px; background: #282a36;"></div>
+                            <div style="width: 25px; height: 40px; background: #bd93f9;"></div>
+                            <div style="width: 25px; height: 40px; background: #ff79c6;"></div>
+                        </div>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Dracula</span>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="display: flex; border-radius: 6px; overflow: hidden;">
+                            <div style="width: 25px; height: 40px; background: #2e3440;"></div>
+                            <div style="width: 25px; height: 40px; background: #88c0d0;"></div>
+                            <div style="width: 25px; height: 40px; background: #81a1c1;"></div>
+                        </div>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Nord</span>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="display: flex; border-radius: 6px; overflow: hidden;">
+                            <div style="width: 25px; height: 40px; background: #282828;"></div>
+                            <div style="width: 25px; height: 40px; background: #fabd2f;"></div>
+                            <div style="width: 25px; height: 40px; background: #fb4934;"></div>
+                        </div>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Gruvbox</span>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="display: flex; border-radius: 6px; overflow: hidden;">
+                            <div style="width: 25px; height: 40px; background: #272822;"></div>
+                            <div style="width: 25px; height: 40px; background: #f92672;"></div>
+                            <div style="width: 25px; height: 40px; background: #a6e22e;"></div>
+                        </div>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Monokai</span>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="display: flex; border-radius: 6px; overflow: hidden;">
+                            <div style="width: 25px; height: 40px; background: #282c34;"></div>
+                            <div style="width: 25px; height: 40px; background: #61afef;"></div>
+                            <div style="width: 25px; height: 40px; background: #c678dd;"></div>
+                        </div>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">One Dark</span>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="display: flex; border-radius: 6px; overflow: hidden;">
+                            <div style="width: 25px; height: 40px; background: #fdf6e3;"></div>
+                            <div style="width: 25px; height: 40px; background: #268bd2;"></div>
+                            <div style="width: 25px; height: 40px; background: #d33682;"></div>
+                        </div>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Solarized</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">12 / 14</div>
+    </section>
+
+    <!-- Slide 13: Architektura szczegółowa -->
+    <section class="slide" id="slide13">
+        <div class="slide-content">
+            <h2>Architektura systemu</h2>
+            <div class="grid-2">
+                <div>
+                    <h3>Struktura projektu</h3>
+                    <div class="code-block" style="font-size: 0.8rem;">
+dashml_new/
+├── core/
+│   ├── engine.py      <span class="comment"># Orkiestracja</span>
+│   ├── parser.py      <span class="comment"># YAML → dict</span>
+│   ├── validator.py   <span class="comment"># Walidacja semantyczna</span>
+│   └── types.py       <span class="comment"># TypedDict definitions</span>
+│
+├── transformers/
+│   ├── base.py        <span class="comment"># Interfejs Transformer</span>
+│   ├── streamlit.py   <span class="comment"># → Python + Altair</span>
+│   ├── plotly.py      <span class="comment"># → HTML + Plotly.js</span>
+│   ├── observable.py  <span class="comment"># → HTML + D3</span>
+│   ├── superset.py    <span class="comment"># → Superset API</span>
+│   └── registry.py    <span class="comment"># Plugin registry</span>
+│
+├── cli.py             <span class="comment"># Interfejs CLI</span>
+└── __init__.py
+                    </div>
+                </div>
+                <div>
+                    <h3>Microkernel + Plugins</h3>
+                    <div style="padding: 1.5rem; background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border);">
+                        <div style="text-align: center; margin-bottom: 1.5rem;">
+                            <div style="display: inline-block; padding: 1rem 2rem; background: rgba(99, 102, 241, 0.2); border: 2px solid var(--accent); border-radius: 8px;">
+                                <strong>Core (Microkernel)</strong><br>
+                                <span style="font-size: 0.85rem; color: var(--text-muted);">Parser → Validator → Engine</span>
+                            </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-around; flex-wrap: wrap; gap: 0.5rem;">
+                            <div class="arch-box">Streamlit</div>
+                            <div class="arch-box">Plotly</div>
+                            <div class="arch-box">Observable</div>
+                            <div class="arch-box">Superset</div>
+                        </div>
+                        <p style="text-align: center; font-size: 0.85rem; color: var(--text-muted); margin-top: 1rem;">
+                            Transformery jako wymienne pluginy
+                        </p>
+                    </div>
+                    <div style="margin-top: 1.5rem;">
+                        <h4>Kluczowa zasada</h4>
+                        <p style="font-size: 0.95rem; padding: 1rem; background: rgba(34, 197, 94, 0.1); border-left: 3px solid var(--success); border-radius: 4px;">
+                            Core <strong>nigdy nie wykonuje zapytań</strong> — generuje tylko kod, który sam pobierze dane w runtime.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-number">13 / 14</div>
+    </section>
+
+    <!-- Slide 14: Podsumowanie -->
+    <section class="slide title-slide" id="slide14">
+        <div class="slide-content">
+            <h1>Podsumowanie</h1>
+            <div class="grid-4" style="margin: 2rem 0;">
+                <div style="text-align: center;">
+                    <div style="font-size: 3rem; font-weight: 700; color: var(--accent);">4</div>
+                    <div style="color: var(--text-muted);">Backendy</div>
+                </div>
+                <div style="text-align: center;">
+                    <div style="font-size: 3rem; font-weight: 700; color: var(--accent);">8</div>
+                    <div style="color: var(--text-muted);">Typy wykresów</div>
+                </div>
+                <div style="text-align: center;">
+                    <div style="font-size: 3rem; font-weight: 700; color: var(--accent);">6</div>
+                    <div style="color: var(--text-muted);">Motywów</div>
+                </div>
+                <div style="text-align: center;">
+                    <div style="font-size: 3rem; font-weight: 700; color: var(--accent);">3</div>
+                    <div style="color: var(--text-muted);">Źródła danych</div>
+                </div>
+            </div>
+            
+            <div style="max-width: 800px; margin: 0 auto; text-align: left;">
+                <h3 style="margin-bottom: 1rem;">Następne kroki</h3>
+                <ul class="feature-list">
+                    <li><span class="icon">→</span> Rozszerzenie funkcjonalności (filtrowanie, interakcje)</li>
+                    <li><span class="icon">→</span> Testy z użytkownikami końcowymi</li>
+                    <li><span class="icon">→</span> Dokumentacja i przykłady użycia</li>
+                    <li><span class="icon">→</span> Finalizacja pracy dyplomowej</li>
+                </ul>
+            </div>
+
+            <div class="authors" style="margin-top: 3rem;">
+                <div class="author">
+                    <div class="author-name">Dawid Olejniczak</div>
+                </div>
+                <div class="author">
+                    <div class="author-name">Szymon Nowaczyk</div>
+                </div>
+            </div>
+            
+            <p style="text-align: center; margin-top: 2rem; color: var(--text-muted);">
+                Collegium Da Vinci • Informatyka • 2025/2026
+            </p>
+        </div>
+        <div class="slide-number">14 / 14</div>
+    </section>
+
+    <script>
+        let currentSlide = 1;
+        const totalSlides = 14;
+
+        function updateSlideIndicator() {
+            document.getElementById('slideIndicator').textContent = `${currentSlide} / ${totalSlides}`;
+        }
+
+        function goToSlide(n) {
+            currentSlide = Math.max(1, Math.min(n, totalSlides));
+            document.getElementById(`slide${currentSlide}`).scrollIntoView({ behavior: 'smooth' });
+            updateSlideIndicator();
+        }
+
+        function nextSlide() {
+            goToSlide(currentSlide + 1);
+        }
+
+        function prevSlide() {
+            goToSlide(currentSlide - 1);
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+                e.preventDefault();
+                nextSlide();
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                prevSlide();
+            }
+        });
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const slideId = entry.target.id;
+                    currentSlide = parseInt(slideId.replace('slide', ''));
+                    updateSlideIndicator();
+                }
+            });
+        }, { threshold: 0.5 });
+
+        document.querySelectorAll('.slide').forEach(slide => {
+            observer.observe(slide);
+        });
+    </script>
+</body>
+</html>
+
