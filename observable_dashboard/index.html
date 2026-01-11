@@ -113,15 +113,16 @@
             .then(([schema, data]) => {
                 columnTypes = schema;
 
-                // Parse date columns based on schema
+                // Parse ISO 8601 date strings to Date objects
+                // Server already cast types, we just need to parse ISO dates
                 dashmlData = data.map(row => {
                     const parsedRow = {};
                     for (const [column, value] of Object.entries(row)) {
                         if (columnTypes[column] === 'date' && value !== null) {
+                            // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
                             parsedRow[column] = new Date(value);
-                        } else if (columnTypes[column] === 'number' && value !== null) {
-                            parsedRow[column] = parseFloat(value);
                         } else {
+                            // Numbers are already parsed by JSON, strings stay as strings
                             parsedRow[column] = value;
                         }
                     }

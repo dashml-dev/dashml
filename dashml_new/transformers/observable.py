@@ -906,12 +906,29 @@ def get_schema():
 
 @app.route('/api/data')
 def get_data():
-    """Fetch data from SQL database and return as JSON"""
+    """Fetch data from SQL database and return as JSON with proper type casting"""
     try:
+        # Fetch data
         query = f"SELECT * FROM {{SCHEMA}}.{{TABLE_NAME}}"
         df = pd.read_sql(query, engine)
-        data = df.to_dict(orient='records')
-        return jsonify(data)
+
+        # Get column types and cast accordingly
+        column_types = get_column_types()
+        for col_name, col_type in column_types.items():
+            if col_name in df.columns:
+                if col_type == 'date':
+                    # Cast to datetime - pandas handles various date formats
+                    df[col_name] = pd.to_datetime(df[col_name])
+                elif col_type == 'number':
+                    # Cast to numeric
+                    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+
+        # Convert to JSON with ISO 8601 date format
+        json_str = df.to_json(orient='records', date_format='iso')
+
+        # Return pre-serialized JSON
+        from flask import Response
+        return Response(json_str, mimetype='application/json')
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
 
@@ -968,15 +985,16 @@ if __name__ == '__main__':
             .then(([schema, data]) => {
                 columnTypes = schema;
 
-                // Parse date columns based on schema
+                // Parse ISO 8601 date strings to Date objects
+                // Server already cast types, we just need to parse ISO dates
                 dashmlData = data.map(row => {
                     const parsedRow = {};
                     for (const [column, value] of Object.entries(row)) {
                         if (columnTypes[column] === 'date' && value !== null) {
+                            // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
                             parsedRow[column] = new Date(value);
-                        } else if (columnTypes[column] === 'number' && value !== null) {
-                            parsedRow[column] = parseFloat(value);
                         } else {
+                            // Numbers are already parsed by JSON, strings stay as strings
                             parsedRow[column] = value;
                         }
                     }
