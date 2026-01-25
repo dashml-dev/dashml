@@ -1,0 +1,15 @@
+version: 0.1
+title: "Simple Dashboard"
+
+data:
+  type: csv
+  path: "data/example.csv"
+
+charts:
+  - id: "sales_chart"
+    type: "bar"
+    title: "Sales by Country"
+    x: "country"
+    y: "sales"
+    agg: "sum"
+

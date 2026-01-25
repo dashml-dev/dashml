@@ -76,6 +76,7 @@ Specialized visualizations only Plotly supports natively:
 - Plotly: Full implementation
 - Streamlit: Warning or fallback chart
 - Observable: Warning or fallback chart
+- Superset: Map to equivalent viz types where available
 
 ---
 

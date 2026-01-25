@@ -23,8 +23,9 @@ class DashMLValidator:
     # TODO: [Immutability] Use frozenset for constants to prevent accidental modification
     # SUPPORTED_CHART_TYPES = frozenset(["bar", "line", ...])
     SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie", "area", "histogram", "stacked_bar", "grouped_bar"]
-    SUPPORTED_DATA_TYPES = ["csv"]  # Only CSV is actually implemented (json/sql removed until implemented)
+    SUPPORTED_DATA_TYPES = ["csv", "sql", "bigquery"]  # CSV, SQL, and BigQuery datasources
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
+    SUPPORTED_COLUMN_TYPES = ["date", "number", "string"]  # For x_type/y_type hints
 
     def validate(self, spec: Dict[str, Any]) -> None:
         """
@@ -65,14 +66,100 @@ class DashMLValidator:
         if "type" not in data:
             raise ValidationError("'data' must have a 'type' field")
 
-        if "path" not in data:
-            raise ValidationError("'data' must have a 'path' field")
+        data_type = data["type"]
 
-        if data["type"] not in self.SUPPORTED_DATA_TYPES:
+        if data_type not in self.SUPPORTED_DATA_TYPES:
             raise ValidationError(
-                f"Unsupported data type: '{data['type']}'. "
+                f"Unsupported data type: '{data_type}'. "
                 f"Supported: {', '.join(self.SUPPORTED_DATA_TYPES)}"
             )
+
+        # Type-specific validation
+        if data_type == "csv":
+            # CSV requires 'path' field
+            if "path" not in data:
+                raise ValidationError("CSV data source requires 'path' field")
+
+        elif data_type == "sql":
+            # SQL requires either 'path' (new format) or 'schema'+'table_name' (legacy)
+            has_path = "path" in data
+            has_legacy = "schema" in data and "table_name" in data
+
+            if not has_path and not has_legacy:
+                raise ValidationError(
+                    "SQL data source requires either:\n"
+                    "  - 'path' field (e.g., 'public.sales' or '[schema].[table]'), OR\n"
+                    "  - Both 'schema' and 'table_name' fields (legacy format)"
+                )
+
+            # Validate path format if provided
+            if has_path:
+                if not isinstance(data["path"], str):
+                    raise ValidationError("'path' must be a string")
+
+                # Validate that path can be parsed into schema.table
+                try:
+                    schema, table = self._parse_sql_path(data["path"])
+                    if not schema or not table:
+                        raise ValueError("Invalid format")
+                except Exception:
+                    raise ValidationError(
+                        f"Invalid SQL path format: '{data['path']}'\n"
+                        "Expected: 'schema.table' or '[schema].[table]'"
+                    )
+
+            # Validate legacy fields if provided
+            if has_legacy:
+                if not isinstance(data["schema"], str):
+                    raise ValidationError("'schema' must be a string")
+                if not isinstance(data["table_name"], str):
+                    raise ValidationError("'table_name' must be a string")
+
+            # Validate database_id if provided
+            if "database_id" in data and not isinstance(data["database_id"], int):
+                raise ValidationError("'database_id' must be an integer")
+
+        elif data_type == "bigquery":
+            # BigQuery requires 'path' field with dataset.table format
+            if "path" not in data:
+                raise ValidationError(
+                    "BigQuery data source requires 'path' field with format: 'dataset.table'\n"
+                    "Example: path: 'my_dataset.my_table'"
+                )
+
+            if not isinstance(data["path"], str):
+                raise ValidationError("'path' must be a string")
+
+            # Validate path format (dataset.table)
+            path = data["path"]
+            if "." not in path:
+                raise ValidationError(
+                    f"Invalid BigQuery path format: '{path}'\n"
+                    "Expected: 'dataset.table' (e.g., 'products_postresql.orders_one_week')"
+                )
+
+    def _parse_sql_path(self, path: str) -> tuple:
+        """
+        Parse SQL path into (schema, table_name) tuple.
+
+        Supports formats:
+        - "schema.table" -> ("schema", "table")
+        - "[schema].[table]" -> ("schema", "table")
+        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
+        """
+        import re
+
+        # Pattern: [optional brackets]identifier[optional brackets].identifier
+        # Handles: schema.table, [schema].table, schema.[table], [schema].[table]
+        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
+        match = re.match(pattern, path)
+
+        if match:
+            schema = match.group(1)
+            table = match.group(2)
+            return (schema.strip(), table.strip())
+
+        raise ValueError(f"Invalid SQL path format: {path}")
 
     def _validate_charts(self, charts: Any) -> None:
         """Validate charts array"""
@@ -117,6 +204,20 @@ class DashMLValidator:
                 raise ValidationError(
                     f"Chart '{chart['id']}' is type '{chart['type']}' and requires a 'group' field"
                 )
+
+        # x_type validation (optional field)
+        if "x_type" in chart and chart["x_type"] not in self.SUPPORTED_COLUMN_TYPES:
+            raise ValidationError(
+                f"Chart '{chart['id']}' has unsupported x_type: '{chart['x_type']}'. "
+                f"Supported: {', '.join(self.SUPPORTED_COLUMN_TYPES)}"
+            )
+
+        # y_type validation (optional field)
+        if "y_type" in chart and chart["y_type"] not in self.SUPPORTED_COLUMN_TYPES:
+            raise ValidationError(
+                f"Chart '{chart['id']}' has unsupported y_type: '{chart['y_type']}'. "
+                f"Supported: {', '.join(self.SUPPORTED_COLUMN_TYPES)}"
+            )
 
         # ID uniqueness (check against other charts)
         # This is simplified - full implementation would track seen IDs

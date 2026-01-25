@@ -44,6 +44,9 @@ class DashMLEngine:
         # Validate semantic correctness
         self.validator.validate(spec)
 
+        # Store the source file path in the spec for path resolution
+        spec["_source_file"] = dashml_path
+
         # TODO: [Type Safety] Use cast() instead of type: ignore
         # Fix: from typing import cast
         #      return cast(DashMLSpec, spec)

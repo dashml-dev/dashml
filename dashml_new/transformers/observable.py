@@ -19,8 +19,16 @@ CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data
 class ObservablePlotTransformer(Transformer):
     """
     Generates standalone Observable Plot HTML dashboards from DashML specifications.
-    Output: Single HTML file with embedded JavaScript using Observable Plot
+    Output: Single HTML file for CSV, multi-file with Flask backend for SQL
     """
+
+    def __init__(self):
+        super().__init__()
+        self.db_config = None
+
+    def set_db_config(self, config: Dict[str, Any]) -> None:
+        """Store database configuration for SQL datasources"""
+        self.db_config = config
 
     @property
     def name(self) -> str:
@@ -33,51 +41,90 @@ class ObservablePlotTransformer(Transformer):
     def build(self, spec: "DashMLSpec") -> str:
         """
         Generate Observable Plot HTML from DashML spec.
+        For CSV: Returns single HTML file
+        For SQL: Returns JSON-encoded multi-file structure with Flask backend
         """
         try:
             self.clear_warnings()  # Clear warnings from previous builds
 
-            # Load style config
-            style_config = self._load_style_config(spec.get("style"))
-            colors = style_config.get("colors", {})
+            # Check data type
+            data_type = spec["data"].get("type", "csv")
 
-            # Warn about unsupported color fields
-            if colors.get("buttons"):
-                self.warn("'buttons' color is not currently used by Observable transformer")
-
-            # Check for unsupported chart types
-            all_charts = []
-            if "pages" in spec:
-                for page in spec["pages"]:
-                    all_charts.extend(page.get("charts", []))
+            if data_type == "sql":
+                # Generate multi-file output with Flask backend
+                return self._build_sql_version(spec)
             else:
-                all_charts = spec.get("charts", [])
-
-            # Warnings are now handled by validator (group field requirement)
-
-            # Build HTML structure
-            html_parts = []
-            html_parts.append(self._generate_html_head(spec.get("title", "DashML Dashboard"), colors))
-            html_parts.append(self._generate_body_start(spec.get("title", "DashML Dashboard"), colors))
-
-            # Data loading
-            data_spec = spec["data"]
-            html_parts.append(self._generate_data_loader(data_spec))
-
-            # Pages or Charts
-            if "pages" in spec:
-                html_parts.append(self._generate_pages_structure(spec["pages"], colors))
-            else:
-                html_parts.append(self._generate_charts_structure(spec.get("charts", []), colors))
-
-            html_parts.append(self._generate_html_footer())
-
-            return "\n".join(html_parts)
+                # Generate single HTML file for CSV
+                return self._build_csv_version(spec)
 
         except KeyError as e:
             raise TransformerError(f"Missing required field in spec: {e}")
         except Exception as e:
             raise TransformerError(f"Failed to generate Observable Plot HTML: {e}")
+
+    def _build_csv_version(self, spec: "DashMLSpec") -> str:
+        """Generate single HTML file for CSV datasources"""
+        # Load style config
+        style_config = self._load_style_config(spec.get("style"))
+        colors = style_config.get("colors", {})
+
+        # Warn about unsupported color fields
+        if colors.get("buttons"):
+            self.warn("'buttons' color is not currently used by Observable transformer")
+
+        # Check for unsupported chart types
+        all_charts = []
+        if "pages" in spec:
+            for page in spec["pages"]:
+                all_charts.extend(page.get("charts", []))
+        else:
+            all_charts = spec.get("charts", [])
+
+        # Warnings are now handled by validator (group field requirement)
+
+        # Build HTML structure
+        html_parts = []
+        html_parts.append(self._generate_html_head(spec.get("title", "DashML Dashboard"), colors))
+        html_parts.append(self._generate_body_start(spec.get("title", "DashML Dashboard"), colors))
+
+        # Data loading
+        data_spec = spec["data"]
+        html_parts.append(self._generate_data_loader(data_spec))
+
+        # Pages or Charts
+        if "pages" in spec:
+            html_parts.append(self._generate_pages_structure(spec["pages"], colors))
+        else:
+            html_parts.append(self._generate_charts_structure(spec.get("charts", []), colors))
+
+        html_parts.append(self._generate_html_footer())
+
+        return "\n".join(html_parts)
+
+    def _build_sql_version(self, spec: "DashMLSpec") -> str:
+        """Generate multi-file output with Flask backend for SQL datasources"""
+        import json
+
+        if not self.db_config:
+            raise TransformerError("Database configuration not provided for SQL datasource")
+
+        # Generate Flask backend
+        data_spec = spec["data"]
+        flask_app = self._generate_flask_app(data_spec)
+
+        # Generate HTML frontend (fetches from Flask API instead of CSV)
+        html_frontend = self._generate_sql_frontend(spec)
+
+        # Return multi-file JSON structure
+        multi_file_output = {
+            "type": "multi-file",
+            "files": {
+                "app.py": flask_app,
+                "index.html": html_frontend
+            }
+        }
+
+        return json.dumps(multi_file_output)
 
     def _load_style_config(self, style_path: str) -> Dict[str, Any]:
         """Read .dmls file during build
@@ -216,6 +263,14 @@ class ObservablePlotTransformer(Transformer):
     <script>
         // Load and parse CSV data
         let dashmlData = [];
+
+        // For CSV, getEffectiveType returns explicit type or detects from data
+        function getEffectiveType(column, explicitType) {{
+            if (explicitType) return explicitType;
+            // For CSV, we don't have schema info, so return undefined
+            // The sorting logic will handle runtime type detection
+            return undefined;
+        }}
 
         fetch('{path}')
             .then(response => response.text())
@@ -364,6 +419,7 @@ class ObservablePlotTransformer(Transformer):
         y = chart["y"]
         agg = chart.get("agg", "sum")
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
+        x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
 
         primary_color = colors.get("primary", "#4269d0")
         secondary_colors = colors.get("secondary", ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
@@ -380,10 +436,10 @@ class ObservablePlotTransformer(Transformer):
             data_code = "dashmlData"
         elif chart_type in ["stacked_bar", "grouped_bar"] and group:
             # For stacked/grouped bars, need to group by both x and group field
-            data_code = self._get_aggregation_code_with_group(x, y, group, agg)
+            data_code = self._get_aggregation_code_with_group(x, y, group, agg, x_type)
         else:
             # Aggregate data for other chart types
-            data_code = self._get_aggregation_code(x, y, agg)
+            data_code = self._get_aggregation_code(x, y, agg, x_type)
 
         # Pie charts use D3 directly instead of Observable Plot
         if chart_type == "pie":
@@ -392,11 +448,11 @@ class ObservablePlotTransformer(Transformer):
         # Generate Observable Plot mark based on chart type
         mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name)
 
-        # Detect if x axis is temporal (common date field names)
+        # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
         # TODO: [Magic Values] Extract temporal field names to module-level constant
         # Fix: TEMPORAL_FIELD_NAMES = frozenset(['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at'])
         temporal_fields = ['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at']
-        is_temporal_x = x.lower() in temporal_fields
+        is_temporal_x = x_type == "date" or (x_type is None and x.lower() in temporal_fields)
 
         scale_config = ""
         if is_temporal_x:
@@ -482,7 +538,7 @@ class ObservablePlotTransformer(Transformer):
 
             document.getElementById('{container_id}').appendChild(svg.node());"""
 
-    def _get_aggregation_code(self, x: str, y: str, agg: str) -> str:
+    def _get_aggregation_code(self, x: str, y: str, agg: str, x_type: str = None) -> str:
         """Generate JavaScript code to aggregate data"""
         if agg == "sum":
             agg_expr = f"d3.sum(v, d => d['{y}'])"
@@ -493,13 +549,48 @@ class ObservablePlotTransformer(Transformer):
         else:
             agg_expr = f"d3.sum(v, d => d['{y}'])"
 
-        return f"""d3.rollups(
-                dashmlData,
-                v => {agg_expr},
-                d => d['{x}']
-            ).map(([{x}, {y}]) => ({{ {x}, {y} }}))"""
+        # Generate sorting based on x_type (explicit or schema-detected via getEffectiveType)
+        x_type_js = f"'{x_type}'" if x_type else "undefined"
 
-    def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str) -> str:
+        # Use function to sort based on effective type (explicit > schema-detected > runtime)
+        return f"""(() => {{
+                const effectiveXType = getEffectiveType('{x}', {x_type_js});
+                const result = d3.rollups(
+                    dashmlData,
+                    v => {agg_expr},
+                    d => d['{x}']
+                ).map(([{x}, {y}]) => ({{ {x}, {y} }}));
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {{
+                    result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
+                }} else if (effectiveXType === 'number') {{
+                    result.sort((a, b) => a.{x} - b.{x});
+                }} else {{
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {{
+                        const firstVal = result[0].{x};
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {{
+                            result.sort((a, b) => a.{x} - b.{x});
+                        }} else if (typeof firstVal === 'number') {{
+                            result.sort((a, b) => a.{x} - b.{x});
+                        }} else {{
+                            result.sort((a, b) => String(a.{x}).localeCompare(String(b.{x})));
+                        }}
+                    }}
+                }}
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.{x}));
+                return result;
+            }})()"""
+
+    def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str, x_type: str = None) -> str:
         """Generate JavaScript code to aggregate data with grouping
 
         TODO: [DRY] This if/elif chain is duplicated from _get_aggregation_code
@@ -514,18 +605,52 @@ class ObservablePlotTransformer(Transformer):
         else:
             agg_expr = f"d3.sum(v, d => d['{y}'])"
 
-        return f"""d3.rollups(
-                dashmlData,
-                v => {agg_expr},
-                d => d['{x}'],
-                d => d['{group}']
-            ).flatMap(([{x}Val, groupData]) =>
-                groupData.map(([{group}Val, {y}Val]) => ({{
-                    {x}: {x}Val,
-                    {group}: {group}Val,
-                    {y}: {y}Val
-                }}))
-            )"""
+        # Generate sorting based on x_type (explicit or schema-detected via getEffectiveType)
+        x_type_js = f"'{x_type}'" if x_type else "undefined"
+
+        return f"""(() => {{
+                const effectiveXType = getEffectiveType('{x}', {x_type_js});
+                const result = d3.rollups(
+                    dashmlData,
+                    v => {agg_expr},
+                    d => d['{x}'],
+                    d => d['{group}']
+                ).flatMap(([{x}Val, groupData]) =>
+                    groupData.map(([{group}Val, {y}Val]) => ({{
+                        {x}: {x}Val,
+                        {group}: {group}Val,
+                        {y}: {y}Val
+                    }}))
+                );
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('GROUPED - BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('GROUPED - BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {{
+                    result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
+                }} else if (effectiveXType === 'number') {{
+                    result.sort((a, b) => a.{x} - b.{x});
+                }} else {{
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {{
+                        const firstVal = result[0].{x};
+                        console.log('GROUPED - RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {{
+                            result.sort((a, b) => a.{x} - b.{x});
+                        }} else if (typeof firstVal === 'number') {{
+                            result.sort((a, b) => a.{x} - b.{x});
+                        }} else {{
+                            result.sort((a, b) => String(a.{x}).localeCompare(String(b.{x})));
+                        }}
+                    }}
+                }}
+
+                console.log('GROUPED - AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+                console.log('GROUPED - AFTER SORT - last 5 values:', result.slice(-5).map(d => d.{x}));
+                return result;
+            }})()"""
 
     def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str) -> str:
         """Generate Observable Plot mark specification
@@ -552,6 +677,7 @@ class ObservablePlotTransformer(Transformer):
                         y: "{y}",
                         stroke: "{color}",
                         strokeWidth: 2,
+                        sort: "{x}",
                         tip: true
                     }}),
                     Plot.dot(data_{data_var}, {{
@@ -582,6 +708,7 @@ class ObservablePlotTransformer(Transformer):
                         y: "{y}",
                         fill: "{color}",
                         fillOpacity: 0.7,
+                        sort: "{x}",
                         tip: true
                     }}),
                     Plot.ruleY([0])
@@ -647,7 +774,240 @@ class ObservablePlotTransformer(Transformer):
                 ]"""
 
     def get_run_command(self, output_path: str) -> str:
-        """Return command to serve Observable Plot HTML"""
+        """Return command to serve Observable Plot HTML or Flask app"""
         from pathlib import Path
-        output_dir = Path(output_path).parent.resolve()
+        output_path_obj = Path(output_path)
+
+        # If output is a directory (multi-file), run Flask
+        if output_path_obj.is_dir():
+            return f"cd {output_path} && python app.py"
+
+        # Otherwise run simple HTTP server for single HTML file
+        output_dir = output_path_obj.parent.resolve()
         return f"cd {output_dir} && python -m http.server 8000"
+
+    def _parse_sql_path(self, path: str) -> tuple:
+        """
+        Parse SQL path into (schema, table_name) tuple.
+
+        Supports formats:
+        - "schema.table" -> ("schema", "table")
+        - "[schema].[table]" -> ("schema", "table")
+        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
+        """
+        import re
+
+        # Pattern: [optional brackets]identifier[optional brackets].identifier
+        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
+        match = re.match(pattern, path)
+
+        if match:
+            schema = match.group(1)
+            table = match.group(2)
+            return (schema.strip(), table.strip())
+
+        raise TransformerError(f"Invalid SQL path format: {path}")
+
+    def _generate_flask_app(self, data_spec: Dict[str, Any]) -> str:
+        """Generate Flask backend that connects to SQL database"""
+        # Extract database config
+        db_type = self.db_config["type"]
+        host = self.db_config["host"]
+        port = self.db_config["port"]
+        database = self.db_config["database"]
+        user = self.db_config["user"]
+        password = self.db_config["password"]
+
+        # Extract SQL spec fields (support both new path format and legacy format)
+        if "path" in data_spec:
+            schema, table_name = self._parse_sql_path(data_spec["path"])
+        else:
+            schema = data_spec["schema"]
+            table_name = data_spec["table_name"]
+
+        # Build connection string based on database type
+        if db_type == "postgresql":
+            conn_str = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        elif db_type == "mysql":
+            conn_str = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
+        elif db_type == "sqlite":
+            conn_str = f"sqlite:///{database}"
+        else:
+            conn_str = f"{db_type}://{user}:{password}@{host}:{port}/{database}"
+
+        # Generate Flask app code
+        return f'''from flask import Flask, jsonify, send_from_directory
+from sqlalchemy import create_engine
+import pandas as pd
+
+app = Flask(__name__)
+
+# Database configuration
+DATABASE_URL = "{conn_str}"
+SCHEMA = "{schema}"
+TABLE_NAME = "{table_name}"
+
+# Create database engine
+engine = create_engine(DATABASE_URL)
+
+# Cache for column types (fetched once from information_schema)
+_column_types_cache = None
+
+def get_column_types():
+    """Fetch column types from information_schema and map to simple types"""
+    global _column_types_cache
+    if _column_types_cache is not None:
+        return _column_types_cache
+
+    try:
+        query = f"""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = '{{SCHEMA}}' AND table_name = '{{TABLE_NAME}}'
+        """
+        df = pd.read_sql(query, engine)
+
+        # Map SQL types to simple types: date, number, string
+        type_mapping = {{}}
+        for _, row in df.iterrows():
+            col_name = row['column_name']
+            data_type = str(row['data_type']).upper()
+
+            # Date types (PostgreSQL, MySQL, etc.)
+            if any(dt in data_type for dt in ['DATE', 'TIME', 'TIMESTAMP', 'INTERVAL']):
+                type_mapping[col_name] = 'date'
+            # Numeric types
+            elif any(dt in data_type for dt in ['INT', 'FLOAT', 'NUMERIC', 'DECIMAL',
+                                                  'REAL', 'DOUBLE', 'SERIAL', 'MONEY']):
+                type_mapping[col_name] = 'number'
+            # Everything else is string
+            else:
+                type_mapping[col_name] = 'string'
+
+        _column_types_cache = type_mapping
+        return type_mapping
+    except Exception as e:
+        print(f"Warning: Could not fetch column types: {{e}}")
+        return {{}}
+
+@app.route('/')
+def index():
+    """Serve the HTML frontend"""
+    return send_from_directory('.', 'index.html')
+
+@app.route('/api/schema')
+def get_schema():
+    """Return column types from information_schema"""
+    try:
+        column_types = get_column_types()
+        return jsonify(column_types)
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
+
+@app.route('/api/data')
+def get_data():
+    """Fetch data from SQL database and return as JSON with proper type casting"""
+    try:
+        # Fetch data
+        query = f"SELECT * FROM {{SCHEMA}}.{{TABLE_NAME}}"
+        df = pd.read_sql(query, engine)
+
+        # Get column types and cast accordingly
+        column_types = get_column_types()
+        for col_name, col_type in column_types.items():
+            if col_name in df.columns:
+                if col_type == 'date':
+                    # Cast to datetime - pandas handles various date formats
+                    df[col_name] = pd.to_datetime(df[col_name])
+                elif col_type == 'number':
+                    # Cast to numeric
+                    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+
+        # Convert to JSON with ISO 8601 date format
+        json_str = df.to_json(orient='records', date_format='iso')
+
+        # Return pre-serialized JSON
+        from flask import Response
+        return Response(json_str, mimetype='application/json')
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
+
+if __name__ == '__main__':
+    print("Starting Flask server...")
+    print(f"Dashboard available at: http://localhost:5000")
+    app.run(debug=True, port=5000)
+'''
+
+    def _generate_sql_frontend(self, spec: "DashMLSpec") -> str:
+        """Generate HTML frontend that fetches from Flask API"""
+        # Load style config
+        style_config = self._load_style_config(spec.get("style"))
+        colors = style_config.get("colors", {})
+
+        # Build HTML structure
+        html_parts = []
+        html_parts.append(self._generate_html_head(spec.get("title", "DashML Dashboard"), colors))
+        html_parts.append(self._generate_body_start(spec.get("title", "DashML Dashboard"), colors))
+
+        # Data loading from API
+        html_parts.append(self._generate_sql_data_loader())
+
+        # Pages or Charts
+        if "pages" in spec:
+            html_parts.append(self._generate_pages_structure(spec["pages"], colors))
+        else:
+            html_parts.append(self._generate_charts_structure(spec.get("charts", []), colors))
+
+        html_parts.append(self._generate_html_footer())
+
+        return "\n".join(html_parts)
+
+    def _generate_sql_data_loader(self) -> str:
+        """Generate JavaScript to load data from Flask API"""
+        return """
+    <script>
+        // Column types from INFORMATION_SCHEMA (auto-detected)
+        let columnTypes = {};
+        // Load data from Flask API
+        let dashmlData = [];
+
+        // Get effective type: explicit > schema-detected > undefined
+        function getEffectiveType(column, explicitType) {
+            if (explicitType) return explicitType;
+            return columnTypes[column] || undefined;
+        }
+
+        // Fetch schema first, then data
+        Promise.all([
+            fetch('/api/schema').then(r => r.json()),
+            fetch('/api/data').then(r => r.json())
+        ])
+            .then(([schema, data]) => {
+                columnTypes = schema;
+
+                // Parse ISO 8601 date strings to Date objects
+                // Server already cast types, we just need to parse ISO dates
+                dashmlData = data.map(row => {
+                    const parsedRow = {};
+                    for (const [column, value] of Object.entries(row)) {
+                        if (columnTypes[column] === 'date' && value !== null) {
+                            // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
+                            parsedRow[column] = new Date(value);
+                        } else {
+                            // Numbers are already parsed by JSON, strings stay as strings
+                            parsedRow[column] = value;
+                        }
+                    }
+                    return parsedRow;
+                });
+
+                console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
+                console.log('Parsed data (first row):', dashmlData[0]);
+                renderAllCharts();
+            })
+            .catch(error => {
+                console.error('Error loading data:', error);
+                document.body.innerHTML += '<p style="color: red;">Error loading data from database</p>';
+            });
+    </script>"""
+

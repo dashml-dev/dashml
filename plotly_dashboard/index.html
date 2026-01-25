@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>New Chart Types Demo</title>
+  <title>Sales Analytics Dashboard</title>
   <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
   <style>
     body {
@@ -94,44 +94,34 @@
 </head>
 <body>
   <div class="container">
-    <h1>New Chart Types Demo</h1>
+    <h1>Sales Analytics Dashboard</h1>
     <div class="page-tabs">
-      <button class="tab-button active" onclick="showPage('basic', this)">📊 Basic Charts</button>
-      <button class="tab-button" onclick="showPage('new', this)">✨ New Chart Types</button>
-      <button class="tab-button" onclick="showPage('advanced', this)">📊 Advanced Charts</button>
+      <button class="tab-button active" onclick="showPage('overview', this)">📊 Overview</button>
+      <button class="tab-button" onclick="showPage('trends', this)">📈 Trends</button>
     </div>
-    <div id="page-basic" class="page-container">
-      <p class="page-description"><em>Original chart types (bar, line, scatter, pie)</em></p>
+    <div id="page-overview" class="page-container">
+      <p class="page-description"><em>High-level sales metrics and KPIs</em></p>
       <div class="card">
-        <div id="chart-bar_example"></div>
+        <div id="chart-total_sales_by_country"></div>
       </div>
       <div class="card">
-        <div id="chart-line_example"></div>
-      </div>
-    </div>
-    <div id="page-new" class="page-container" style="display:none">
-      <p class="page-description"><em>Priority 1 additions (area, histogram)</em></p>
-      <div class="card">
-        <div id="chart-area_example"></div>
-      </div>
-      <div class="card">
-        <div id="chart-histogram_example"></div>
+        <div id="chart-country_sales_breakdown"></div>
       </div>
     </div>
-    <div id="page-advanced" class="page-container" style="display:none">
-      <p class="page-description"><em>Stacked and grouped bar charts</em></p>
+    <div id="page-trends" class="page-container" style="display:none">
+      <p class="page-description"><em>Sales trends and patterns over time</em></p>
       <div class="card">
-        <div id="chart-stacked_example"></div>
+        <div id="chart-sales_over_time"></div>
       </div>
       <div class="card">
-        <div id="chart-grouped_example"></div>
+        <div id="chart-average_sales_trend"></div>
       </div>
     </div>
   </div>
   <script>
     const theme = {"background": "#282a36", "card": "#313343", "text": "#f8f8f2", "primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]};
 
-    function aggregateData(data, xCol, yCol, aggFunc, xType) {
+    function aggregateData(data, xCol, yCol, aggFunc) {
       const groups = {};
       data.forEach(row => {
         const key = row[xCol];
@@ -139,28 +129,18 @@
         groups[key].push(parseFloat(row[yCol]) || 0);
       });
 
-      const result = Object.entries(groups).map(([key, values]) => {
+      return Object.entries(groups).map(([key, values]) => {
         let aggValue;
         switch (aggFunc) {
           case 'mean': aggValue = values.reduce((a, b) => a + b, 0) / values.length; break;
           case 'count': aggValue = values.length; break;
           default: aggValue = values.reduce((a, b) => a + b, 0);
         }
-        return { [xCol]: key, [yCol]: aggValue };
+        return { x: key, y: aggValue };
       });
-
-      // Sort based on x_type (explicit) or default string sort
-      if (xType === 'date') {
-        result.sort((a, b) => new Date(a[xCol]) - new Date(b[xCol]));
-      } else if (xType === 'number') {
-        result.sort((a, b) => parseFloat(a[xCol]) - parseFloat(b[xCol]));
-      }
-      // No sort for 'string' or undefined - keep aggregation order
-
-      return result;
     }
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {
+    function aggregateDataWithGroup(data, x, y, groupField, agg) {
       const grouped = {};
       data.forEach(row => {
         const xKey = row[x];
@@ -184,22 +164,14 @@
         }
         result.push({ x: entry.x, group: entry.group, y: aggregated });
       });
-
-      // Sort based on x_type
-      if (xType === 'date') {
-        result.sort((a, b) => new Date(a.x) - new Date(b.x));
-      } else if (xType === 'number') {
-        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
-      }
-
       return result;
     }
 
 
-    function render_bar_example(data) {
-      const grouped = aggregateData(data, 'country', 'sales', 'sum', undefined);
-      const xValues = grouped.map(d => d.country);
-      const yValues = grouped.map(d => d.sales);
+    function render_total_sales_by_country(data) {
+      const grouped = aggregateData(data, 'shipping_address_state', 'total_amount', 'sum');
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
 
       let trace;
       switch ('bar') {
@@ -223,20 +195,57 @@
       }
 
       const layout = {
-        title: { text: 'Bar Chart', font: { color: theme.text } },
-        xaxis: { title: 'country', color: theme.text, gridcolor: theme.text + '20' },
-        yaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
+        title: { text: 'Total Sales by State', font: { color: theme.text } },
+        xaxis: { title: 'shipping_address_state', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
         margin: { t: 60, r: 40, b: 60, l: 60 },
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
       };
 
-      Plotly.newPlot('chart-bar_example', [trace], layout, { responsive: true });
+      Plotly.newPlot('chart-total_sales_by_country', [trace], layout, { responsive: true });
     }
-    function render_line_example(data) {
-      const grouped = aggregateData(data, 'date', 'sales', 'sum', undefined);
-      const xValues = grouped.map(d => d.date);
-      const yValues = grouped.map(d => d.sales);
+    function render_country_sales_breakdown(data) {
+      const grouped = aggregateData(data, 'shipping_address_state', 'total_amount', 'sum');
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      switch ('pie') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Market Share by State', font: { color: theme.text } },
+        xaxis: { title: 'shipping_address_state', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-country_sales_breakdown', [trace], layout, { responsive: true });
+    }
+    function render_sales_over_time(data) {
+      const grouped = aggregateData(data, 'order_date', 'total_amount', 'sum');
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
 
       let trace;
       switch ('line') {
@@ -260,23 +269,23 @@
       }
 
       const layout = {
-        title: { text: 'Line Chart', font: { color: theme.text } },
-        xaxis: { title: 'date', color: theme.text, gridcolor: theme.text + '20' },
-        yaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
+        title: { text: 'Sales Over Time', font: { color: theme.text } },
+        xaxis: { title: 'order_date', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
         margin: { t: 60, r: 40, b: 60, l: 60 },
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
       };
 
-      Plotly.newPlot('chart-line_example', [trace], layout, { responsive: true });
+      Plotly.newPlot('chart-sales_over_time', [trace], layout, { responsive: true });
     }
-    function render_area_example(data) {
-      const grouped = aggregateData(data, 'date', 'sales', 'sum', undefined);
-      const xValues = grouped.map(d => d.date);
-      const yValues = grouped.map(d => d.sales);
+    function render_average_sales_trend(data) {
+      const grouped = aggregateData(data, 'order_date', 'total_amount', 'mean');
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
 
       let trace;
-      switch ('area') {
+      switch ('line') {
         case 'line':
           trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
           break;
@@ -297,110 +306,15 @@
       }
 
       const layout = {
-        title: { text: 'Area Chart - Sales Over Time', font: { color: theme.text } },
-        xaxis: { title: 'date', color: theme.text, gridcolor: theme.text + '20' },
-        yaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
+        title: { text: 'Average Daily Sales', font: { color: theme.text } },
+        xaxis: { title: 'order_date', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
         margin: { t: 60, r: 40, b: 60, l: 60 },
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
       };
 
-      Plotly.newPlot('chart-area_example', [trace], layout, { responsive: true });
-    }
-    function render_histogram_example(data) {
-      // Use raw data for histogram
-      const xValues = data.map(d => d['sales']);
-      const yValues = data.map(d => d['sales']);
-
-      let trace;
-      switch ('histogram') {
-        case 'line':
-          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
-          break;
-        case 'scatter':
-          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
-          break;
-        case 'pie':
-          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
-          break;
-        case 'area':
-          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
-          break;
-        case 'histogram':
-          trace = { x: xValues, type: 'histogram', marker: { color: theme.primary } };
-          break;
-        default:
-          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
-      }
-
-      const layout = {
-        title: { text: 'Histogram - Sales Distribution', font: { color: theme.text } },
-        xaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
-        yaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
-        margin: { t: 60, r: 40, b: 60, l: 60 },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      };
-
-      Plotly.newPlot('chart-histogram_example', [trace], layout, { responsive: true });
-    }
-    function render_stacked_example(data) {
-      // Stacked/grouped bars need multiple traces
-      const aggregated = aggregateDataWithGroup(data, 'country', 'sales', 'product', 'sum', undefined);
-      const groupValues = [...new Set(aggregated.map(d => d.group))];
-
-      const traces = [];
-      groupValues.forEach((groupVal, idx) => {
-        const filtered = aggregated.filter(d => d.group === groupVal);
-        traces.push({
-          x: filtered.map(d => d.x),
-          y: filtered.map(d => d.y),
-          name: groupVal,
-          type: 'bar',
-          marker: { color: theme.secondary[idx % theme.secondary.length] }
-        });
-      });
-
-      const layout = {
-        title: { text: 'Stacked Bar - Sales by Country and Product', font: { color: theme.text } },
-        xaxis: { title: 'country', color: theme.text, gridcolor: theme.text + '20' },
-        yaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
-        barmode: 'stack',
-        margin: { t: 60, r: 40, b: 60, l: 60 },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      };
-
-      Plotly.newPlot('chart-stacked_example', traces, layout, { responsive: true });
-    }
-    function render_grouped_example(data) {
-      // Stacked/grouped bars need multiple traces
-      const aggregated = aggregateDataWithGroup(data, 'country', 'sales', 'product', 'sum', undefined);
-      const groupValues = [...new Set(aggregated.map(d => d.group))];
-
-      const traces = [];
-      groupValues.forEach((groupVal, idx) => {
-        const filtered = aggregated.filter(d => d.group === groupVal);
-        traces.push({
-          x: filtered.map(d => d.x),
-          y: filtered.map(d => d.y),
-          name: groupVal,
-          type: 'bar',
-          marker: { color: theme.secondary[idx % theme.secondary.length] }
-        });
-      });
-
-      const layout = {
-        title: { text: 'Grouped Bar - Sales by Country and Product', font: { color: theme.text } },
-        xaxis: { title: 'country', color: theme.text, gridcolor: theme.text + '20' },
-        yaxis: { title: 'sales', color: theme.text, gridcolor: theme.text + '20' },
-        barmode: 'group',
-        margin: { t: 60, r: 40, b: 60, l: 60 },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      };
-
-      Plotly.newPlot('chart-grouped_example', traces, layout, { responsive: true });
+      Plotly.newPlot('chart-average_sales_trend', [trace], layout, { responsive: true });
     }
 
 
@@ -419,31 +333,15 @@
 
 
     function renderAllPages(data) {
-      render_bar_example(data);
-      render_line_example(data);
-      render_area_example(data);
-      render_histogram_example(data);
-      render_stacked_example(data);
-      render_grouped_example(data);
+      render_total_sales_by_country(data);
+      render_country_sales_breakdown(data);
+      render_sales_over_time(data);
+      render_average_sales_trend(data);
     }
 
-    fetch('data/example.csv')
-      .then(response => response.text())
-      .then(csv => {
-        const lines = csv.trim().split('\n').filter(line => line.trim());
-        const headers = lines[0].split(',').map(h => h.trim());
-        const data = lines.slice(1)
-          .map(line => {
-            const values = line.split(',');
-            if (values.length !== headers.length) return null;
-            const row = {};
-            headers.forEach((header, i) => {
-              row[header] = values[i] ? values[i].trim() : '';
-            });
-            return row;
-          })
-          .filter(row => row !== null);
-
+    fetch('/api/data')
+      .then(response => response.json())
+      .then(data => {
         renderAllPages(data);
       })
       .catch(error => console.error('Error loading data:', error));

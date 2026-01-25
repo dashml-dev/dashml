@@ -23,10 +23,30 @@ class StyleSpec(TypedDict):
     colors: StyleColors
 
 
-class DataSpec(TypedDict):
-    """Data source specification"""
-    type: str
-    path: str
+class DataSpec(TypedDict, total=False):
+    """
+    Data source specification.
+
+    Supports three data source types:
+    - CSV: Requires 'path' field pointing to CSV file (e.g., "./data/sales.csv")
+    - SQL: Requires 'path' field with schema.table format:
+           - Simple: "public.sales_data"
+           - With spaces/special chars: "[Public Data].[Sales Data]"
+           Optional 'database_id' (can be auto-created via CLI args)
+    - BigQuery: Requires 'path' field with dataset.table format:
+           - Example: "products_postresql.orders_one_week"
+           Requires --bq-project CLI arg for project ID
+
+    Note: Using total=False allows type-specific fields to be optional.
+    The validator ensures required fields are present for each type.
+    """
+    type: str              # "csv", "sql", or "bigquery" (required)
+    path: str              # CSV: file path, SQL: schema.table, BigQuery: dataset.table (required)
+    # SQL-specific fields
+    database_id: int       # Superset database ID (optional - auto-created from CLI if not provided)
+    # Legacy SQL fields (deprecated - use path instead)
+    schema: str            # DEPRECATED: Use path="schema.table" instead
+    table_name: str        # DEPRECATED: Use path="schema.table" instead
 
 
 class ChartSpec(TypedDict, total=False):
@@ -43,6 +63,12 @@ class ChartSpec(TypedDict, total=False):
     - stacked_bar: Stacked bars (requires 'group' field)
     - grouped_bar: Grouped/clustered bars (requires 'group' field)
 
+    Type hints (optional):
+    - x_type: Explicit type for x-axis values ("date", "number", "string")
+    - y_type: Explicit type for y-axis values ("number", "string")
+    
+    When x_type: "date" is specified, data is sorted chronologically.
+
     Note: Using total=False allows optional fields like 'title' and 'agg'.
     The validator ensures required fields are present.
     """
@@ -53,6 +79,8 @@ class ChartSpec(TypedDict, total=False):
     y: str
     agg: str  # sum, mean, or count
     group: str  # Field to group/stack by (required for stacked_bar and grouped_bar)
+    x_type: str  # Optional: "date", "number", or "string" - controls sorting/formatting
+    y_type: str  # Optional: "number" or "string"
 
 
 class PageSpec(TypedDict, total=False):
