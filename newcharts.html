@@ -131,7 +131,7 @@
   <script>
     const theme = {"background": "#282a36", "card": "#313343", "text": "#f8f8f2", "primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]};
 
-    function aggregateData(data, xCol, yCol, aggFunc) {
+    function aggregateData(data, xCol, yCol, aggFunc, xType) {
       const groups = {};
       data.forEach(row => {
         const key = row[xCol];
@@ -139,7 +139,7 @@
         groups[key].push(parseFloat(row[yCol]) || 0);
       });
 
-      return Object.entries(groups).map(([key, values]) => {
+      const result = Object.entries(groups).map(([key, values]) => {
         let aggValue;
         switch (aggFunc) {
           case 'mean': aggValue = values.reduce((a, b) => a + b, 0) / values.length; break;
@@ -148,9 +148,19 @@
         }
         return { [xCol]: key, [yCol]: aggValue };
       });
+
+      // Sort based on x_type (explicit) or default string sort
+      if (xType === 'date') {
+        result.sort((a, b) => new Date(a[xCol]) - new Date(b[xCol]));
+      } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a[xCol]) - parseFloat(b[xCol]));
+      }
+      // No sort for 'string' or undefined - keep aggregation order
+
+      return result;
     }
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg) {
+    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {
       const grouped = {};
       data.forEach(row => {
         const xKey = row[x];
@@ -174,12 +184,20 @@
         }
         result.push({ x: entry.x, group: entry.group, y: aggregated });
       });
+
+      // Sort based on x_type
+      if (xType === 'date') {
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }
+
       return result;
     }
 
 
     function render_bar_example(data) {
-      const grouped = aggregateData(data, 'country', 'sales', 'sum');
+      const grouped = aggregateData(data, 'country', 'sales', 'sum', undefined);
       const xValues = grouped.map(d => d.country);
       const yValues = grouped.map(d => d.sales);
 
@@ -216,7 +234,7 @@
       Plotly.newPlot('chart-bar_example', [trace], layout, { responsive: true });
     }
     function render_line_example(data) {
-      const grouped = aggregateData(data, 'date', 'sales', 'sum');
+      const grouped = aggregateData(data, 'date', 'sales', 'sum', undefined);
       const xValues = grouped.map(d => d.date);
       const yValues = grouped.map(d => d.sales);
 
@@ -253,7 +271,7 @@
       Plotly.newPlot('chart-line_example', [trace], layout, { responsive: true });
     }
     function render_area_example(data) {
-      const grouped = aggregateData(data, 'date', 'sales', 'sum');
+      const grouped = aggregateData(data, 'date', 'sales', 'sum', undefined);
       const xValues = grouped.map(d => d.date);
       const yValues = grouped.map(d => d.sales);
 
@@ -328,7 +346,7 @@
     }
     function render_stacked_example(data) {
       // Stacked/grouped bars need multiple traces
-      const aggregated = aggregateDataWithGroup(data, 'country', 'sales', 'product', 'sum');
+      const aggregated = aggregateDataWithGroup(data, 'country', 'sales', 'product', 'sum', undefined);
       const groupValues = [...new Set(aggregated.map(d => d.group))];
 
       const traces = [];
@@ -357,7 +375,7 @@
     }
     function render_grouped_example(data) {
       // Stacked/grouped bars need multiple traces
-      const aggregated = aggregateDataWithGroup(data, 'country', 'sales', 'product', 'sum');
+      const aggregated = aggregateDataWithGroup(data, 'country', 'sales', 'product', 'sum', undefined);
       const groupValues = [...new Set(aggregated.map(d => d.group))];
 
       const traces = [];

@@ -26,9 +26,28 @@ def main():
     """, unsafe_allow_html=True)
     st.title("New Chart Types Demo")
 
-    # Load data
+    # Load data from CSV
     try:
         df = pd.read_csv("data/example.csv")
+
+        # Infer column types from pandas dtypes for auto type detection
+        column_types = {}
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            if 'datetime' in dtype or 'date' in dtype:
+                column_types[col] = 'date'
+            elif 'int' in dtype or 'float' in dtype:
+                column_types[col] = 'number'
+            else:
+                # Try to detect date strings
+                if df[col].dtype == 'object':
+                    try:
+                        pd.to_datetime(df[col].dropna().head(10))
+                        column_types[col] = 'date'
+                    except:
+                        column_types[col] = 'string'
+                else:
+                    column_types[col] = 'string'
     except FileNotFoundError:
         st.error("Data file not found: data/example.csv")
         return
@@ -44,10 +63,20 @@ def main():
 
         # Chart: bar_example
         st.subheader("Bar Chart")
+        effective_x_type = "None" if "None" != "None" else column_types.get("country")
         # Aggregate: sum(sales) group by country
         chart_data = df.groupby("country")["sales"].sum().reset_index()
+        if effective_x_type == "date":
+            # Sort by date for chronological order
+            chart_data["country"] = pd.to_datetime(chart_data["country"])
+            chart_data = chart_data.sort_values("country")
+        elif effective_x_type == "number":
+            # Sort by number for numerical order
+            chart_data = chart_data.sort_values("country")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_bar(color="#bd93f9").encode(
-            x=alt.X("country", sort=None),
+            x=alt.X("country" + x_encoding_suffix, sort=None),
             y="sales",
             tooltip=["country", "sales"]
         ).properties(title="Bar Chart")
@@ -56,10 +85,20 @@ def main():
 
         # Chart: line_example
         st.subheader("Line Chart")
+        effective_x_type = "None" if "None" != "None" else column_types.get("date")
         # Aggregate: sum(sales) group by date
         chart_data = df.groupby("date")["sales"].sum().reset_index()
+        if effective_x_type == "date":
+            # Sort by date for chronological order
+            chart_data["date"] = pd.to_datetime(chart_data["date"])
+            chart_data = chart_data.sort_values("date")
+        elif effective_x_type == "number":
+            # Sort by number for numerical order
+            chart_data = chart_data.sort_values("date")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_line(color="#bd93f9", point=True).encode(
-            x=alt.X("date", sort=None),
+            x=alt.X("date" + x_encoding_suffix, sort=None),
             y="sales",
             tooltip=["date", "sales"]
         ).properties(title="Line Chart")
@@ -71,10 +110,20 @@ def main():
 
         # Chart: area_example
         st.subheader("Area Chart - Sales Over Time")
+        effective_x_type = "None" if "None" != "None" else column_types.get("date")
         # Aggregate: sum(sales) group by date
         chart_data = df.groupby("date")["sales"].sum().reset_index()
+        if effective_x_type == "date":
+            # Sort by date for chronological order
+            chart_data["date"] = pd.to_datetime(chart_data["date"])
+            chart_data = chart_data.sort_values("date")
+        elif effective_x_type == "number":
+            # Sort by number for numerical order
+            chart_data = chart_data.sort_values("date")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_area(color="#bd93f9", opacity=0.7).encode(
-            x=alt.X("date", sort=None),
+            x=alt.X("date" + x_encoding_suffix, sort=None),
             y="sales",
             tooltip=["date", "sales"]
         ).properties(title="Area Chart - Sales Over Time")
@@ -83,6 +132,9 @@ def main():
 
         # Chart: histogram_example
         st.subheader("Histogram - Sales Distribution")
+        effective_x_type = "None" if "None" != "None" else column_types.get("sales")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         # Histogram: bin sales values
         c = alt.Chart(df).mark_bar(color="#bd93f9").encode(
             x=alt.X("sales:Q", bin=True),
@@ -97,12 +149,22 @@ def main():
 
         # Chart: stacked_example
         st.subheader("Stacked Bar - Sales by Country and Product")
+        effective_x_type = "None" if "None" != "None" else column_types.get("country")
         # Aggregate: sum(sales) group by country and product
         chart_data = df.groupby(["country", "product"])["sales"].sum().reset_index()
+        if effective_x_type == "date":
+            # Sort by date for chronological order
+            chart_data["country"] = pd.to_datetime(chart_data["country"])
+            chart_data = chart_data.sort_values("country")
+        elif effective_x_type == "number":
+            # Sort by number for numerical order
+            chart_data = chart_data.sort_values("country")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         # Stacked bar: stack sales by product
         theme_colors = ['#50fa7b', '#ffb86c', '#ff5555', '#8be9fd', '#f1fa8c']
         c = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X("country", sort=None),
+            x=alt.X("country" + x_encoding_suffix, sort=None),
             y=alt.Y("sales:Q", stack="zero"),
             color=alt.Color("product:N",
                 scale=alt.Scale(range=theme_colors),
@@ -115,12 +177,22 @@ def main():
 
         # Chart: grouped_example
         st.subheader("Grouped Bar - Sales by Country and Product")
+        effective_x_type = "None" if "None" != "None" else column_types.get("country")
         # Aggregate: sum(sales) group by country and product
         chart_data = df.groupby(["country", "product"])["sales"].sum().reset_index()
+        if effective_x_type == "date":
+            # Sort by date for chronological order
+            chart_data["country"] = pd.to_datetime(chart_data["country"])
+            chart_data = chart_data.sort_values("country")
+        elif effective_x_type == "number":
+            # Sort by number for numerical order
+            chart_data = chart_data.sort_values("country")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         # Grouped bar: group sales by product
         theme_colors = ['#50fa7b', '#ffb86c', '#ff5555', '#8be9fd', '#f1fa8c']
         c = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X("country", sort=None),
+            x=alt.X("country" + x_encoding_suffix, sort=None),
             y="sales:Q",
             color=alt.Color("product:N",
                 scale=alt.Scale(range=theme_colors),

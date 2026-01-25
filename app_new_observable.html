@@ -97,6 +97,14 @@
         // Load and parse CSV data
         let dashmlData = [];
 
+        // For CSV, getEffectiveType returns explicit type or detects from data
+        function getEffectiveType(column, explicitType) {
+            if (explicitType) return explicitType;
+            // For CSV, we don't have schema info, so return undefined
+            // The sorting logic will handle runtime type detection
+            return undefined;
+        }
+
         fetch('data/example.csv')
             .then(response => response.text())
             .then(csvText => {
@@ -195,11 +203,42 @@
 
         function renderAllCharts() {
             // Chart: bar_example
-            const data_bar_example = d3.rollups(
-                dashmlData,
-                v => d3.sum(v, d => d['sales']),
-                d => d['country']
-            ).map(([country, sales]) => ({ country, sales }));
+            const data_bar_example = (() => {
+                const effectiveXType = getEffectiveType('country', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.sum(v, d => d['sales']),
+                    d => d['country']
+                ).map(([country, sales]) => ({ country, sales }));
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.country));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.country) - new Date(b.country));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.country - b.country);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].country;
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.country - b.country);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.country - b.country);
+                        } else {
+                            result.sort((a, b) => String(a.country).localeCompare(String(b.country)));
+                        }
+                    }
+                }
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.country));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.country));
+                return result;
+            })();
             const plot_bar_example = Plot.plot({
                 marks: [
                     Plot.barY(data_bar_example, {
@@ -220,11 +259,42 @@
             });
             document.getElementById('chart-basic-bar_example').appendChild(plot_bar_example);
             // Chart: line_example
-            const data_line_example = d3.rollups(
-                dashmlData,
-                v => d3.sum(v, d => d['sales']),
-                d => d['date']
-            ).map(([date, sales]) => ({ date, sales }));
+            const data_line_example = (() => {
+                const effectiveXType = getEffectiveType('date', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.sum(v, d => d['sales']),
+                    d => d['date']
+                ).map(([date, sales]) => ({ date, sales }));
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.date));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.date) - new Date(b.date));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.date - b.date);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].date;
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.date - b.date);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.date - b.date);
+                        } else {
+                            result.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+                        }
+                    }
+                }
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.date));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.date));
+                return result;
+            })();
             const plot_line_example = Plot.plot({
                 marks: [
                     Plot.line(data_line_example, {
@@ -232,6 +302,7 @@
                         y: "sales",
                         stroke: "#bd93f9",
                         strokeWidth: 2,
+                        sort: "date",
                         tip: true
                     }),
                     Plot.dot(data_line_example, {
@@ -253,11 +324,42 @@
             });
             document.getElementById('chart-basic-line_example').appendChild(plot_line_example);
             // Chart: area_example
-            const data_area_example = d3.rollups(
-                dashmlData,
-                v => d3.sum(v, d => d['sales']),
-                d => d['date']
-            ).map(([date, sales]) => ({ date, sales }));
+            const data_area_example = (() => {
+                const effectiveXType = getEffectiveType('date', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.sum(v, d => d['sales']),
+                    d => d['date']
+                ).map(([date, sales]) => ({ date, sales }));
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.date));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.date) - new Date(b.date));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.date - b.date);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].date;
+                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.date - b.date);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.date - b.date);
+                        } else {
+                            result.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+                        }
+                    }
+                }
+
+                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.date));
+                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.date));
+                return result;
+            })();
             const plot_area_example = Plot.plot({
                 marks: [
                     Plot.areaY(data_area_example, {
@@ -265,6 +367,7 @@
                         y: "sales",
                         fill: "#bd93f9",
                         fillOpacity: 0.7,
+                        sort: "date",
                         tip: true
                     }),
                     Plot.ruleY([0])
@@ -300,18 +403,49 @@
             });
             document.getElementById('chart-new-histogram_example').appendChild(plot_histogram_example);
             // Chart: stacked_example
-            const data_stacked_example = d3.rollups(
-                dashmlData,
-                v => d3.sum(v, d => d['sales']),
-                d => d['country'],
-                d => d['product']
-            ).flatMap(([countryVal, groupData]) =>
-                groupData.map(([productVal, salesVal]) => ({
-                    country: countryVal,
-                    product: productVal,
-                    sales: salesVal
-                }))
-            );
+            const data_stacked_example = (() => {
+                const effectiveXType = getEffectiveType('country', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.sum(v, d => d['sales']),
+                    d => d['country'],
+                    d => d['product']
+                ).flatMap(([countryVal, groupData]) =>
+                    groupData.map(([productVal, salesVal]) => ({
+                        country: countryVal,
+                        product: productVal,
+                        sales: salesVal
+                    }))
+                );
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('GROUPED - BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('GROUPED - BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.country));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.country) - new Date(b.country));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.country - b.country);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].country;
+                        console.log('GROUPED - RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.country - b.country);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.country - b.country);
+                        } else {
+                            result.sort((a, b) => String(a.country).localeCompare(String(b.country)));
+                        }
+                    }
+                }
+
+                console.log('GROUPED - AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.country));
+                console.log('GROUPED - AFTER SORT - last 5 values:', result.slice(-5).map(d => d.country));
+                return result;
+            })();
             const plot_stacked_example = Plot.plot({
                 marks: [
                     Plot.barY(data_stacked_example, {
@@ -336,18 +470,49 @@
             });
             document.getElementById('chart-advanced-stacked_example').appendChild(plot_stacked_example);
             // Chart: grouped_example
-            const data_grouped_example = d3.rollups(
-                dashmlData,
-                v => d3.sum(v, d => d['sales']),
-                d => d['country'],
-                d => d['product']
-            ).flatMap(([countryVal, groupData]) =>
-                groupData.map(([productVal, salesVal]) => ({
-                    country: countryVal,
-                    product: productVal,
-                    sales: salesVal
-                }))
-            );
+            const data_grouped_example = (() => {
+                const effectiveXType = getEffectiveType('country', undefined);
+                const result = d3.rollups(
+                    dashmlData,
+                    v => d3.sum(v, d => d['sales']),
+                    d => d['country'],
+                    d => d['product']
+                ).flatMap(([countryVal, groupData]) =>
+                    groupData.map(([productVal, salesVal]) => ({
+                        country: countryVal,
+                        product: productVal,
+                        sales: salesVal
+                    }))
+                );
+
+                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
+                console.log('GROUPED - BEFORE SORT - effectiveXType:', effectiveXType);
+                console.log('GROUPED - BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.country));
+
+                // Sort based on effective x_type
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.country) - new Date(b.country));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.country - b.country);
+                } else {
+                    // Fallback: detect runtime type from first value
+                    if (result.length > 0) {
+                        const firstVal = result[0].country;
+                        console.log('GROUPED - RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
+                        if (firstVal instanceof Date) {
+                            result.sort((a, b) => a.country - b.country);
+                        } else if (typeof firstVal === 'number') {
+                            result.sort((a, b) => a.country - b.country);
+                        } else {
+                            result.sort((a, b) => String(a.country).localeCompare(String(b.country)));
+                        }
+                    }
+                }
+
+                console.log('GROUPED - AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.country));
+                console.log('GROUPED - AFTER SORT - last 5 values:', result.slice(-5).map(d => d.country));
+                return result;
+            })();
             const plot_grouped_example = Plot.plot({
                 marks: [
                     Plot.barY(data_grouped_example, {
