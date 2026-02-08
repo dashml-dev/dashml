@@ -1,19 +1,23 @@
 """
 Observable Plot Transformer - Generates Observable Plot HTML from DashML specs
 """
-from typing import TYPE_CHECKING, Dict, Any
+from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import yaml
+import json
 from .base import Transformer, TransformerError
+from .constants import (
+    CHARTS_NEED_AGGREGATION,
+    CHARTS_USE_RAW_DATA,
+    DEFAULT_HISTOGRAM_BINS,
+    DEFAULT_PRIMARY_COLOR,
+    DEFAULT_SECONDARY_COLORS,
+    TEMPORAL_FIELD_NAMES,
+    DEFAULT_SORT_ORDER,
+)
 
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec, ChartSpec
-
-# TODO: [DRY] Move these constants to shared module (transformers/constants.py)
-# These are duplicated in streamlit.py, plotly.py, and observable.py
-# Chart type categorization by data requirements
-CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
-CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data points
 
 
 class ObservablePlotTransformer(Transformer):
@@ -43,6 +47,7 @@ class ObservablePlotTransformer(Transformer):
         Generate Observable Plot HTML from DashML spec.
         For CSV: Returns single HTML file
         For SQL: Returns JSON-encoded multi-file structure with Flask backend
+        For BigQuery: Returns JSON-encoded multi-file structure with Flask + BigQuery backend
         """
         try:
             self.clear_warnings()  # Clear warnings from previous builds
@@ -53,6 +58,9 @@ class ObservablePlotTransformer(Transformer):
             if data_type == "sql":
                 # Generate multi-file output with Flask backend
                 return self._build_sql_version(spec)
+            elif data_type == "bigquery":
+                # Generate multi-file output with Flask + BigQuery backend
+                return self._build_bigquery_version(spec)
             else:
                 # Generate single HTML file for CSV
                 return self._build_csv_version(spec)
@@ -101,9 +109,31 @@ class ObservablePlotTransformer(Transformer):
 
         return "\n".join(html_parts)
 
+    def _build_bigquery_version(self, spec: "DashMLSpec") -> str:
+        """Generate multi-file output with Flask + BigQuery backend"""
+        if not self.db_config:
+            raise TransformerError("BigQuery configuration not provided")
+
+        # Generate Flask backend with BigQuery
+        data_spec = spec["data"]
+        flask_app = self._generate_flask_app_bigquery(data_spec)
+
+        # Generate HTML frontend (fetches from Flask API - same as SQL version)
+        html_frontend = self._generate_sql_frontend(spec)
+
+        # Return multi-file JSON structure
+        multi_file_output = {
+            "type": "multi-file",
+            "files": {
+                "app.py": flask_app,
+                "index.html": html_frontend
+            }
+        }
+
+        return json.dumps(multi_file_output)
+
     def _build_sql_version(self, spec: "DashMLSpec") -> str:
         """Generate multi-file output with Flask backend for SQL datasources"""
-        import json
 
         if not self.db_config:
             raise TransformerError("Database configuration not provided for SQL datasource")
@@ -126,31 +156,13 @@ class ObservablePlotTransformer(Transformer):
 
         return json.dumps(multi_file_output)
 
-    def _load_style_config(self, style_path: str) -> Dict[str, Any]:
-        """Read .dmls file during build
-
-        TODO: [DRY] This method is duplicated in streamlit.py, plotly.py, and observable.py
-        Move to base.Transformer or create a StyleMixin
-        """
-        if not style_path:
-            return {}
-        try:
-            path = Path(style_path)
-            if path.exists():
-                with open(path, 'r', encoding='utf-8') as f:
-                    return yaml.safe_load(f) or {}
-        except Exception:
-            # TODO: [CRITICAL] Silent exception handling - use specific exceptions and logging
-            # Fix: except (FileNotFoundError, yaml.YAMLError) as e:
-            #         logger.warning(f"Could not load style {style_path}: {e}")
-            pass
-        return {}
+    # _load_style_config is now inherited from base class
 
     def _generate_html_head(self, title: str, colors: Dict[str, str]) -> str:
         bg_color = colors.get("background", "#ffffff")
         card_color = colors.get("card", bg_color)
         text_color = colors.get("text", "#000000")
-        primary_color = colors.get("primary", "#4269d0")
+        primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -420,9 +432,15 @@ class ObservablePlotTransformer(Transformer):
         agg = chart.get("agg", "sum")
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
         x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
+        y_type = chart.get("y_type")  # Optional: "number", "string" for casting
+        bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
+        filters = chart.get("filters", [])  # Optional: filter conditions
+        sort_field = chart.get("sort")  # Optional: "x" or "y"
+        sort_order = chart.get("sort_order", DEFAULT_SORT_ORDER)
+        limit = chart.get("limit")  # Optional: max rows after aggregation
 
-        primary_color = colors.get("primary", "#4269d0")
-        secondary_colors = colors.get("secondary", ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+        primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
+        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
 
         # Determine container ID
         container_id = f"chart-{page_id}-{chart_id}" if page_id else f"chart-{chart_id}"
@@ -432,21 +450,48 @@ class ObservablePlotTransformer(Transformer):
 
         # Generate data code based on chart type requirements
         if chart_type in CHARTS_USE_RAW_DATA:
-            # Use raw data for histogram and scatter
-            data_code = "dashmlData"
+            # Use raw data for histogram - apply filters only
+            if filters:
+                filter_conditions = []
+                for f in filters:
+                    field = f["field"]
+                    op = f["op"]
+                    value = json.dumps(f["value"])
+                    if op == "eq":
+                        filter_conditions.append(f"d['{field}'] === {value}")
+                    elif op == "ne":
+                        filter_conditions.append(f"d['{field}'] !== {value}")
+                    elif op == "gt":
+                        filter_conditions.append(f"d['{field}'] > {value}")
+                    elif op == "lt":
+                        filter_conditions.append(f"d['{field}'] < {value}")
+                    elif op == "gte":
+                        filter_conditions.append(f"d['{field}'] >= {value}")
+                    elif op == "lte":
+                        filter_conditions.append(f"d['{field}'] <= {value}")
+                    elif op == "in":
+                        filter_conditions.append(f"{value}.includes(d['{field}'])")
+                    elif op == "contains":
+                        filter_conditions.append(f"String(d['{field}']).includes({value})")
+                filter_code = " && ".join(filter_conditions)
+                data_code = f"dashmlData.filter(d => {filter_code})"
+            else:
+                data_code = "dashmlData"
         elif chart_type in ["stacked_bar", "grouped_bar"] and group:
             # For stacked/grouped bars, need to group by both x and group field
-            data_code = self._get_aggregation_code_with_group(x, y, group, agg, x_type)
+            data_code = self._get_aggregation_code_with_group(x, y, group, agg, x_type,
+                                                               y_type, filters, sort_field, sort_order, limit)
         else:
             # Aggregate data for other chart types
-            data_code = self._get_aggregation_code(x, y, agg, x_type)
+            data_code = self._get_aggregation_code(x, y, agg, x_type,
+                                                    y_type, filters, sort_field, sort_order, limit)
 
         # Pie charts use D3 directly instead of Observable Plot
         if chart_type == "pie":
             return self._generate_d3_pie_chart(safe_var_name, x, y, data_code, container_id, colors)
 
         # Generate Observable Plot mark based on chart type
-        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name)
+        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins)
 
         # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
         # TODO: [Magic Values] Extract temporal field names to module-level constant
@@ -476,7 +521,7 @@ class ObservablePlotTransformer(Transformer):
     def _generate_d3_pie_chart(self, var_name: str, x: str, y: str, data_code: str, container_id: str, colors: Dict[str, str]) -> str:
         """Generate D3 pie chart code"""
         text_color = colors.get('text', '#000000')
-        secondary_colors = colors.get('secondary', ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+        secondary_colors = colors.get('secondary', DEFAULT_SECONDARY_COLORS)
         return f"""            // D3 Pie Chart
             const data_{var_name} = {data_code};
             const pieWidth = 400;
@@ -538,8 +583,11 @@ class ObservablePlotTransformer(Transformer):
 
             document.getElementById('{container_id}').appendChild(svg.node());"""
 
-    def _get_aggregation_code(self, x: str, y: str, agg: str, x_type: str = None) -> str:
-        """Generate JavaScript code to aggregate data"""
+    def _get_aggregation_code(self, x: str, y: str, agg: str, x_type: str = None,
+                               y_type: str = None, filters: List = None,
+                               sort_field: str = None, sort_order: str = "asc",
+                               limit: int = None) -> str:
+        """Generate JavaScript code to aggregate data with filtering, sorting, and limiting"""
         if agg == "sum":
             agg_expr = f"d3.sum(v, d => d['{y}'])"
         elif agg == "mean":
@@ -552,50 +600,103 @@ class ObservablePlotTransformer(Transformer):
         # Generate sorting based on x_type (explicit or schema-detected via getEffectiveType)
         x_type_js = f"'{x_type}'" if x_type else "undefined"
 
-        # Use function to sort based on effective type (explicit > schema-detected > runtime)
-        return f"""(() => {{
-                const effectiveXType = getEffectiveType('{x}', {x_type_js});
-                const result = d3.rollups(
-                    dashmlData,
-                    v => {agg_expr},
-                    d => d['{x}']
-                ).map(([{x}, {y}]) => ({{ {x}, {y} }}));
+        # Generate filter conditions
+        filter_conditions = []
+        if filters:
+            for f in filters:
+                field = f["field"]
+                op = f["op"]
+                value = json.dumps(f["value"])
+                if op == "eq":
+                    filter_conditions.append(f"d['{field}'] === {value}")
+                elif op == "ne":
+                    filter_conditions.append(f"d['{field}'] !== {value}")
+                elif op == "gt":
+                    filter_conditions.append(f"d['{field}'] > {value}")
+                elif op == "lt":
+                    filter_conditions.append(f"d['{field}'] < {value}")
+                elif op == "gte":
+                    filter_conditions.append(f"d['{field}'] >= {value}")
+                elif op == "lte":
+                    filter_conditions.append(f"d['{field}'] <= {value}")
+                elif op == "in":
+                    filter_conditions.append(f"{value}.includes(d['{field}'])")
+                elif op == "contains":
+                    filter_conditions.append(f"String(d['{field}']).includes({value})")
 
-                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
-                console.log('BEFORE SORT - effectiveXType:', effectiveXType);
-                console.log('BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+        filter_code = " && ".join(filter_conditions) if filter_conditions else "true"
 
-                // Sort based on effective x_type
+        # y_type casting
+        y_cast = ""
+        if y_type == "number":
+            y_cast = f"d['{y}'] = parseFloat(d['{y}']) || 0;"
+        elif y_type == "string":
+            y_cast = f"d['{y}'] = String(d['{y}']);"
+
+        # Sort logic
+        sort_ascending = sort_order == "asc"
+        if sort_field == "y":
+            sort_code = f"result.sort((a, b) => {'1' if sort_ascending else '-1'} * (a.{y} - b.{y}));"
+        elif sort_field == "x":
+            sort_code = f"""
+                if (effectiveXType === 'date') {{
+                    result.sort((a, b) => {'1' if sort_ascending else '-1'} * (new Date(a.{x}) - new Date(b.{x})));
+                }} else if (effectiveXType === 'number') {{
+                    result.sort((a, b) => {'1' if sort_ascending else '-1'} * (a.{x} - b.{x}));
+                }} else {{
+                    result.sort((a, b) => {'1' if sort_ascending else '-1'} * String(a.{x}).localeCompare(String(b.{x})));
+                }}"""
+        else:
+            # Default: sort by x - date/number by value, strings alphabetically
+            sort_code = f"""
                 if (effectiveXType === 'date') {{
                     result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
                 }} else if (effectiveXType === 'number') {{
                     result.sort((a, b) => a.{x} - b.{x});
-                }} else {{
-                    // Fallback: detect runtime type from first value
-                    if (result.length > 0) {{
-                        const firstVal = result[0].{x};
-                        console.log('RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
-                        if (firstVal instanceof Date) {{
-                            result.sort((a, b) => a.{x} - b.{x});
-                        }} else if (typeof firstVal === 'number') {{
-                            result.sort((a, b) => a.{x} - b.{x});
-                        }} else {{
-                            result.sort((a, b) => String(a.{x}).localeCompare(String(b.{x})));
-                        }}
+                }} else if (result.length > 0) {{
+                    const firstVal = result[0].{x};
+                    if (firstVal instanceof Date) {{
+                        result.sort((a, b) => a.{x} - b.{x});
+                    }} else if (typeof firstVal === 'number') {{
+                        result.sort((a, b) => a.{x} - b.{x});
+                    }} else {{
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.{x}).localeCompare(String(b.{x})));
                     }}
-                }}
+                }}"""
 
-                console.log('AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
-                console.log('AFTER SORT - last 5 values:', result.slice(-5).map(d => d.{x}));
+        # Limit code
+        limit_code = f"result = result.slice(0, {limit});" if limit else ""
+
+        return f"""(() => {{
+                const effectiveXType = getEffectiveType('{x}', {x_type_js});
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => {filter_code});
+
+                // Cast y values if y_type specified
+                {"filteredData = filteredData.map(d => { const newD = {...d}; " + y_cast + " return newD; });" if y_cast else ""}
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => {agg_expr},
+                    d => d['{x}']
+                ).map(([{x}, {y}]) => ({{ {x}, {y} }}));
+
+                // Sort
+                {sort_code}
+
+                // Limit
+                {limit_code}
+
                 return result;
             }})()"""
 
-    def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str, x_type: str = None) -> str:
-        """Generate JavaScript code to aggregate data with grouping
-
-        TODO: [DRY] This if/elif chain is duplicated from _get_aggregation_code
-        Extract to a helper method: _get_agg_expression(agg: str, y: str) -> str
-        """
+    def _get_aggregation_code_with_group(self, x: str, y: str, group: str, agg: str, x_type: str = None,
+                                          y_type: str = None, filters: List = None,
+                                          sort_field: str = None, sort_order: str = "asc",
+                                          limit: int = None) -> str:
+        """Generate JavaScript code to aggregate data with grouping, filtering, sorting, and limiting"""
         if agg == "sum":
             agg_expr = f"d3.sum(v, d => d['{y}'])"
         elif agg == "mean":
@@ -608,10 +709,85 @@ class ObservablePlotTransformer(Transformer):
         # Generate sorting based on x_type (explicit or schema-detected via getEffectiveType)
         x_type_js = f"'{x_type}'" if x_type else "undefined"
 
+        # Generate filter conditions
+        filter_conditions = []
+        if filters:
+            for f in filters:
+                field = f["field"]
+                op = f["op"]
+                value = json.dumps(f["value"])
+                if op == "eq":
+                    filter_conditions.append(f"d['{field}'] === {value}")
+                elif op == "ne":
+                    filter_conditions.append(f"d['{field}'] !== {value}")
+                elif op == "gt":
+                    filter_conditions.append(f"d['{field}'] > {value}")
+                elif op == "lt":
+                    filter_conditions.append(f"d['{field}'] < {value}")
+                elif op == "gte":
+                    filter_conditions.append(f"d['{field}'] >= {value}")
+                elif op == "lte":
+                    filter_conditions.append(f"d['{field}'] <= {value}")
+                elif op == "in":
+                    filter_conditions.append(f"{value}.includes(d['{field}'])")
+                elif op == "contains":
+                    filter_conditions.append(f"String(d['{field}']).includes({value})")
+
+        filter_code = " && ".join(filter_conditions) if filter_conditions else "true"
+
+        # y_type casting
+        y_cast = ""
+        if y_type == "number":
+            y_cast = f"d['{y}'] = parseFloat(d['{y}']) || 0;"
+        elif y_type == "string":
+            y_cast = f"d['{y}'] = String(d['{y}']);"
+
+        # Sort logic
+        sort_ascending = sort_order == "asc"
+        if sort_field == "y":
+            sort_code = f"result.sort((a, b) => {'1' if sort_ascending else '-1'} * (a.{y} - b.{y}));"
+        elif sort_field == "x":
+            sort_code = f"""
+                if (effectiveXType === 'date') {{
+                    result.sort((a, b) => {'1' if sort_ascending else '-1'} * (new Date(a.{x}) - new Date(b.{x})));
+                }} else if (effectiveXType === 'number') {{
+                    result.sort((a, b) => {'1' if sort_ascending else '-1'} * (a.{x} - b.{x}));
+                }} else {{
+                    result.sort((a, b) => {'1' if sort_ascending else '-1'} * String(a.{x}).localeCompare(String(b.{x})));
+                }}"""
+        else:
+            # Default: sort by x - date/number by value, strings alphabetically
+            sort_code = f"""
+                if (effectiveXType === 'date') {{
+                    result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
+                }} else if (effectiveXType === 'number') {{
+                    result.sort((a, b) => a.{x} - b.{x});
+                }} else if (result.length > 0) {{
+                    const firstVal = result[0].{x};
+                    if (firstVal instanceof Date) {{
+                        result.sort((a, b) => a.{x} - b.{x});
+                    }} else if (typeof firstVal === 'number') {{
+                        result.sort((a, b) => a.{x} - b.{x});
+                    }} else {{
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.{x}).localeCompare(String(b.{x})));
+                    }}
+                }}"""
+
+        # Limit code
+        limit_code = f"result = result.slice(0, {limit});" if limit else ""
+
         return f"""(() => {{
                 const effectiveXType = getEffectiveType('{x}', {x_type_js});
-                const result = d3.rollups(
-                    dashmlData,
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => {filter_code});
+
+                // Cast y values if y_type specified
+                {"filteredData = filteredData.map(d => { const newD = {...d}; " + y_cast + " return newD; });" if y_cast else ""}
+
+                let result = d3.rollups(
+                    filteredData,
                     v => {agg_expr},
                     d => d['{x}'],
                     d => d['{group}']
@@ -623,36 +799,16 @@ class ObservablePlotTransformer(Transformer):
                     }}))
                 );
 
-                // TODO: [DEBUG] Remove this logging after fixing spaghetti chart issue
-                console.log('GROUPED - BEFORE SORT - effectiveXType:', effectiveXType);
-                console.log('GROUPED - BEFORE SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
+                // Sort
+                {sort_code}
 
-                // Sort based on effective x_type
-                if (effectiveXType === 'date') {{
-                    result.sort((a, b) => new Date(a.{x}) - new Date(b.{x}));
-                }} else if (effectiveXType === 'number') {{
-                    result.sort((a, b) => a.{x} - b.{x});
-                }} else {{
-                    // Fallback: detect runtime type from first value
-                    if (result.length > 0) {{
-                        const firstVal = result[0].{x};
-                        console.log('GROUPED - RUNTIME TYPE DETECTION - firstVal:', firstVal, 'type:', typeof firstVal, 'isDate:', firstVal instanceof Date);
-                        if (firstVal instanceof Date) {{
-                            result.sort((a, b) => a.{x} - b.{x});
-                        }} else if (typeof firstVal === 'number') {{
-                            result.sort((a, b) => a.{x} - b.{x});
-                        }} else {{
-                            result.sort((a, b) => String(a.{x}).localeCompare(String(b.{x})));
-                        }}
-                    }}
-                }}
+                // Limit
+                {limit_code}
 
-                console.log('GROUPED - AFTER SORT - first 5 values:', result.slice(0, 5).map(d => d.{x}));
-                console.log('GROUPED - AFTER SORT - last 5 values:', result.slice(-5).map(d => d.{x}));
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str) -> str:
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS) -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -716,7 +872,7 @@ class ObservablePlotTransformer(Transformer):
 
         elif chart_type == "histogram":
             return f"""marks: [
-                    Plot.rectY(data_{data_var}, Plot.binX({{y: "count"}}, {{
+                    Plot.rectY(data_{data_var}, Plot.binX({{y: "count", thresholds: {bins}}}, {{
                         x: "{x}",
                         fill: "{color}",
                         tip: true
@@ -742,11 +898,13 @@ class ObservablePlotTransformer(Transformer):
                 }}"""
 
         elif chart_type == "grouped_bar":
-            # Observable Plot groups bars using fx channel
+            # Observable Plot groups bars using fx channel for faceting
+            # fx creates separate facets (groups), x positions bars within each facet
             color_scale_json = str(secondary_colors).replace("'", '"')
             return f"""marks: [
                     Plot.barY(data_{data_var}, {{
-                        x: "{x}",
+                        fx: "{x}",
+                        x: "{group}",
                         y: "{y}",
                         fill: "{group}",
                         tip: true
@@ -754,14 +912,15 @@ class ObservablePlotTransformer(Transformer):
                     Plot.ruleY([0])
                 ],
                 x: {{
-                    paddingInner: 0.2
+                    paddingInner: 0.1,
+                    axis: null
+                }},
+                fx: {{
+                    padding: 0.2
                 }},
                 color: {{
                     domain: [...new Set(data_{data_var}.map(d => d.{group}))],
                     range: {color_scale_json}
-                }},
-                fx: {{
-                    domain: [...new Set(data_{data_var}.map(d => d.{x}))]
                 }}"""
 
         else:
@@ -786,27 +945,7 @@ class ObservablePlotTransformer(Transformer):
         output_dir = output_path_obj.parent.resolve()
         return f"cd {output_dir} && python -m http.server 8000"
 
-    def _parse_sql_path(self, path: str) -> tuple:
-        """
-        Parse SQL path into (schema, table_name) tuple.
-
-        Supports formats:
-        - "schema.table" -> ("schema", "table")
-        - "[schema].[table]" -> ("schema", "table")
-        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
-        """
-        import re
-
-        # Pattern: [optional brackets]identifier[optional brackets].identifier
-        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
-        match = re.match(pattern, path)
-
-        if match:
-            schema = match.group(1)
-            table = match.group(2)
-            return (schema.strip(), table.strip())
-
-        raise TransformerError(f"Invalid SQL path format: {path}")
+    # _parse_sql_path is now inherited from base class
 
     def _generate_flask_app(self, data_spec: Dict[str, Any]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -934,6 +1073,148 @@ def get_data():
 
 if __name__ == '__main__':
     print("Starting Flask server...")
+    print(f"Dashboard available at: http://localhost:5000")
+    app.run(debug=True, port=5000)
+'''
+
+    def _generate_flask_app_bigquery(self, data_spec: Dict[str, Any]) -> str:
+        """Generate Flask backend that connects to BigQuery"""
+        # Extract BigQuery config
+        project = self.db_config["project"]
+        credentials_path = self.db_config.get("credentials_path")
+
+        # Parse dataset.table from path
+        path = data_spec["path"]
+        parts = path.split(".")
+        if len(parts) == 2:
+            dataset, table_name = parts
+        else:
+            raise TransformerError(f"Invalid BigQuery path format: {path}. Expected: dataset.table")
+
+        # Build credentials loading code
+        if credentials_path:
+            credentials_code = f'''
+# Load credentials from service account file
+from google.oauth2 import service_account
+credentials = service_account.Credentials.from_service_account_file(
+    "{credentials_path}",
+    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+)
+client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
+'''
+        else:
+            credentials_code = '''
+# Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
+client = bigquery.Client(project=PROJECT_ID)
+'''
+
+        # Generate Flask app code
+        return f'''from flask import Flask, jsonify, send_from_directory
+from google.cloud import bigquery
+import os
+
+app = Flask(__name__)
+
+# BigQuery configuration
+PROJECT_ID = "{project}"
+DATASET = "{dataset}"
+TABLE_NAME = "{table_name}"
+{credentials_code}
+
+# Cache for column types (fetched once from INFORMATION_SCHEMA)
+_column_types_cache = None
+
+def get_column_types():
+    """Fetch column types from INFORMATION_SCHEMA and map to simple types"""
+    global _column_types_cache
+    if _column_types_cache is not None:
+        return _column_types_cache
+
+    try:
+        query = f"""
+            SELECT column_name, data_type
+            FROM `{{PROJECT_ID}}.{{DATASET}}.INFORMATION_SCHEMA.COLUMNS`
+            WHERE table_name = '{{TABLE_NAME}}'
+        """
+        query_job = client.query(query)
+        results = query_job.result()
+
+        # Map BigQuery types to simple types: date, number, string
+        type_mapping = {{}}
+        for row in results:
+            col_name = row.column_name
+            data_type = row.data_type.upper()
+
+            # Date types
+            if data_type in ('DATE', 'DATETIME', 'TIMESTAMP', 'TIME'):
+                type_mapping[col_name] = 'date'
+            # Numeric types
+            elif data_type in ('INT64', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC', 'INT', 'INTEGER',
+                             'SMALLINT', 'BIGINT', 'FLOAT', 'DECIMAL', 'REAL', 'DOUBLE'):
+                type_mapping[col_name] = 'number'
+            # Everything else is string
+            else:
+                type_mapping[col_name] = 'string'
+
+        _column_types_cache = type_mapping
+        return type_mapping
+    except Exception as e:
+        print(f"Warning: Could not fetch column types: {{e}}")
+        return {{}}
+
+@app.route('/')
+def index():
+    """Serve the HTML frontend"""
+    return send_from_directory('.', 'index.html')
+
+@app.route('/api/schema')
+def get_schema():
+    """Return column types from INFORMATION_SCHEMA"""
+    try:
+        column_types = get_column_types()
+        return jsonify(column_types)
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
+
+@app.route('/api/data')
+def get_data():
+    """Fetch data from BigQuery and return as JSON"""
+    try:
+        query = f"""
+            SELECT *
+            FROM `{{PROJECT_ID}}.{{DATASET}}.{{TABLE_NAME}}`
+            LIMIT 10000
+        """
+        query_job = client.query(query)
+        results = query_job.result()
+
+        # Convert to list of dicts
+        data = [dict(row) for row in results]
+
+        # Handle date/datetime/Decimal serialization
+        import json
+        from datetime import date, datetime
+        from decimal import Decimal
+
+        def serialize(obj):
+            if isinstance(obj, (date, datetime)):
+                return obj.isoformat()
+            if isinstance(obj, Decimal):
+                return float(obj)
+            raise TypeError(f"Type {{type(obj)}} not serializable")
+
+        return app.response_class(
+            response=json.dumps(data, default=serialize),
+            mimetype='application/json'
+        )
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
+
+if __name__ == '__main__':
+    print("Starting Flask server with BigQuery backend...")
+    print(f"Project: {{PROJECT_ID}}")
+    print(f"Dataset: {{DATASET}}")
+    print(f"Table: {{TABLE_NAME}}")
     print(f"Dashboard available at: http://localhost:5000")
     app.run(debug=True, port=5000)
 '''

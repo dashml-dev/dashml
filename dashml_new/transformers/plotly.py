@@ -1,20 +1,22 @@
 """
 Plotly Transformer - Generates Plotly HTML/JavaScript from DashML specs
 """
-from typing import TYPE_CHECKING, Dict, Any
+from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import yaml
 import json
 from .base import Transformer, TransformerError
+from .constants import (
+    CHARTS_NEED_AGGREGATION,
+    CHARTS_USE_RAW_DATA,
+    DEFAULT_HISTOGRAM_BINS,
+    DEFAULT_PRIMARY_COLOR,
+    DEFAULT_SECONDARY_COLORS,
+    DEFAULT_SORT_ORDER,
+)
 
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec
-
-# TODO: [DRY] Move these constants to shared module (transformers/constants.py)
-# These are duplicated in streamlit.py, plotly.py, and observable.py
-# Chart type categorization by data requirements
-CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
-CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data points
 
 
 class PlotlyTransformer(Transformer):
@@ -327,34 +329,27 @@ if __name__ == '__main__':
             "card": "#ffffff",        # Card background
             "text": "#333333",        # Main text
             "primary": "#1f77b4",     # Primary color (active tabs)
-            "secondary": []
+            "secondary": DEFAULT_SECONDARY_COLORS
         }
 
         if not style_path:
             return defaults
 
-        try:
-            path = Path(style_path)
-            if path.exists():
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = yaml.safe_load(f)
-                    loaded = data.get("colors", {})
+        # Use base class method
+        style_config = self._load_style_config(style_path)
+        if not style_config:
+            return defaults
 
-                    # Merge with defaults
-                    return {
-                        "background": loaded.get("background", defaults["background"]),
-                        "card": loaded.get("card", loaded.get("background", defaults["card"])),
-                        "text": loaded.get("text", defaults["text"]),
-                        "primary": loaded.get("primary", defaults["primary"]),
-                        "secondary": loaded.get("secondary", [])
-                    }
-        except Exception as e:
-            # TODO: [CRITICAL] Use specific exceptions and proper logging instead of bare except + print
-            # Fix: except (FileNotFoundError, yaml.YAMLError) as e:
-            #         logger.warning(f"Failed to load style {style_path}: {e}")
-            print(f"Warning: Failed to load style {style_path}: {e}")
+        loaded = style_config.get("colors", {})
 
-        return defaults
+        # Merge with defaults
+        return {
+            "background": loaded.get("background", defaults["background"]),
+            "card": loaded.get("card", loaded.get("background", defaults["card"])),
+            "text": loaded.get("text", defaults["text"]),
+            "primary": loaded.get("primary", defaults["primary"]),
+            "secondary": loaded.get("secondary", DEFAULT_SECONDARY_COLORS)
+        }
 
     def _generate_html_header(self, title: str, colors: Dict[str, str]) -> str:
         """Generate HTML header with dynamic CSS based on theme"""
@@ -545,16 +540,98 @@ if __name__ == '__main__':
     }'''
 
     def _generate_aggregator(self) -> str:
-        return '''    function aggregateData(data, x, y, agg) {
+        return '''    // Apply filters to data
+    function applyFilters(data, filters) {
+      if (!filters || filters.length === 0) return data;
+      return data.filter(row => {
+        return filters.every(f => {
+          const val = row[f.field];
+          switch (f.op) {
+            case 'eq': return val === f.value;
+            case 'ne': return val !== f.value;
+            case 'gt': return val > f.value;
+            case 'lt': return val < f.value;
+            case 'gte': return val >= f.value;
+            case 'lte': return val <= f.value;
+            case 'in': return Array.isArray(f.value) && f.value.includes(val);
+            case 'contains': return String(val).includes(f.value);
+            default: return true;
+          }
+        });
+      });
+    }
+
+    // Cast y values based on y_type
+    function castYValues(data, y, yType) {
+      if (!yType) return data;
+      return data.map(row => {
+        const newRow = {...row};
+        if (yType === 'number') {
+          newRow[y] = parseFloat(row[y]) || 0;
+        } else if (yType === 'string') {
+          newRow[y] = String(row[y]);
+        }
+        return newRow;
+      });
+    }
+
+    // Sort aggregated data
+    function sortData(data, sortField, sortOrder, xType) {
+      const result = [...data];
+      const ascending = sortOrder !== 'desc';
+
+      if (sortField === 'y') {
+        result.sort((a, b) => ascending ? a.y - b.y : b.y - a.y);
+      } else if (sortField === 'x') {
+        if (xType === 'date') {
+          result.sort((a, b) => {
+            const diff = new Date(a.x) - new Date(b.x);
+            return ascending ? diff : -diff;
+          });
+        } else if (xType === 'number') {
+          result.sort((a, b) => ascending ? a.x - b.x : b.x - a.x);
+        } else {
+          result.sort((a, b) => {
+            const cmp = String(a.x).localeCompare(String(b.x));
+            return ascending ? cmp : -cmp;
+          });
+        }
+      } else if (xType === 'date') {
+        // Default: sort by date if x_type is date
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      } else {
+        // Default: sort strings alphabetically for consistency across transformers
+        result.sort((a, b) => String(a.x).localeCompare(String(b.x)));
+      }
+      return result;
+    }
+
+    function aggregateData(data, x, y, agg, options) {
+      options = options || {};
+      const xType = options.xType;
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
       const grouped = {};
-      data.forEach(row => {
+      filtered.forEach(row => {
         const key = row[x];
         if (!grouped[key]) grouped[key] = { values: [], count: 0 };
         grouped[key].values.push(row[y]);
         grouped[key].count++;
       });
 
-      const result = [];
+      let result = [];
       Object.keys(grouped).forEach(key => {
         const values = grouped[key].values;
         let aggregated;
@@ -566,12 +643,35 @@ if __name__ == '__main__':
         }
         result.push({ x: key, y: aggregated });
       });
+
+      // Sort
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
       return result;
     }
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {
+    function aggregateDataWithGroup(data, x, y, groupField, agg, options) {
+      options = options || {};
+      const xType = options.xType;
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
       const grouped = {};
-      data.forEach(row => {
+      filtered.forEach(row => {
         const xKey = row[x];
         const groupKey = row[groupField];
         const compositeKey = xKey + '|||' + groupKey;
@@ -580,7 +680,7 @@ if __name__ == '__main__':
         grouped[compositeKey].count++;
       });
 
-      const result = [];
+      let result = [];
       Object.keys(grouped).forEach(key => {
         const entry = grouped[key];
         const values = entry.values;
@@ -594,11 +694,12 @@ if __name__ == '__main__':
         result.push({ x: entry.x, group: entry.group, y: aggregated });
       });
 
-      // Sort based on x_type
-      if (xType === 'date') {
-        result.sort((a, b) => new Date(a.x) - new Date(b.x));
-      } else if (xType === 'number') {
-        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      // Sort based on sortField or default x_type
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
       }
 
       return result;
@@ -706,15 +807,25 @@ if __name__ == '__main__':
 
         return f'''    function renderChart(chart) {{
       // Chart types that need aggregation vs raw data
-      const chartsNeedAggregation = new Set(['bar', 'line', 'area', 'pie', 'stacked_bar', 'grouped_bar']);
-      const chartsUseRawData = new Set(['histogram', 'scatter']);
+      const chartsNeedAggregation = new Set(['bar', 'line', 'area', 'pie', 'stacked_bar', 'grouped_bar', 'scatter']);
+      const chartsUseRawData = new Set(['histogram']);
 
       let traces = [];
       let barmode = undefined;
 
+      // Build options object for aggregation
+      const aggOptions = {{
+        xType: chart.x_type,
+        yType: chart.y_type,
+        filters: chart.filters || [],
+        sort: chart.sort,
+        sortOrder: chart.sort_order || 'asc',
+        limit: chart.limit
+      }};
+
       if (chart.type === 'stacked_bar' || chart.type === 'grouped_bar') {{
         // Stacked/grouped bars need multiple traces
-        const aggregated = aggregateDataWithGroup(window.dashmlData, chart.x, chart.y, chart.group, chart.agg || 'sum');
+        const aggregated = aggregateDataWithGroup(window.dashmlData, chart.x, chart.y, chart.group, chart.agg || 'sum', aggOptions);
         const groupValues = [...new Set(aggregated.map(d => d.group))];
 
         groupValues.forEach((groupVal, idx) => {{
@@ -732,12 +843,13 @@ if __name__ == '__main__':
       }} else {{
         let xValues, yValues;
         if (chartsUseRawData.has(chart.type)) {{
-          // Use raw data for histogram and scatter
-          xValues = window.dashmlData.map(d => d[chart.x]);
-          yValues = window.dashmlData.map(d => d[chart.y]);
+          // Use raw data for histogram - apply filters only
+          let filteredData = applyFilters(window.dashmlData, aggOptions.filters);
+          xValues = filteredData.map(d => d[chart.x]);
+          yValues = filteredData.map(d => d[chart.y]);
         }} else {{
           // Aggregate data for other chart types
-          const aggregated = aggregateData(window.dashmlData, chart.x, chart.y, chart.agg || 'sum');
+          const aggregated = aggregateData(window.dashmlData, chart.x, chart.y, chart.agg || 'sum', aggOptions);
           xValues = aggregated.map(d => d.x);
           yValues = aggregated.map(d => d.y);
         }}
@@ -760,7 +872,7 @@ if __name__ == '__main__':
           trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
           break;
         case 'histogram':
-          trace = {{ x: xValues, type: 'histogram', marker: {{ color: theme.primary }} }};
+          trace = {{ x: xValues, type: 'histogram', nbinsx: chart.bins || 20, marker: {{ color: theme.primary }} }};
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -852,6 +964,7 @@ if __name__ == '__main__':
             group = chart.get("group")
             title = chart.get("title", chart_id)
             x_type = chart.get("x_type")  # Optional: "date", "number", "string"
+            bins = chart.get("bins", 20)  # Number of bins for histogram
 
             # Check if this is stacked/grouped bar
             if chart_type in ["stacked_bar", "grouped_bar"]:
@@ -919,7 +1032,7 @@ if __name__ == '__main__':
           trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
           break;
         case 'histogram':
-          trace = {{ x: xValues, type: 'histogram', marker: {{ color: theme.primary }} }};
+          trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -1070,27 +1183,7 @@ if __name__ == '__main__':
         output_dir = output_path_obj.parent.resolve()
         return f"cd {output_dir} && python -m http.server 8000"
 
-    def _parse_sql_path(self, path: str) -> tuple:
-        """
-        Parse SQL path into (schema, table_name) tuple.
-
-        Supports formats:
-        - "schema.table" -> ("schema", "table")
-        - "[schema].[table]" -> ("schema", "table")
-        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
-        """
-        import re
-
-        # Pattern: [optional brackets]identifier[optional brackets].identifier
-        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
-        match = re.match(pattern, path)
-
-        if match:
-            schema = match.group(1)
-            table = match.group(2)
-            return (schema.strip(), table.strip())
-
-        raise TransformerError(f"Invalid SQL path format: {path}")
+    # _parse_sql_path is now inherited from base class
 
     def _generate_flask_app(self, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -1343,6 +1436,7 @@ if __name__ == '__main__':
             group = chart.get("group")
             title = chart.get("title", chart_id)
             x_type = chart.get("x_type")  # Optional: "date", "number", "string"
+            bins = chart.get("bins", 20)  # Number of bins for histogram
 
             # Check if this is stacked/grouped bar
             if chart_type in ["stacked_bar", "grouped_bar"]:
@@ -1410,7 +1504,7 @@ if __name__ == '__main__':
           trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
           break;
         case 'histogram':
-          trace = {{ x: xValues, type: 'histogram', marker: {{ color: theme.primary }} }};
+          trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};

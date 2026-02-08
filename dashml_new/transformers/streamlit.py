@@ -1,19 +1,21 @@
 """
 Streamlit Transformer - Generates Streamlit Python code from DashML specs
 """
-from typing import TYPE_CHECKING, Dict, Any
+from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import yaml
 from .base import Transformer, TransformerError
+from .constants import (
+    CHARTS_NEED_AGGREGATION,
+    CHARTS_USE_RAW_DATA,
+    DEFAULT_HISTOGRAM_BINS,
+    AGG_METHODS,
+    DEFAULT_PRIMARY_COLOR,
+    DEFAULT_SECONDARY_COLORS,
+)
 
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec, ChartSpec
-
-# TODO: [DRY] Move these constants to shared module (transformers/constants.py)
-# These are duplicated in streamlit.py, plotly.py, and observable.py
-# Chart type categorization by data requirements
-CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
-CHARTS_USE_RAW_DATA = {"histogram", "scatter"}  # Charts that work with raw data points
 
 
 class StreamlitTransformer(Transformer):
@@ -110,21 +112,7 @@ class StreamlitTransformer(Transformer):
         except Exception as e:
             raise TransformerError(f"Failed to generate Streamlit code: {e}")
 
-    def _load_style_config(self, style_path: str) -> Dict[str, Any]:
-        """Read .dmls file during build"""
-        if not style_path:
-            return {}
-        try:
-            path = Path(style_path)
-            if path.exists():
-                with open(path, 'r', encoding='utf-8') as f:
-                    return yaml.safe_load(f) or {}
-        except Exception:
-            # TODO: [CRITICAL] Silent exception handling - use specific exceptions and logging
-            # Fix: except (FileNotFoundError, yaml.YAMLError) as e:
-            #         logger.warning(f"Could not load style {style_path}: {e}")
-            pass
-        return {}
+    # _load_style_config is now inherited from base class
 
     def _generate_imports(self, data_type: str = "csv") -> str:
         imports = """import streamlit as st
@@ -133,6 +121,8 @@ import altair as alt"""
 
         if data_type == "sql":
             imports += "\nfrom sqlalchemy import create_engine"
+        elif data_type == "bigquery":
+            imports += "\nfrom google.cloud import bigquery"
 
         return imports
 
@@ -143,27 +133,7 @@ import altair as alt"""
         layout="wide"
     )'''
 
-    def _parse_sql_path(self, path: str) -> tuple:
-        """
-        Parse SQL path into (schema, table_name) tuple.
-
-        Supports formats:
-        - "schema.table" -> ("schema", "table")
-        - "[schema].[table]" -> ("schema", "table")
-        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
-        """
-        import re
-
-        # Pattern: [optional brackets]identifier[optional brackets].identifier
-        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
-        match = re.match(pattern, path)
-
-        if match:
-            schema = match.group(1)
-            table = match.group(2)
-            return (schema.strip(), table.strip())
-
-        raise ValueError(f"Invalid SQL path format: {path}")
+    # _parse_sql_path is now inherited from base class
 
     def _generate_css_injection(self, style_config: Dict) -> str:
         """Generate CSS to override Streamlit defaults"""
@@ -282,6 +252,62 @@ import altair as alt"""
         st.error(f"Error loading data from database: {{e}}")
         return'''
 
+        elif data_type == "bigquery":
+            if not self.db_config:
+                return '''    st.error("BigQuery configuration not provided")
+    return'''
+
+            # Extract BigQuery config
+            project = self.db_config["project"]
+            credentials_path = self.db_config.get("credentials_path")
+
+            # Parse dataset.table from path
+            path = data_spec["path"]
+            parts = path.split(".")
+            if len(parts) == 2:
+                dataset, table_name = parts
+            else:
+                return f'''    st.error("Invalid BigQuery path format: {path}. Expected: dataset.table")
+    return'''
+
+            # Build credentials loading code
+            if credentials_path:
+                credentials_code = f'''
+        from google.oauth2 import service_account
+        credentials = service_account.Credentials.from_service_account_file(
+            "{credentials_path}",
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        client = bigquery.Client(project="{project}", credentials=credentials)'''
+            else:
+                credentials_code = f'''
+        # Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
+        client = bigquery.Client(project="{project}")'''
+
+            return f'''    # Load data from BigQuery
+    try:{credentials_code}
+
+        query = """
+            SELECT *
+            FROM `{project}.{dataset}.{table_name}`
+            LIMIT 10000
+        """
+        df = client.query(query).to_dataframe()
+
+        # Infer column types from pandas dtypes for auto type detection
+        column_types = {{}}
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            if 'datetime' in dtype or 'date' in dtype:
+                column_types[col] = 'date'
+            elif 'int' in dtype or 'float' in dtype:
+                column_types[col] = 'number'
+            else:
+                column_types[col] = 'string'
+    except Exception as e:
+        st.error(f"Error loading data from BigQuery: {{e}}")
+        return'''
+
         else:
             return f'''    st.error("Unsupported data type: {data_type}")
     return'''
@@ -296,51 +322,97 @@ import altair as alt"""
         agg = chart.get("agg", "sum")
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
         x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
+        y_type = chart.get("y_type")  # Optional: "number", "string" for casting
+        bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
+        filters = chart.get("filters", [])  # Optional: filter conditions
+        sort_field = chart.get("sort")  # Optional: "x" or "y"
+        sort_order = chart.get("sort_order", "asc")  # Optional: "asc" or "desc"
+        limit = chart.get("limit")  # Optional: max rows after aggregation
 
-        # Extract colors
-        # TODO: [Magic Values] Extract hardcoded defaults to module-level constants
-        # Fix: DEFAULT_PRIMARY_COLOR = "#29b5e8"
-        #      DEFAULT_SECONDARY_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-        primary_color = colors.get("primary", "#29b5e8")
-        secondary_colors = colors.get("secondary", ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+        # Extract colors using constants
+        primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
+        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
 
         code_parts = []
         code_parts.append(f'    # Chart: {chart_id}')
         code_parts.append(f'    st.subheader("{title}")')
+
+        # Create working copy of dataframe for this chart
+        code_parts.append(f'    chart_df = df.copy()')
+
+        # y_type casting (before filtering and aggregation)
+        if y_type == "number":
+            code_parts.append(f'    # Cast y column to numeric (y_type: number)')
+            code_parts.append(f'    chart_df["{y}"] = pd.to_numeric(chart_df["{y}"], errors="coerce")')
+        elif y_type == "string":
+            code_parts.append(f'    # Cast y column to string (y_type: string)')
+            code_parts.append(f'    chart_df["{y}"] = chart_df["{y}"].astype(str)')
+
+        # Apply filters (before aggregation)
+        if filters:
+            code_parts.append(f'    # Apply filters')
+            for f in filters:
+                field = f["field"]
+                op = f["op"]
+                value = f["value"]
+
+                if op == "eq":
+                    code_parts.append(f'    chart_df = chart_df[chart_df["{field}"] == {repr(value)}]')
+                elif op == "ne":
+                    code_parts.append(f'    chart_df = chart_df[chart_df["{field}"] != {repr(value)}]')
+                elif op == "gt":
+                    code_parts.append(f'    chart_df = chart_df[chart_df["{field}"] > {repr(value)}]')
+                elif op == "lt":
+                    code_parts.append(f'    chart_df = chart_df[chart_df["{field}"] < {repr(value)}]')
+                elif op == "gte":
+                    code_parts.append(f'    chart_df = chart_df[chart_df["{field}"] >= {repr(value)}]')
+                elif op == "lte":
+                    code_parts.append(f'    chart_df = chart_df[chart_df["{field}"] <= {repr(value)}]')
+                elif op == "in":
+                    code_parts.append(f'    chart_df = chart_df[chart_df["{field}"].isin({repr(value)})]')
+                elif op == "contains":
+                    code_parts.append(f'    chart_df = chart_df[chart_df["{field}"].str.contains({repr(value)}, na=False)]')
 
         # Get effective x_type: explicit > schema-detected > None (used for sorting and encoding)
         code_parts.append(f'    effective_x_type = "{x_type}" if "{x_type}" != "None" else column_types.get("{x}")')
 
         # Aggregation (only for chart types that need it)
         if chart_type in CHARTS_NEED_AGGREGATION:
-            # TODO: [DRY] Replace if/elif chain with dictionary lookup
-            # Fix: AGG_METHODS = {"sum": "sum", "mean": "mean", "count": "count"}
-            #      agg_method = AGG_METHODS.get(agg, "sum")
-            if agg == "sum":
-                agg_method = "sum"
-            elif agg == "mean":
-                agg_method = "mean"
-            elif agg == "count":
-                agg_method = "count"
-            else:
-                agg_method = "sum"
+            # Use AGG_METHODS constant
+            agg_method = AGG_METHODS.get(agg, "sum")
 
             # For stacked/grouped bars, aggregate by both x and group
             if chart_type in ["stacked_bar", "grouped_bar"] and group:
                 code_parts.append(f'    # Aggregate: {agg}({y}) group by {x} and {group}')
-                code_parts.append(f'    chart_data = df.groupby(["{x}", "{group}"])["{y}"].{agg_method}().reset_index()')
+                code_parts.append(f'    chart_data = chart_df.groupby(["{x}", "{group}"])["{y}"].{agg_method}().reset_index()')
             else:
                 code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
-                code_parts.append(f'    chart_data = df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
+                code_parts.append(f'    chart_data = chart_df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
 
-            # Sort by x if x_type is date or number (for chronological/numerical ordering)
-            code_parts.append(f'    if effective_x_type == "date":')
-            code_parts.append(f'        # Sort by date for chronological order')
-            code_parts.append(f'        chart_data["{x}"] = pd.to_datetime(chart_data["{x}"])')
-            code_parts.append(f'        chart_data = chart_data.sort_values("{x}")')
-            code_parts.append(f'    elif effective_x_type == "number":')
-            code_parts.append(f'        # Sort by number for numerical order')
-            code_parts.append(f'        chart_data = chart_data.sort_values("{x}")')
+            # Handle sorting: explicit sort field > x_type-based sorting
+            if sort_field:
+                # Explicit sort field specified
+                actual_sort_col = x if sort_field == "x" else y
+                ascending = sort_order == "asc"
+                code_parts.append(f'    # Sort by {sort_field} field ({sort_order})')
+                code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
+            else:
+                # Default: sort by x - date/number by value, strings alphabetically
+                code_parts.append(f'    if effective_x_type == "date":')
+                code_parts.append(f'        # Sort by date for chronological order')
+                code_parts.append(f'        chart_data["{x}"] = pd.to_datetime(chart_data["{x}"])')
+                code_parts.append(f'        chart_data = chart_data.sort_values("{x}")')
+                code_parts.append(f'    elif effective_x_type == "number":')
+                code_parts.append(f'        # Sort by number for numerical order')
+                code_parts.append(f'        chart_data = chart_data.sort_values("{x}")')
+                code_parts.append(f'    else:')
+                code_parts.append(f'        # Sort strings alphabetically for consistency across transformers')
+                code_parts.append(f'        chart_data = chart_data.sort_values("{x}")')
+
+            # Apply limit (after aggregation and sorting)
+            if limit:
+                code_parts.append(f'    # Limit to top {limit} rows')
+                code_parts.append(f'    chart_data = chart_data.head({limit})')
 
         # Determine X encoding type based on effective_x_type (will be computed at runtime)
         # For Altair: :T = temporal, :Q = quantitative, :N = nominal
@@ -367,9 +439,9 @@ import altair as alt"""
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "scatter":
-            code_parts.append(f'''    # Scatter: show raw data points
-    c = alt.Chart(df).mark_circle(color="{primary_color}", size=60).encode(
-        x=alt.X("{x}"),
+            code_parts.append(f'''    # Scatter: aggregated data points
+    c = alt.Chart(chart_data).mark_circle(color="{primary_color}", size=60).encode(
+        x=alt.X("{x}" + x_encoding_suffix, sort=None),
         y="{y}",
         tooltip=["{x}", "{y}"]
     ).properties(title="{title}")
@@ -399,9 +471,9 @@ import altair as alt"""
 
         elif chart_type == "histogram":
             # Histogram uses binning on x axis, no aggregation needed
-            code_parts.append(f'''    # Histogram: bin {x} values
-    c = alt.Chart(df).mark_bar(color="{primary_color}").encode(
-        x=alt.X("{x}:Q", bin=True),
+            code_parts.append(f'''    # Histogram: bin {x} values into {bins} bins
+    c = alt.Chart(chart_df).mark_bar(color="{primary_color}").encode(
+        x=alt.X("{x}:Q", bin=alt.Bin(maxbins={bins})),
         y="count()",
         tooltip=["count()"]
     ).properties(title="{title}")

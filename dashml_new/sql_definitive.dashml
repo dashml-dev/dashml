@@ -14,7 +14,7 @@ pages:
       - id: "bar_sales_by_country"
         type: "bar"
         title: "Total Sales by Country"
-        x: "country"
+        x: "shipping_address_country"
         y: "total_amount"
         agg: "sum"
 
@@ -28,10 +28,12 @@ pages:
       - id: "grouped_bar_country_status"
         type: "grouped_bar"
         title: "Orders by Country (Grouped by Status)"
-        x: "country"
+        x: "shipping_address_country"
         y: "order_id"
         agg: "count"
         group: "status"
+        sort: "y"
+        sort_order: "desc"
 
       - id: "stacked_bar_payment_status"
         type: "stacked_bar"
@@ -70,6 +72,7 @@ pages:
         title: "Order Amount vs Tax Amount"
         x: "total_amount"
         y: "tax_amount"
+        agg: "sum"
 
       - id: "histogram_order_amounts"
         type: "histogram"
@@ -77,3 +80,4 @@ pages:
         x: "total_amount"
         y: "order_id"
         agg: "count"
+        bins: 20

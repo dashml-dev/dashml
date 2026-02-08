@@ -2,7 +2,9 @@
 Base Transformer Interface - Contract for all DashML transformers
 """
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Any, Tuple
+from pathlib import Path
+import re
 
 if TYPE_CHECKING:
     from ..core.types import DashMLSpec
@@ -102,6 +104,60 @@ class Transformer(ABC):
             Override if your transformer has specific requirements.
         """
         return True
+
+    def _load_style_config(self, style_path: str) -> Dict[str, Any]:
+        """
+        Load style configuration from .dmls file.
+
+        Args:
+            style_path: Path to the .dmls style file
+
+        Returns:
+            Parsed style config dict, or empty dict if not found/invalid
+
+        Note:
+            This method is shared across all transformers to avoid duplication.
+        """
+        if not style_path:
+            return {}
+        try:
+            import yaml
+            path = Path(style_path)
+            if path.exists():
+                with open(path, 'r', encoding='utf-8') as f:
+                    return yaml.safe_load(f) or {}
+        except Exception as e:
+            self.warn(f"Could not load style {style_path}: {e}")
+        return {}
+
+    def _parse_sql_path(self, path: str) -> Tuple[str, str]:
+        """
+        Parse SQL path into (schema, table_name) tuple.
+
+        Supports formats:
+        - "schema.table" -> ("schema", "table")
+        - "[schema].[table]" -> ("schema", "table")
+        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
+
+        Args:
+            path: SQL path string in schema.table format
+
+        Returns:
+            Tuple of (schema, table_name)
+
+        Raises:
+            TransformerError: If path format is invalid
+        """
+        # Pattern: [optional brackets]identifier[optional brackets].identifier
+        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
+        match = re.match(pattern, path)
+
+        if match:
+            schema = match.group(1)
+            table = match.group(2)
+            return (schema.strip(), table.strip())
+
+        raise TransformerError(f"Invalid SQL path format: {path}")
 
     @abstractmethod
     def get_run_command(self, output_path: str) -> str:

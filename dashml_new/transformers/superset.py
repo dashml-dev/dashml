@@ -68,7 +68,7 @@ DASHBOARD_HEADER_TEXT = "Dashboard"
 DASHBOARD_BACKGROUND = "BACKGROUND_TRANSPARENT"
 
 # Chart Configuration
-DEFAULT_HISTOGRAM_BINS = 25
+DEFAULT_HISTOGRAM_BINS = 20
 DEFAULT_COLOR_SCHEME = "supersetColors"
 
 # CSV Upload Settings
@@ -87,16 +87,21 @@ DEFAULT_COLORS = {
     "card": "#FFFFFF"
 }
 
-# Chart type categorization by data requirements
-CHARTS_NEED_AGGREGATION = {"bar", "line", "area", "pie", "stacked_bar", "grouped_bar"}
-CHARTS_USE_RAW_DATA = {"histogram", "scatter"}
+# Import shared constants
+from .constants import (
+    CHARTS_NEED_AGGREGATION,
+    CHARTS_USE_RAW_DATA,
+    DEFAULT_HISTOGRAM_BINS as SHARED_DEFAULT_HISTOGRAM_BINS,
+    DEFAULT_PRIMARY_COLOR,
+    DEFAULT_SECONDARY_COLORS,
+)
 
 # Map DashML chart types to Superset viz types
 # Modern Superset uses ECharts-based visualizations
 DASHML_TO_SUPERSET_VIZ = {
     "bar": "echarts_timeseries",  # ECharts timeseries with bar transform
     "line": "echarts_timeseries",  # ECharts timeseries with line
-    "scatter": "scatter",
+    "scatter": "echarts_timeseries_scatter",  # ECharts scatter (supports any x-axis)
     "pie": "pie",
     "area": "echarts_area",
     "histogram": "histogram_v2",  # Modern histogram viz type
@@ -227,6 +232,32 @@ class SupersetTransformer(Transformer):
                 # Create or get dataset from SQL table
                 if not self._create_or_get_dataset_sql(database_id, schema, table_name):
                     raise SupersetDatasetError("Failed to create/find SQL dataset")
+
+            elif data_type == "bigquery":
+                # BigQuery datasource - create database and dataset
+                if not self.db_config:
+                    raise SupersetDatasetError(
+                        "BigQuery datasource requires --bq-project CLI argument"
+                    )
+
+                # Parse dataset.table from path
+                path = data_spec["path"]
+                parts = path.split(".")
+                if len(parts) != 2:
+                    raise SupersetDatasetError(
+                        f"Invalid BigQuery path format: {path}. Expected: 'dataset.table'"
+                    )
+                bq_dataset, table_name = parts
+
+                # Create or get BigQuery database connection
+                database_id = self._create_or_get_bigquery_database()
+                if not database_id:
+                    raise SupersetDatasetError("Failed to create/find BigQuery database in Superset")
+
+                # Create or get dataset from BigQuery table
+                # For BigQuery, schema is the dataset name
+                if not self._create_or_get_dataset_sql(database_id, bq_dataset, table_name):
+                    raise SupersetDatasetError("Failed to create/find BigQuery dataset")
 
             else:
                 raise SupersetDatasetError(f"Unsupported data type: {data_type}")
@@ -761,6 +792,90 @@ class SupersetTransformer(Transformer):
             traceback.print_exc()
             return None
 
+    def _create_or_get_bigquery_database(self) -> Optional[int]:
+        """Create or find BigQuery database connection in Superset using db_config"""
+        if not self.db_config:
+            return None
+
+        project = self.db_config["project"]
+        credentials_path = self.db_config.get("credentials_path")
+
+        # Build BigQuery SQLAlchemy URI
+        # Format: bigquery://project
+        sqlalchemy_uri = f"bigquery://{project}"
+
+        # If credentials_path specified, add it to extras
+        extra_config = {}
+        if credentials_path:
+            extra_config["credentials_path"] = credentials_path
+
+        # Generate a database name for Superset
+        db_name = f"BigQuery ({project})"
+
+        # Check if database already exists in Superset
+        print(f"Checking for existing BigQuery connection: {db_name}")
+        search_url = f"{self.superset_url}{API_DATABASE_ENDPOINT}"
+
+        try:
+            response = self.session.get(search_url, headers=self._get_headers())
+            if response.status_code == 200:
+                databases = response.json().get("result", [])
+                for db in databases:
+                    if db.get("database_name") == db_name:
+                        database_id = db.get("id")
+                        print(f"✓ Found existing BigQuery database: {db_name} (ID: {database_id})")
+                        return database_id
+        except Exception as e:
+            print(f"⚠ Warning checking for existing database: {e}")
+
+        # Database not found, create it
+        print(f"BigQuery database '{db_name}' not found. Creating new database connection...")
+
+        try:
+            # Refresh CSRF token before POST request
+            self._refresh_csrf_token()
+
+            # Build database payload for BigQuery
+            database_payload = {
+                "database_name": db_name,
+                "sqlalchemy_uri": sqlalchemy_uri,
+                "expose_in_sqllab": True,
+                "allow_run_async": True,
+                "allow_file_upload": False,  # BigQuery doesn't support CSV uploads via Superset
+                "extra": json.dumps(extra_config) if extra_config else "{}"
+            }
+
+            # Add referer header
+            db_headers = self._get_headers()
+            db_headers["Referer"] = self.superset_url
+
+            create_db_url = f"{self.superset_url}{API_DATABASE_ENDPOINT}"
+            db_response = self.session.post(
+                create_db_url,
+                headers=db_headers,
+                json=database_payload
+            )
+
+            if db_response.status_code in [200, 201]:
+                db_data = db_response.json()
+                database_id = db_data.get("id")
+                print(f"✓ BigQuery database created: {db_name} (ID: {database_id})")
+                return database_id
+            else:
+                print(f"✗ BigQuery database creation failed: {db_response.status_code}")
+                try:
+                    error_data = db_response.json()
+                    print(f"  Error: {error_data}")
+                except:
+                    print(f"  Error: {db_response.text[:500]}")
+                return None
+
+        except Exception as e:
+            print(f"✗ Error creating BigQuery database: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     def _get_unique_values(self, column: str) -> list:
         """Query the dataset to get unique values for a column"""
         try:
@@ -860,6 +975,12 @@ class SupersetTransformer(Transformer):
         agg = chart.get("agg", "sum")
         group = chart.get("group")
         x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
+        y_type = chart.get("y_type")  # Optional: "number", "string" for casting
+        bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)  # Number of bins for histogram
+        filters = chart.get("filters", [])  # Optional: filter conditions
+        sort_field = chart.get("sort")  # Optional: "x" or "y"
+        sort_order = chart.get("sort_order", "asc")  # Optional: "asc" or "desc"
+        limit = chart.get("limit")  # Optional: max rows after aggregation
 
         viz_type = DASHML_TO_SUPERSET_VIZ.get(chart_type, "dist_bar")
 
@@ -868,12 +989,50 @@ class SupersetTransformer(Transformer):
             style_config = {"colors": self._get_default_colors()}
         colors = style_config.get("colors", {})
 
+        # Build adhoc_filters from DashML filters
+        adhoc_filters = []
+        for f in filters:
+            field = f["field"]
+            op = f["op"]
+            value = f["value"]
+
+            # Map DashML filter ops to Superset filter operators
+            op_map = {
+                "eq": "==",
+                "ne": "!=",
+                "gt": ">",
+                "lt": "<",
+                "gte": ">=",
+                "lte": "<=",
+                "in": "IN",
+                "contains": "ILIKE",
+            }
+            superset_op = op_map.get(op, "==")
+
+            # For 'contains', wrap value in wildcards
+            if op == "contains":
+                value = f"%{value}%"
+
+            adhoc_filter = {
+                "expressionType": "SIMPLE",
+                "subject": field,
+                "operator": superset_op,
+                "comparator": value,
+                "clause": "WHERE",
+                "filterOptionName": f"filter_{field}_{op}"
+            }
+            adhoc_filters.append(adhoc_filter)
+
         # Build params with custom colors from theme
         params = {
             "datasource": f"{self.dataset_id}__table",
             "viz_type": viz_type,
-            "adhoc_filters": [],
+            "adhoc_filters": adhoc_filters,
         }
+
+        # Apply row_limit if specified
+        if limit:
+            params["row_limit"] = limit
 
         # Apply custom color scheme from DashML theme via label_colors
         params["color_scheme"] = DEFAULT_COLOR_SCHEME  # Use neutral base scheme
@@ -906,6 +1065,9 @@ class SupersetTransformer(Transformer):
                     pass
 
         # Add metrics only for chart types that use them
+        # Build metric label for orderby
+        metric_label = f"{agg.lower()}__{y}"
+
         if chart_type in ["bar", "line", "stacked_bar", "grouped_bar"]:
             # ECharts timeseries configuration
             params["x_axis"] = x
@@ -913,8 +1075,19 @@ class SupersetTransformer(Transformer):
 
             # Configure temporal axis if x_type is date
             if x_type == "date":
-                params["x_axis_sort_asc"] = True  # Sort ascending for chronological order
+                params["x_axis_sort_asc"] = sort_order == "asc" if sort_field == "x" else True
                 params["x_axis_time_format"] = "%Y-%m-%d"  # ISO date format
+
+            # Apply explicit sorting
+            if sort_field == "y":
+                # Sort by metric value
+                params["order_desc"] = sort_order == "desc"
+            elif sort_field == "x" and x_type != "date":
+                # For non-date x axis, use orderby
+                params["orderby"] = [[x, sort_order == "asc"]]
+            elif not sort_field and x_type != "date":
+                # Default: sort strings alphabetically for consistency across transformers
+                params["orderby"] = [[x, True]]  # True = ascending
 
             # Set series type based on chart type
             if chart_type == "bar":
@@ -934,23 +1107,64 @@ class SupersetTransformer(Transformer):
             params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper()}]
             # Configure temporal axis if x_type is date
             if x_type == "date":
-                params["x_axis_sort_asc"] = True
+                params["x_axis_sort_asc"] = sort_order == "asc" if sort_field == "x" else True
                 params["x_axis_time_format"] = "%Y-%m-%d"
+
+            # Apply explicit sorting
+            if sort_field == "y":
+                params["order_desc"] = sort_order == "desc"
+            elif not sort_field and x_type != "date":
+                # Default: sort strings alphabetically for consistency across transformers
+                params["orderby"] = [[x, True]]
         elif chart_type == "pie":
-            params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper()}]
+            # Pie chart uses singular 'metric' param with adhoc metric format
+            if agg.upper() == "COUNT":
+                # Use SQL expression for COUNT
+                params["metric"] = {
+                    "expressionType": "SQL",
+                    "label": f"COUNT({y})",
+                    "sqlExpression": f"COUNT({y})"
+                }
+            else:
+                # Use SIMPLE expression for SUM, AVG, etc.
+                params["metric"] = {
+                    "expressionType": "SIMPLE",
+                    "column": {"column_name": y},
+                    "aggregate": agg.upper(),
+                    "label": f"{agg.upper()}({y})"
+                }
             params["groupby"] = [x]
-            params["metric"] = y
+            # Pie chart sorting
+            if sort_field == "y":
+                params["sort_by_metric"] = True
+                params["order_desc"] = sort_order == "desc"
+            else:
+                params["sort_by_metric"] = True  # Default sort by metric
         elif chart_type == "scatter":
-            # Scatter uses raw data columns, not aggregated metrics
-            params["entity"] = x
-            params["all_columns_x"] = [x]
-            params["all_columns_y"] = [y]
-            # No metrics for scatter - uses raw data!
+            # ECharts timeseries scatter - same structure as bar/line
+            params["x_axis"] = x
+            params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper() if agg else "AVG"}]
+            params["seriesType"] = "scatter"
+
+            # Apply sorting for scatter
+            if sort_field == "y":
+                params["order_desc"] = sort_order == "desc"
+            elif sort_field == "x":
+                if x_type == "date":
+                    params["x_axis_sort_asc"] = sort_order == "asc"
+                else:
+                    params["orderby"] = [[x, sort_order == "asc"]]
+            elif not sort_field and x_type != "date":
+                # Default: sort strings alphabetically for consistency across transformers
+                params["orderby"] = [[x, True]]
         elif chart_type == "histogram":
             # Histogram v2 uses different params than legacy histogram
+            # NOTE: Superset uses numpy's exact bin calculation (data_range / bins),
+            # unlike Plotly/Altair/Observable which use "nice" rounded bin edges.
+            # This is a known platform limitation with no API workaround.
             params["column"] = x  # The column to create histogram from
             params["groupby"] = []  # Optional grouping columns
-            params["bins"] = DEFAULT_HISTOGRAM_BINS  # Number of bins
+            params["bins"] = bins  # Number of bins from chart spec or default
             params["normalized"] = False  # Whether to normalize
             params["cumulative"] = False  # Whether to show cumulative distribution
             # No metrics for histogram!
@@ -965,17 +1179,19 @@ class SupersetTransformer(Transformer):
                     "groupby": [],
                     "metrics": [],
                     "filters": [],
+                    "orderby": [],
                     "row_limit": RAW_DATA_ROW_LIMIT
                 }
+                query_context_queries.append(query_obj)
             else:
-                # Scatter uses columns, not metrics
-                columns = [x, y]
+                # Fallback for other raw data chart types
                 query_obj = {
-                    "columns": columns,
+                    "columns": [x, y],
                     "filters": [],
+                    "orderby": [],
                     "row_limit": RAW_DATA_ROW_LIMIT
                 }
-            query_context_queries.append(query_obj)
+                query_context_queries.append(query_obj)
         else:
             # Other charts use metrics
             # For ECharts charts, columns configuration varies
@@ -994,11 +1210,25 @@ class SupersetTransformer(Transformer):
             else:
                 columns = [x]
 
+            # Build metrics for query_context
+            # Metric label format: "aggregate__column" (e.g., "sum__total_amount")
+            metric_label = f"{agg.lower()}__{y}"
+            metric_obj = {
+                "label": metric_label,
+                "expressionType": "SIMPLE",
+                "column": {"column_name": y},
+                "aggregate": agg.upper()
+            }
+            query_metrics = [metric_obj]
+
+            # Orderby uses the metric label string
+            query_orderby = [[metric_label, False]]
+
             query_context_queries.append({
                 "columns": columns,
-                "metrics": [{"label": y, "expressionType": "SIMPLE",
-                            "column": {"column_name": y}, "aggregate": agg.upper()}],
+                "metrics": query_metrics,
                 "filters": [],
+                "orderby": query_orderby,
                 "row_limit": RAW_DATA_ROW_LIMIT
             })
 
@@ -1008,14 +1238,17 @@ class SupersetTransformer(Transformer):
             "datasource_id": self.dataset_id,
             "datasource_type": "table",
             "params": json.dumps(params),
-            "query_context": json.dumps({
+        }
+
+        # Skip query_context for pie - let Superset's buildQuery handle it
+        if chart_type != "pie":
+            chart_config["query_context"] = json.dumps({
                 "datasource": {"id": self.dataset_id, "type": "table"},
                 "force": False,
                 "queries": query_context_queries,
                 "result_format": "json",
                 "result_type": "full"
             })
-        }
 
         # Extract label_colors to return
         chart_label_colors = params.get("label_colors", {})

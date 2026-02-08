@@ -26,6 +26,9 @@ class DashMLValidator:
     SUPPORTED_DATA_TYPES = ["csv", "sql", "bigquery"]  # CSV, SQL, and BigQuery datasources
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
     SUPPORTED_COLUMN_TYPES = ["date", "number", "string"]  # For x_type/y_type hints
+    SUPPORTED_FILTER_OPS = ["eq", "ne", "gt", "lt", "gte", "lte", "in", "contains"]
+    SUPPORTED_SORT_ORDERS = ["asc", "desc"]
+    SUPPORTED_SORT_FIELDS = ["x", "y"]  # Can sort by x or y field after aggregation
 
     def validate(self, spec: Dict[str, Any]) -> None:
         """
@@ -219,6 +222,34 @@ class DashMLValidator:
                 f"Supported: {', '.join(self.SUPPORTED_COLUMN_TYPES)}"
             )
 
+        # filters validation (optional field)
+        if "filters" in chart:
+            self._validate_filters(chart["filters"], chart["id"])
+
+        # sort validation (optional field)
+        if "sort" in chart:
+            if chart["sort"] not in self.SUPPORTED_SORT_FIELDS:
+                raise ValidationError(
+                    f"Chart '{chart['id']}' has unsupported sort field: '{chart['sort']}'. "
+                    f"Supported: {', '.join(self.SUPPORTED_SORT_FIELDS)}"
+                )
+
+        # sort_order validation (optional field)
+        if "sort_order" in chart:
+            if chart["sort_order"] not in self.SUPPORTED_SORT_ORDERS:
+                raise ValidationError(
+                    f"Chart '{chart['id']}' has unsupported sort_order: '{chart['sort_order']}'. "
+                    f"Supported: {', '.join(self.SUPPORTED_SORT_ORDERS)}"
+                )
+
+        # limit validation (optional field)
+        if "limit" in chart:
+            if not isinstance(chart["limit"], int) or chart["limit"] < 1:
+                raise ValidationError(
+                    f"Chart '{chart['id']}' has invalid limit: '{chart['limit']}'. "
+                    f"Must be a positive integer."
+                )
+
         # ID uniqueness (check against other charts)
         # This is simplified - full implementation would track seen IDs
 
@@ -254,3 +285,46 @@ class DashMLValidator:
         # Validate each chart in the page
         for i, chart in enumerate(page["charts"]):
             self._validate_chart(chart, i)
+
+    def _validate_filters(self, filters: Any, chart_id: str) -> None:
+        """Validate filters array for a chart"""
+        if not isinstance(filters, list):
+            raise ValidationError(
+                f"Chart '{chart_id}' filters must be an array, got {type(filters)}"
+            )
+
+        for i, filter_spec in enumerate(filters):
+            if not isinstance(filter_spec, dict):
+                raise ValidationError(
+                    f"Chart '{chart_id}' filter at index {i} must be an object, got {type(filter_spec)}"
+                )
+
+            # Required filter fields
+            if "field" not in filter_spec:
+                raise ValidationError(
+                    f"Chart '{chart_id}' filter at index {i} missing required 'field'"
+                )
+
+            if "op" not in filter_spec:
+                raise ValidationError(
+                    f"Chart '{chart_id}' filter at index {i} missing required 'op'"
+                )
+
+            if "value" not in filter_spec:
+                raise ValidationError(
+                    f"Chart '{chart_id}' filter at index {i} missing required 'value'"
+                )
+
+            # Validate operator
+            op = filter_spec["op"]
+            if op not in self.SUPPORTED_FILTER_OPS:
+                raise ValidationError(
+                    f"Chart '{chart_id}' filter at index {i} has unsupported op: '{op}'. "
+                    f"Supported: {', '.join(self.SUPPORTED_FILTER_OPS)}"
+                )
+
+            # Validate 'in' operator requires list value
+            if op == "in" and not isinstance(filter_spec["value"], list):
+                raise ValidationError(
+                    f"Chart '{chart_id}' filter at index {i} with op 'in' requires value to be a list"
+                )
