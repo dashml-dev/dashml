@@ -804,10 +804,15 @@ class SupersetTransformer(Transformer):
         # Format: bigquery://project
         sqlalchemy_uri = f"bigquery://{project}"
 
-        # If credentials_path specified, add it to extras
-        extra_config = {}
+        # Load credentials JSON if path provided
+        credentials_info = None
         if credentials_path:
-            extra_config["credentials_path"] = credentials_path
+            try:
+                with open(credentials_path, 'r') as f:
+                    credentials_info = json.load(f)
+                print(f"✓ Loaded BigQuery credentials from: {credentials_path}")
+            except Exception as e:
+                print(f"⚠ Warning: Could not load credentials file: {e}")
 
         # Generate a database name for Superset
         db_name = f"BigQuery ({project})"
@@ -835,6 +840,12 @@ class SupersetTransformer(Transformer):
             # Refresh CSRF token before POST request
             self._refresh_csrf_token()
 
+            # Build encrypted_extra with credentials_info for BigQuery
+            # This passes the service account JSON directly to Superset
+            encrypted_extra = {}
+            if credentials_info:
+                encrypted_extra["credentials_info"] = credentials_info
+
             # Build database payload for BigQuery
             database_payload = {
                 "database_name": db_name,
@@ -842,7 +853,8 @@ class SupersetTransformer(Transformer):
                 "expose_in_sqllab": True,
                 "allow_run_async": True,
                 "allow_file_upload": False,  # BigQuery doesn't support CSV uploads via Superset
-                "extra": json.dumps(extra_config) if extra_config else "{}"
+                "extra": "{}",
+                "encrypted_extra": json.dumps(encrypted_extra) if encrypted_extra else "{}"
             }
 
             # Add referer header

@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BigQuery Definitive - All Chart Types</title>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f5f5f5;
+      color: #333333;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background-color: #f5f5f5;
+      padding: 0;
+    }
+    .card {
+      background-color: #ffffff;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin-top: 0;
+      color: #333333;
+    }
+    #chart {
+      margin-top: 20px;
+      min-height: 500px;
+    }
+    .chart-selector {
+      margin: 20px 0;
+    }
+    select {
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #ffffff;
+      color: #333333;
+    }
+    label {
+      margin-right: 10px;
+      font-weight: 500;
+      color: #333333;
+    }
+    .page-tabs {
+      display: flex;
+      gap: 10px;
+      margin: 20px 0;
+      border-bottom: 2px solid #33333340; /* 40 = 25% opacity hex */
+      padding-bottom: 0;
+    }
+    .tab-button {
+      padding: 10px 20px;
+      background-color: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      color: #333333;
+      opacity: 0.7;
+      transition: all 0.2s;
+    }
+    .tab-button:hover {
+      opacity: 1;
+      background-color: #33333310; /* 10 = ~6% opacity */
+    }
+    .tab-button.active {
+      color: #1f77b4;
+      border-bottom-color: #1f77b4;
+      opacity: 1;
+    }
+    .page-container {
+      margin-top: 20px;
+    }
+    .page-description {
+      color: #333333;
+      opacity: 0.8;
+      margin-bottom: 20px;
+    }
+    .chart-container {
+      margin: 20px 0;
+      min-height: 400px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>BigQuery Definitive - All Chart Types</h1>
+    <div class="page-tabs">
+      <button class="tab-button active" onclick="showPage('categorical_charts', this)">Categorical Charts</button>
+      <button class="tab-button" onclick="showPage('time_series', this)">Time Series Charts</button>
+      <button class="tab-button" onclick="showPage('distribution', this)">Distribution & Relationships</button>
+    </div>
+    <div id="page-categorical_charts" class="page-container">
+      <p class="page-description"><em>Bar charts and pie charts for categorical data</em></p>
+      <div class="card">
+        <div id="chart-bar_sales_by_country"></div>
+      </div>
+      <div class="card">
+        <div id="chart-pie_orders_by_status"></div>
+      </div>
+      <div class="card">
+        <div id="chart-grouped_bar_country_status"></div>
+      </div>
+      <div class="card">
+        <div id="chart-stacked_bar_payment_status"></div>
+      </div>
+    </div>
+    <div id="page-time_series" class="page-container" style="display:none">
+      <p class="page-description"><em>Line and area charts for temporal trends</em></p>
+      <div class="card">
+        <div id="chart-line_orders_over_time"></div>
+      </div>
+      <div class="card">
+        <div id="chart-area_revenue_over_time"></div>
+      </div>
+    </div>
+    <div id="page-distribution" class="page-container" style="display:none">
+      <p class="page-description"><em>Scatter plots and histograms</em></p>
+      <div class="card">
+        <div id="chart-scatter_amount_vs_tax"></div>
+      </div>
+      <div class="card">
+        <div id="chart-histogram_order_amounts"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const theme = {"background": "#f5f5f5", "card": "#ffffff", "text": "#333333", "primary": "#1f77b4", "secondary": ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]};
+    // Column types from INFORMATION_SCHEMA (auto-detected)
+    let columnTypes = {};
+
+    // Get effective x_type: explicit > schema-detected > undefined
+    function getEffectiveXType(xColumn, explicitXType) {
+      if (explicitXType) return explicitXType;
+      return columnTypes[xColumn] || undefined;
+    }
+
+    function aggregateData(data, xCol, yCol, aggFunc, xType) {
+      // Use schema-detected type if no explicit type provided
+      const effectiveXType = getEffectiveXType(xCol, xType);
+
+      const groups = {};
+      data.forEach(row => {
+        const key = row[xCol];
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(parseFloat(row[yCol]) || 0);
+      });
+
+      const result = Object.entries(groups).map(([key, values]) => {
+        let aggValue;
+        switch (aggFunc) {
+          case 'mean': aggValue = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggValue = values.length; break;
+          default: aggValue = values.reduce((a, b) => a + b, 0);
+        }
+        return { x: key, y: aggValue };
+      });
+
+      // Sort based on effective x_type (explicit or schema-detected)
+      if (effectiveXType === 'date') {
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (effectiveXType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }
+      // No sort for 'string' or undefined
+
+      return result;
+    }
+
+    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {
+      // Use schema-detected type if no explicit type provided
+      const effectiveXType = getEffectiveXType(x, xType);
+
+      const grouped = {};
+      data.forEach(row => {
+        const xKey = row[x];
+        const groupKey = row[groupField];
+        const compositeKey = xKey + '|||' + groupKey;
+        if (!grouped[compositeKey]) grouped[compositeKey] = { x: xKey, group: groupKey, values: [], count: 0 };
+        grouped[compositeKey].values.push(parseFloat(row[y]) || 0);
+        grouped[compositeKey].count++;
+      });
+
+      const result = [];
+      Object.keys(grouped).forEach(key => {
+        const entry = grouped[key];
+        const values = entry.values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = entry.count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        result.push({ x: entry.x, group: entry.group, y: aggregated });
+      });
+
+      // Sort based on effective x_type (explicit or schema-detected)
+      if (effectiveXType === 'date') {
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (effectiveXType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }
+
+      return result;
+    }
+
+
+    function render_bar_sales_by_country(data) {
+      const grouped = aggregateData(data, 'shipping_address_country', 'total_amount', 'sum', undefined);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Total Sales by Country', font: { color: theme.text } },
+        xaxis: { title: 'shipping_address_country', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-bar_sales_by_country', [trace], layout, { responsive: true });
+    }
+    function render_pie_orders_by_status(data) {
+      const grouped = aggregateData(data, 'status', 'order_id', 'count', undefined);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      switch ('pie') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Orders by Status', font: { color: theme.text } },
+        xaxis: { title: 'status', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-pie_orders_by_status', [trace], layout, { responsive: true });
+    }
+    function render_grouped_bar_country_status(data) {
+      // Stacked/grouped bars need multiple traces
+      const aggregated = aggregateDataWithGroup(data, 'shipping_address_country', 'order_id', 'status', 'count', undefined);
+      const groupValues = [...new Set(aggregated.map(d => d.group))];
+
+      const traces = [];
+      groupValues.forEach((groupVal, idx) => {
+        const filtered = aggregated.filter(d => d.group === groupVal);
+        traces.push({
+          x: filtered.map(d => d.x),
+          y: filtered.map(d => d.y),
+          name: groupVal,
+          type: 'bar',
+          marker: { color: theme.secondary[idx % theme.secondary.length] }
+        });
+      });
+
+      const layout = {
+        title: { text: 'Orders by Country (Grouped by Status)', font: { color: theme.text } },
+        xaxis: { title: 'shipping_address_country', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+        barmode: 'group',
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-grouped_bar_country_status', traces, layout, { responsive: true });
+    }
+    function render_stacked_bar_payment_status(data) {
+      // Stacked/grouped bars need multiple traces
+      const aggregated = aggregateDataWithGroup(data, 'payment_method', 'order_id', 'status', 'count', undefined);
+      const groupValues = [...new Set(aggregated.map(d => d.group))];
+
+      const traces = [];
+      groupValues.forEach((groupVal, idx) => {
+        const filtered = aggregated.filter(d => d.group === groupVal);
+        traces.push({
+          x: filtered.map(d => d.x),
+          y: filtered.map(d => d.y),
+          name: groupVal,
+          type: 'bar',
+          marker: { color: theme.secondary[idx % theme.secondary.length] }
+        });
+      });
+
+      const layout = {
+        title: { text: 'Orders by Payment Method (Stacked by Status)', font: { color: theme.text } },
+        xaxis: { title: 'payment_method', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+        barmode: 'stack',
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-stacked_bar_payment_status', traces, layout, { responsive: true });
+    }
+    function render_line_orders_over_time(data) {
+      const grouped = aggregateData(data, 'order_date', 'order_id', 'count', 'date');
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      switch ('line') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Orders Over Time', font: { color: theme.text } },
+        xaxis: { title: 'order_date', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-line_orders_over_time', [trace], layout, { responsive: true });
+    }
+    function render_area_revenue_over_time(data) {
+      const grouped = aggregateData(data, 'order_date', 'total_amount', 'sum', 'date');
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      switch ('area') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Revenue Over Time', font: { color: theme.text } },
+        xaxis: { title: 'order_date', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-area_revenue_over_time', [trace], layout, { responsive: true });
+    }
+    function render_scatter_amount_vs_tax(data) {
+      const grouped = aggregateData(data, 'total_amount', 'tax_amount', 'sum', undefined);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      switch ('scatter') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Order Amount vs Tax Amount', font: { color: theme.text } },
+        xaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'tax_amount', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-scatter_amount_vs_tax', [trace], layout, { responsive: true });
+    }
+    function render_histogram_order_amounts(data) {
+      // Use raw data for histogram
+      const xValues = data.map(d => d['total_amount'] || d.total_amount);
+      const yValues = data.map(d => d['order_id'] || d.order_id);
+
+      let trace;
+      switch ('histogram') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      const layout = {
+        title: { text: 'Distribution of Order Amounts', font: { color: theme.text } },
+        xaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-histogram_order_amounts', [trace], layout, { responsive: true });
+    }
+
+
+    function showPage(pageId, clickedButton) {
+      document.querySelectorAll('.page-container').forEach(page => {
+        page.style.display = 'none';
+      });
+      document.querySelectorAll('.tab-button').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.getElementById('page-' + pageId).style.display = 'block';
+      if (clickedButton) {
+        clickedButton.classList.add('active');
+      }
+    }
+
+
+    function renderAllPages(data) {
+      render_bar_sales_by_country(data);
+      render_pie_orders_by_status(data);
+      render_grouped_bar_country_status(data);
+      render_stacked_bar_payment_status(data);
+      render_line_orders_over_time(data);
+      render_area_revenue_over_time(data);
+      render_scatter_amount_vs_tax(data);
+      render_histogram_order_amounts(data);
+    }
+
+    // Fetch schema first, then data
+    Promise.all([
+      fetch('/api/schema').then(r => r.json()),
+      fetch('/api/data').then(r => r.json())
+    ])
+      .then(([schema, data]) => {
+        columnTypes = schema;
+
+        // Parse ISO 8601 date strings to Date objects
+        // Server already cast types, we just need to parse ISO dates
+        const parsedData = data.map(row => {
+          const parsedRow = {};
+          for (const [column, value] of Object.entries(row)) {
+            if (columnTypes[column] === 'date' && value !== null) {
+              // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
+              parsedRow[column] = new Date(value);
+            } else {
+              // Numbers are already parsed by JSON, strings stay as strings
+              parsedRow[column] = value;
+            }
+          }
+          return parsedRow;
+        });
+
+        console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
+        renderAllPages(parsedData);
+      })
+      .catch(error => console.error('Error loading data:', error));
+  </script>
+</body>
+</html>

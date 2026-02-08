@@ -164,7 +164,9 @@ def build_command(args):
                     print(f"\n✓ Multi-file output created in: {output_dir}")
                 else:
                     # Single-file output - write normally
-                    Path(output_path).write_text(code, encoding="utf-8")
+                    output_file = Path(output_path)
+                    output_file.parent.mkdir(parents=True, exist_ok=True)
+                    output_file.write_text(code, encoding="utf-8")
                     print(f"✓ Output written to: {output_path}")
             except Exception as e:
                 print(f"Error writing output: {e}", file=sys.stderr)

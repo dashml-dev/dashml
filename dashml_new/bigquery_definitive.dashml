@@ -1,0 +1,83 @@
+version: 0.1
+title: "BigQuery Definitive - All Chart Types"
+style: "dracula"
+
+data:
+  type: bigquery
+  path: "sales.orders"
+
+pages:
+  - id: "categorical_charts"
+    title: "Categorical Charts"
+    description: "Bar charts and pie charts for categorical data"
+    charts:
+      - id: "bar_sales_by_country"
+        type: "bar"
+        title: "Total Sales by Country"
+        x: "shipping_address_country"
+        y: "total_amount"
+        agg: "sum"
+
+      - id: "pie_orders_by_status"
+        type: "pie"
+        title: "Orders by Status"
+        x: "status"
+        y: "order_id"
+        agg: "count"
+
+      - id: "grouped_bar_country_status"
+        type: "grouped_bar"
+        title: "Orders by Country (Grouped by Status)"
+        x: "shipping_address_country"
+        y: "order_id"
+        agg: "count"
+        group: "status"
+        sort: "y"
+        sort_order: "desc"
+
+      - id: "stacked_bar_payment_status"
+        type: "stacked_bar"
+        title: "Orders by Payment Method (Stacked by Status)"
+        x: "payment_method"
+        y: "order_id"
+        agg: "count"
+        group: "status"
+
+  - id: "time_series"
+    title: "Time Series Charts"
+    description: "Line and area charts for temporal trends"
+    charts:
+      - id: "line_orders_over_time"
+        type: "line"
+        title: "Orders Over Time"
+        x: "order_date"
+        y: "order_id"
+        agg: "count"
+        x_type: "date"
+
+      - id: "area_revenue_over_time"
+        type: "area"
+        title: "Revenue Over Time"
+        x: "order_date"
+        y: "total_amount"
+        agg: "sum"
+        x_type: "date"
+
+  - id: "distribution"
+    title: "Distribution & Relationships"
+    description: "Scatter plots and histograms"
+    charts:
+      - id: "scatter_amount_vs_tax"
+        type: "scatter"
+        title: "Order Amount vs Tax Amount"
+        x: "total_amount"
+        y: "tax_amount"
+        agg: "sum"
+
+      - id: "histogram_order_amounts"
+        type: "histogram"
+        title: "Distribution of Order Amounts"
+        x: "total_amount"
+        y: "order_id"
+        agg: "count"
+        bins: 20

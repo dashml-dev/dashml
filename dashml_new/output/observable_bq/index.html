@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BigQuery Definitive - All Chart Types</title>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, sans-serif;
+            background-color: #ffffff;
+            color: #000000;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            font-weight: 600;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            font-weight: 500;
+        }
+
+        .card {
+            margin-bottom: 3rem;
+            background: #ffffff;
+            padding: 1.5rem;
+            border-radius: 8px;
+        }
+
+        .page-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            border-bottom: 2px solid rgba(128, 128, 128, 0.2);
+            padding-bottom: 0;
+        }
+
+        .tab-button {
+            background: none;
+            border: none;
+            color: #000000;
+            padding: 0.75rem 1.5rem;
+            cursor: pointer;
+            font-size: 1rem;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+            opacity: 0.6;
+        }
+
+        .tab-button:hover {
+            opacity: 0.8;
+        }
+
+        .tab-button.active {
+            opacity: 1;
+            border-bottom-color: #29b5e8;
+        }
+
+        .page-content {
+            display: none;
+        }
+
+        .page-content.active {
+            display: block;
+        }
+
+        .page-description {
+            font-style: italic;
+            opacity: 0.8;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Observable Plot chart styling */
+        svg {
+            background: transparent;
+        }
+    </style>
+</head>
+<body>
+    <h1>BigQuery Definitive - All Chart Types</h1>
+
+    <script>
+        // Column types from INFORMATION_SCHEMA (auto-detected)
+        let columnTypes = {};
+        // Load data from Flask API
+        let dashmlData = [];
+
+        // Get effective type: explicit > schema-detected > undefined
+        function getEffectiveType(column, explicitType) {
+            if (explicitType) return explicitType;
+            return columnTypes[column] || undefined;
+        }
+
+        // Fetch schema first, then data
+        Promise.all([
+            fetch('/api/schema').then(r => r.json()),
+            fetch('/api/data').then(r => r.json())
+        ])
+            .then(([schema, data]) => {
+                columnTypes = schema;
+
+                // Parse ISO 8601 date strings to Date objects
+                // Server already cast types, we just need to parse ISO dates
+                dashmlData = data.map(row => {
+                    const parsedRow = {};
+                    for (const [column, value] of Object.entries(row)) {
+                        if (columnTypes[column] === 'date' && value !== null) {
+                            // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
+                            parsedRow[column] = new Date(value);
+                        } else {
+                            // Numbers are already parsed by JSON, strings stay as strings
+                            parsedRow[column] = value;
+                        }
+                    }
+                    return parsedRow;
+                });
+
+                console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
+                console.log('Parsed data (first row):', dashmlData[0]);
+                renderAllCharts();
+            })
+            .catch(error => {
+                console.error('Error loading data:', error);
+                document.body.innerHTML += '<p style="color: red;">Error loading data from database</p>';
+            });
+    </script>
+    <div class="page-tabs">
+        <button class="tab-button active" onclick="showPage('categorical_charts', this)">Categorical Charts</button>
+        <button class="tab-button" onclick="showPage('time_series', this)">Time Series Charts</button>
+        <button class="tab-button" onclick="showPage('distribution', this)">Distribution & Relationships</button>
+    </div>
+    <div id="page-categorical_charts" class="page-content active">
+        <p class="page-description">Bar charts and pie charts for categorical data</p>
+        <div class="card">
+            <h2>Total Sales by Country</h2>
+            <div id="chart-categorical_charts-bar_sales_by_country"></div>
+        </div>
+        <div class="card">
+            <h2>Orders by Status</h2>
+            <div id="chart-categorical_charts-pie_orders_by_status"></div>
+        </div>
+        <div class="card">
+            <h2>Orders by Country (Grouped by Status)</h2>
+            <div id="chart-categorical_charts-grouped_bar_country_status"></div>
+        </div>
+        <div class="card">
+            <h2>Orders by Payment Method (Stacked by Status)</h2>
+            <div id="chart-categorical_charts-stacked_bar_payment_status"></div>
+        </div>
+    </div>
+    <div id="page-time_series" class="page-content">
+        <p class="page-description">Line and area charts for temporal trends</p>
+        <div class="card">
+            <h2>Orders Over Time</h2>
+            <div id="chart-time_series-line_orders_over_time"></div>
+        </div>
+        <div class="card">
+            <h2>Revenue Over Time</h2>
+            <div id="chart-time_series-area_revenue_over_time"></div>
+        </div>
+    </div>
+    <div id="page-distribution" class="page-content">
+        <p class="page-description">Scatter plots and histograms</p>
+        <div class="card">
+            <h2>Order Amount vs Tax Amount</h2>
+            <div id="chart-distribution-scatter_amount_vs_tax"></div>
+        </div>
+        <div class="card">
+            <h2>Distribution of Order Amounts</h2>
+            <div id="chart-distribution-histogram_order_amounts"></div>
+        </div>
+    </div>
+    <script>
+        function showPage(pageId, buttonElement) {
+            // Hide all pages
+            document.querySelectorAll('.page-content').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Remove active from all buttons
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById('page-' + pageId).classList.add('active');
+            buttonElement.classList.add('active');
+        }
+
+        function renderAllCharts() {
+            // Chart: bar_sales_by_country
+            const data_bar_sales_by_country = (() => {
+                const effectiveXType = getEffectiveType('shipping_address_country', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['total_amount']),
+                    d => d['shipping_address_country']
+                ).map(([shipping_address_country, total_amount]) => ({ shipping_address_country, total_amount }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.shipping_address_country) - new Date(b.shipping_address_country));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].shipping_address_country;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.shipping_address_country).localeCompare(String(b.shipping_address_country)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_bar_sales_by_country = Plot.plot({
+                marks: [
+                    Plot.barY(data_bar_sales_by_country, {
+                        x: "shipping_address_country",
+                        y: "total_amount",
+                        fill: "#29b5e8",
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-categorical_charts-bar_sales_by_country').appendChild(plot_bar_sales_by_country);
+            // D3 Pie Chart
+            const data_pie_orders_by_status = (() => {
+                const effectiveXType = getEffectiveType('status', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['status']
+                ).map(([status, order_id]) => ({ status, order_id }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.status) - new Date(b.status));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.status - b.status);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].status;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.status - b.status);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.status - b.status);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.status).localeCompare(String(b.status)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const pieWidth = 400;
+            const pieHeight = 400;
+            const legendWidth = 150;
+            const totalWidth = pieWidth + legendWidth;
+            const radius = Math.min(pieWidth, pieHeight) / 2 - 10;
+
+            const pie = d3.pie().value(d => d.order_id);
+            const arc = d3.arc().innerRadius(0).outerRadius(radius);
+
+            // Use theme secondary colors for categorical data
+            const themeColors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+            const color = d3.scaleOrdinal()
+                .domain(data_pie_orders_by_status.map(d => d.status))
+                .range(themeColors);
+
+            const svg = d3.create("svg")
+                .attr("width", totalWidth)
+                .attr("height", pieHeight)
+                .attr("viewBox", [0, 0, totalWidth, pieHeight])
+                .attr("style", "max-width: 100%; height: auto;");
+
+            // Pie chart group (centered in left portion)
+            const pieGroup = svg.append("g")
+                .attr("transform", `translate(${pieWidth / 2}, ${pieHeight / 2})`);
+
+            pieGroup.selectAll("path")
+                .data(pie(data_pie_orders_by_status))
+                .join("path")
+                .attr("fill", d => color(d.data.status))
+                .attr("d", arc)
+                .attr("stroke", "white")
+                .attr("stroke-width", 2)
+                .append("title")
+                .text(d => `${d.data.status}: ${d.data.order_id}`);
+
+            // Legend (positioned on the right)
+            const legend = svg.append("g")
+                .attr("transform", `translate(${pieWidth + 10}, 20)`);
+
+            data_pie_orders_by_status.forEach((d, i) => {
+                const legendRow = legend.append("g")
+                    .attr("transform", `translate(0, ${i * 25})`);
+
+                legendRow.append("rect")
+                    .attr("width", 15)
+                    .attr("height", 15)
+                    .attr("fill", color(d.status))
+                    .attr("rx", 2);
+
+                legendRow.append("text")
+                    .attr("x", 22)
+                    .attr("y", 12)
+                    .attr("fill", "#000000")
+                    .style("font-size", "13px")
+                    .text(d.status);
+            });
+
+            document.getElementById('chart-categorical_charts-pie_orders_by_status').appendChild(svg.node());
+            // Chart: grouped_bar_country_status
+            const data_grouped_bar_country_status = (() => {
+                const effectiveXType = getEffectiveType('shipping_address_country', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['shipping_address_country'],
+                    d => d['status']
+                ).flatMap(([shipping_address_countryVal, groupData]) =>
+                    groupData.map(([statusVal, order_idVal]) => ({
+                        shipping_address_country: shipping_address_countryVal,
+                        status: statusVal,
+                        order_id: order_idVal
+                    }))
+                );
+
+                // Sort
+                result.sort((a, b) => -1 * (a.order_id - b.order_id));
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_grouped_bar_country_status = Plot.plot({
+                marks: [
+                    Plot.barY(data_grouped_bar_country_status, {
+                        fx: "shipping_address_country",
+                        x: "status",
+                        y: "order_id",
+                        fill: "status",
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                x: {
+                    paddingInner: 0.1,
+                    axis: null
+                },
+                fx: {
+                    padding: 0.2
+                },
+                color: {
+                    domain: [...new Set(data_grouped_bar_country_status.map(d => d.status))],
+                    range: ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+                },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-categorical_charts-grouped_bar_country_status').appendChild(plot_grouped_bar_country_status);
+            // Chart: stacked_bar_payment_status
+            const data_stacked_bar_payment_status = (() => {
+                const effectiveXType = getEffectiveType('payment_method', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['payment_method'],
+                    d => d['status']
+                ).flatMap(([payment_methodVal, groupData]) =>
+                    groupData.map(([statusVal, order_idVal]) => ({
+                        payment_method: payment_methodVal,
+                        status: statusVal,
+                        order_id: order_idVal
+                    }))
+                );
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.payment_method) - new Date(b.payment_method));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.payment_method - b.payment_method);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].payment_method;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.payment_method - b.payment_method);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.payment_method - b.payment_method);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.payment_method).localeCompare(String(b.payment_method)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_stacked_bar_payment_status = Plot.plot({
+                marks: [
+                    Plot.barY(data_stacked_bar_payment_status, {
+                        x: "payment_method",
+                        y: "order_id",
+                        fill: "status",
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                color: {
+                    domain: [...new Set(data_stacked_bar_payment_status.map(d => d.status))],
+                    range: ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+                },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-categorical_charts-stacked_bar_payment_status').appendChild(plot_stacked_bar_payment_status);
+            // Chart: line_orders_over_time
+            const data_line_orders_over_time = (() => {
+                const effectiveXType = getEffectiveType('order_date', 'date');
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['order_date']
+                ).map(([order_date, order_id]) => ({ order_date, order_id }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.order_date) - new Date(b.order_date));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.order_date - b.order_date);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].order_date;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.order_date - b.order_date);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.order_date - b.order_date);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_line_orders_over_time = Plot.plot({
+                marks: [
+                    Plot.line(data_line_orders_over_time, {
+                        x: "order_date",
+                        y: "order_id",
+                        stroke: "#29b5e8",
+                        strokeWidth: 2,
+                        sort: "order_date",
+                        tip: true
+                    }),
+                    Plot.dot(data_line_orders_over_time, {
+                        x: "order_date",
+                        y: "order_id",
+                        fill: "#29b5e8",
+                        r: 4
+                    }),
+                    Plot.ruleY([0])
+                ],
+                x: { type: "utc" },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-time_series-line_orders_over_time').appendChild(plot_line_orders_over_time);
+            // Chart: area_revenue_over_time
+            const data_area_revenue_over_time = (() => {
+                const effectiveXType = getEffectiveType('order_date', 'date');
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['total_amount']),
+                    d => d['order_date']
+                ).map(([order_date, total_amount]) => ({ order_date, total_amount }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.order_date) - new Date(b.order_date));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.order_date - b.order_date);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].order_date;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.order_date - b.order_date);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.order_date - b.order_date);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_area_revenue_over_time = Plot.plot({
+                marks: [
+                    Plot.areaY(data_area_revenue_over_time, {
+                        x: "order_date",
+                        y: "total_amount",
+                        fill: "#29b5e8",
+                        fillOpacity: 0.7,
+                        sort: "order_date",
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                x: { type: "utc" },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-time_series-area_revenue_over_time').appendChild(plot_area_revenue_over_time);
+            // Chart: scatter_amount_vs_tax
+            const data_scatter_amount_vs_tax = (() => {
+                const effectiveXType = getEffectiveType('total_amount', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['tax_amount']),
+                    d => d['total_amount']
+                ).map(([total_amount, tax_amount]) => ({ total_amount, tax_amount }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.total_amount) - new Date(b.total_amount));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.total_amount - b.total_amount);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].total_amount;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.total_amount - b.total_amount);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.total_amount - b.total_amount);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.total_amount).localeCompare(String(b.total_amount)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_scatter_amount_vs_tax = Plot.plot({
+                marks: [
+                    Plot.dot(data_scatter_amount_vs_tax, {
+                        x: "total_amount",
+                        y: "tax_amount",
+                        fill: "#29b5e8",
+                        r: 5,
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-distribution-scatter_amount_vs_tax').appendChild(plot_scatter_amount_vs_tax);
+            // Chart: histogram_order_amounts
+            const data_histogram_order_amounts = dashmlData;
+            const plot_histogram_order_amounts = Plot.plot({
+                marks: [
+                    Plot.rectY(data_histogram_order_amounts, Plot.binX({y: "count", thresholds: 20}, {
+                        x: "total_amount",
+                        fill: "#29b5e8",
+                        tip: true
+                    })),
+                    Plot.ruleY([0])
+                ],
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-distribution-histogram_order_amounts').appendChild(plot_histogram_order_amounts);
+        }
+    </script>
+</body>
+</html>
