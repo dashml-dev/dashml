@@ -117,7 +117,8 @@ class StreamlitTransformer(Transformer):
     def _generate_imports(self, data_type: str = "csv") -> str:
         imports = """import streamlit as st
 import pandas as pd
-import altair as alt"""
+import altair as alt
+import plotly.express as px"""
 
         if data_type == "sql":
             imports += "\nfrom sqlalchemy import create_engine"
@@ -509,6 +510,28 @@ import altair as alt"""
         tooltip=["{x}", "{group}", "{y}"]
     ).properties(title="{title}")
     st.altair_chart(c, use_container_width=True)''')
+
+        elif chart_type == "geo":
+            # Choropleth map using Plotly
+            code_parts.append(f'''    # Geo chart: choropleth map colored by {y}
+    fig = px.choropleth(
+        chart_data,
+        locations="{x}",
+        locationmode="country names",
+        color="{y}",
+        hover_name="{x}",
+        color_continuous_scale="Blues",
+        title="{title}"
+    )
+    fig.update_layout(
+        geo=dict(
+            showframe=False,
+            showcoastlines=True,
+            projection_type="natural earth"
+        ),
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
+    st.plotly_chart(fig, use_container_width=True)''')
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')

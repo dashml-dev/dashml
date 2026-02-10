@@ -22,7 +22,7 @@ class DashMLValidator:
     REQUIRED_TOP_LEVEL = ["version", "data"]
     # TODO: [Immutability] Use frozenset for constants to prevent accidental modification
     # SUPPORTED_CHART_TYPES = frozenset(["bar", "line", ...])
-    SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie", "area", "histogram", "stacked_bar", "grouped_bar"]
+    SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie", "area", "histogram", "stacked_bar", "grouped_bar", "geo"]
     SUPPORTED_DATA_TYPES = ["csv", "sql", "bigquery"]  # CSV, SQL, and BigQuery datasources
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
     SUPPORTED_COLUMN_TYPES = ["date", "number", "string"]  # For x_type/y_type hints

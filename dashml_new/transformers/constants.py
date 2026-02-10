@@ -7,7 +7,7 @@ These constants are used across all transformers to ensure consistent behavior.
 # Chart type categorization by data requirements
 # Charts that need data aggregation (groupby + agg function)
 CHARTS_NEED_AGGREGATION = frozenset({
-    "bar", "line", "area", "pie", "stacked_bar", "grouped_bar", "scatter"
+    "bar", "line", "area", "pie", "stacked_bar", "grouped_bar", "scatter", "geo"
 })
 
 # Charts that work with raw data points (no aggregation)

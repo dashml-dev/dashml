@@ -172,6 +172,7 @@ class ObservablePlotTransformer(Transformer):
     <title>{title}</title>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
     <style>
         * {{
             margin: 0;
@@ -275,6 +276,8 @@ class ObservablePlotTransformer(Transformer):
     <script>
         // Load and parse CSV data
         let dashmlData = [];
+        // World topojson for geo charts (loaded on demand)
+        window.worldTopojson = null;
 
         // For CSV, getEffectiveType returns explicit type or detects from data
         function getEffectiveType(column, explicitType) {{
@@ -284,15 +287,20 @@ class ObservablePlotTransformer(Transformer):
             return undefined;
         }}
 
-        fetch('{path}')
-            .then(response => response.text())
-            .then(csvText => {{
+        // Load both data and world topojson in parallel
+        Promise.all([
+            fetch('{path}').then(r => r.text()),
+            fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(r => r.json())
+        ])
+            .then(([csvText, worldData]) => {{
                 dashmlData = parseCSV(csvText);
+                // Convert topojson to geojson features for Observable Plot
+                window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
                 renderAllCharts();
             }})
             .catch(error => {{
                 console.error('Error loading data:', error);
-                document.body.innerHTML += '<p style="color: red;">Error loading data file: {path}</p>';
+                document.body.innerHTML += '<p style="color: red;">Error loading data: ' + error.message + '</p>';
             }});
 
         function parseCSV(csvText) {{
@@ -921,6 +929,33 @@ class ObservablePlotTransformer(Transformer):
                 color: {{
                     domain: [...new Set(data_{data_var}.map(d => d.{group}))],
                     range: {color_scale_json}
+                }}"""
+
+        elif chart_type == "geo":
+            # Choropleth map using D3 and world topojson
+            return f"""marks: [
+                    // Note: Geo charts require world topojson data to be loaded
+                    // This creates a simple choropleth colored by country values
+                    Plot.geo(window.worldTopojson, {{
+                        fill: d => {{
+                            const countryData = data_{data_var}.find(row =>
+                                row.{x} && d.properties &&
+                                row.{x}.toLowerCase() === (d.properties.name || '').toLowerCase()
+                            );
+                            return countryData ? countryData.{y} : null;
+                        }},
+                        stroke: "#ccc",
+                        strokeWidth: 0.5,
+                        tip: true
+                    }})
+                ],
+                projection: "equal-earth",
+                color: {{
+                    type: "linear",
+                    scheme: "blues",
+                    unknown: "#f0f0f0",
+                    legend: true,
+                    label: "{y}"
                 }}"""
 
         else:

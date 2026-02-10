@@ -43,6 +43,13 @@ pages:
         agg: "count"
         group: "status"
 
+      - id: "geo_sales_by_country"
+        type: "geo"
+        title: "Sales by Country (Map)"
+        x: "shipping_address_country"
+        y: "total_amount"
+        agg: "sum"
+
   - id: "time_series"
     title: "Time Series Charts"
     description: "Line and area charts for temporal trends"

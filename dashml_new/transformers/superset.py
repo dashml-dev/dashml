@@ -107,6 +107,7 @@ DASHML_TO_SUPERSET_VIZ = {
     "histogram": "histogram_v2",  # Modern histogram viz type
     "stacked_bar": "echarts_timeseries",  # ECharts timeseries with stacking
     "grouped_bar": "echarts_timeseries",  # ECharts timeseries with grouping
+    "geo": "world_map",  # World map choropleth by country
 }
 
 
@@ -1180,6 +1181,29 @@ class SupersetTransformer(Transformer):
             params["normalized"] = False  # Whether to normalize
             params["cumulative"] = False  # Whether to show cumulative distribution
             # No metrics for histogram!
+        elif chart_type == "geo":
+            # World map choropleth
+            # x = country column, y = metric column
+            params["entity"] = x  # Column containing country names
+            params["country_fieldtype"] = "name"  # Using country names (not codes)
+            # Build metric for the value to color by
+            if agg.upper() == "COUNT":
+                params["metric"] = {
+                    "expressionType": "SQL",
+                    "label": f"COUNT({y})",
+                    "sqlExpression": f"COUNT({y})"
+                }
+            else:
+                params["metric"] = {
+                    "expressionType": "SIMPLE",
+                    "column": {"column_name": y},
+                    "aggregate": agg.upper(),
+                    "label": f"{agg.upper()}({y})"
+                }
+            # Apply sorting
+            if sort_field == "y":
+                params["sort_by_metric"] = True
+                params["order_desc"] = sort_order == "desc"
 
         # Build query_context
         query_context_queries = []
@@ -1219,6 +1243,9 @@ class SupersetTransformer(Transformer):
                 columns = [x]
                 if group:
                     columns.append(group)
+            elif chart_type == "geo":
+                # World map needs the country column (x) for grouping
+                columns = [x]
             else:
                 columns = [x]
 

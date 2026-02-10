@@ -82,6 +82,7 @@ class ChartSpec(TypedDict, total=False):
     - histogram: Distribution histogram
     - stacked_bar: Stacked bars (requires 'group' field)
     - grouped_bar: Grouped/clustered bars (requires 'group' field)
+    - geo: Choropleth map (countries colored by value)
 
     Type hints (optional):
     - x_type: Explicit type for x-axis values ("date", "number", "string")

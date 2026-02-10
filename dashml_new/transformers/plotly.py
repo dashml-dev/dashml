@@ -874,6 +874,16 @@ if __name__ == '__main__':
         case 'histogram':
           trace = {{ x: xValues, type: 'histogram', nbinsx: chart.bins || 20, marker: {{ color: theme.primary }} }};
           break;
+        case 'geo':
+          trace = {{
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: {{ title: chart.y }}
+          }};
+          break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
       }}
@@ -881,25 +891,44 @@ if __name__ == '__main__':
       traces.push(trace);
       }}
 
-      const layout = {{
-        title: {{
+      let layout;
+      if (chart.type === 'geo') {{
+        // Special layout for choropleth maps
+        layout = {{
+          title: {{
             text: chart.title || chart.id,
             font: {{ color: theme.text }}
-        }},
-        xaxis: {{
-            title: chart.x,
-            color: theme.text,
-            gridcolor: theme.text + '20' // 20 = low opacity
-        }},
-        yaxis: {{
-            title: chart.y,
-            color: theme.text,
-            gridcolor: theme.text + '20'
-        }},
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)', // Transparent to let CSS background show
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+          }},
+          geo: {{
+            showframe: false,
+            showcoastlines: true,
+            projection: {{ type: 'natural earth' }},
+            bgcolor: 'rgba(0,0,0,0)'
+          }},
+          margin: {{ t: 60, r: 0, b: 0, l: 0 }},
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        }};
+      }} else {{
+        layout = {{
+          title: {{
+              text: chart.title || chart.id,
+              font: {{ color: theme.text }}
+          }},
+          xaxis: {{
+              title: chart.x,
+              color: theme.text,
+              gridcolor: theme.text + '20' // 20 = low opacity
+          }},
+          yaxis: {{
+              title: chart.y,
+              color: theme.text,
+              gridcolor: theme.text + '20'
+          }},
+          margin: {{ t: 60, r: 40, b: 60, l: 60 }},
+          paper_bgcolor: 'rgba(0,0,0,0)', // Transparent to let CSS background show
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        }};
+      }}
 
       if (barmode) {{
         layout.barmode = barmode;
@@ -1034,18 +1063,43 @@ if __name__ == '__main__':
         case 'histogram':
           trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
           break;
+        case 'geo':
+          trace = {{
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: {{ title: '{y}' }}
+          }};
+          break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
       }}
 
-      const layout = {{
-        title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
-        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+      let layout;
+      if ('{chart_type}' === 'geo') {{
+        layout = {{
+          title: {{ text: '{title}', font: {{ color: theme.text }} }},
+          geo: {{
+            showframe: false,
+            showcoastlines: true,
+            projection: {{ type: 'natural earth' }},
+            bgcolor: 'rgba(0,0,0,0)'
+          }},
+          margin: {{ t: 60, r: 0, b: 0, l: 0 }},
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        }};
+      }} else {{
+        layout = {{
+          title: {{ text: '{title}', font: {{ color: theme.text }} }},
+          xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
+          yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+          margin: {{ t: 60, r: 40, b: 60, l: 60 }},
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        }};
+      }}
 
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
@@ -1506,18 +1560,43 @@ if __name__ == '__main__':
         case 'histogram':
           trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
           break;
+        case 'geo':
+          trace = {{
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: {{ title: '{y}' }}
+          }};
+          break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
       }}
 
-      const layout = {{
-        title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
-        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+      let layout;
+      if ('{chart_type}' === 'geo') {{
+        layout = {{
+          title: {{ text: '{title}', font: {{ color: theme.text }} }},
+          geo: {{
+            showframe: false,
+            showcoastlines: true,
+            projection: {{ type: 'natural earth' }},
+            bgcolor: 'rgba(0,0,0,0)'
+          }},
+          margin: {{ t: 60, r: 0, b: 0, l: 0 }},
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        }};
+      }} else {{
+        layout = {{
+          title: {{ text: '{title}', font: {{ color: theme.text }} }},
+          xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
+          yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+          margin: {{ t: 60, r: 40, b: 60, l: 60 }},
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        }};
+      }}
 
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
