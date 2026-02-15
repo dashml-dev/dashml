@@ -102,6 +102,9 @@ DASHML_TO_SUPERSET_VIZ = {
     "bar": "echarts_timeseries",  # ECharts timeseries with bar transform
     "line": "echarts_timeseries",  # ECharts timeseries with line
     "scatter": "echarts_timeseries_scatter",  # ECharts scatter (supports any x-axis)
+    "bubble": "bubble_v2",  # ECharts bubble chart (scatter with size)
+    "heatmap": "heatmap_v2",  # Heatmap (2D grid with color intensity)
+    "box": "box_plot",  # Box plot (distribution: min, Q1, median, Q3, max)
     "pie": "pie",
     "area": "echarts_area",
     "histogram": "histogram_v2",  # Modern histogram viz type
@@ -386,8 +389,8 @@ class SupersetTransformer(Transformer):
             if csrf_response.status_code == 200:
                 self.csrf_token = csrf_response.json().get("result")
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            self.warn(f"Failed to refresh CSRF token: {e}")
         return False
 
     def _build_api_url(self, endpoint: str, resource_id: str = None) -> str:
@@ -433,8 +436,8 @@ class SupersetTransformer(Transformer):
                     update_response = self.session.put(chart_url, headers=self._get_headers(), json={"dashboards": dashboards})
                     return update_response.status_code in [200, 201]
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            self.warn(f"Failed to associate chart {chart_id} with dashboard {dashboard_id}: {e}")
         return False
 
     def _create_or_get_dataset_csv(self, csv_path: str) -> bool:
@@ -529,7 +532,8 @@ class SupersetTransformer(Transformer):
                     try:
                         response_data = response.json()
                         print(f"  Upload response: {response_data}")
-                    except:
+                    except Exception:
+                        # Response may not be JSON; continue without printing
                         pass
 
                     # The CSV upload creates a table, but we need to create a dataset from it
@@ -565,7 +569,7 @@ class SupersetTransformer(Transformer):
                         print(f"  Dataset creation failed: {dataset_response.status_code}")
                         try:
                             print(f"  Error: {dataset_response.json()}")
-                        except:
+                        except Exception:
                             print(f"  Error: {dataset_response.text[:500]}")
 
                     print(f"  Waiting for dataset to be created...")
@@ -783,7 +787,7 @@ class SupersetTransformer(Transformer):
                 try:
                     error_data = db_response.json()
                     print(f"  Error: {error_data}")
-                except:
+                except Exception:
                     print(f"  Error: {db_response.text[:500]}")
                 return None
 
@@ -879,7 +883,7 @@ class SupersetTransformer(Transformer):
                 try:
                     error_data = db_response.json()
                     print(f"  Error: {error_data}")
-                except:
+                except Exception:
                     print(f"  Error: {db_response.text[:500]}")
                 return None
 
@@ -913,8 +917,8 @@ class SupersetTransformer(Transformer):
                 if "result" in result and len(result["result"]) > 0:
                     data = result["result"][0].get("data", [])
                     return [row.get(column) for row in data if row.get(column) is not None]
-        except Exception:
-            pass
+        except Exception as e:
+            self.warn(f"Failed to get unique values for column '{column}': {e}")
         return []
 
     def _find_existing_dashboard(self, title: str) -> Optional[int]:
@@ -927,8 +931,8 @@ class SupersetTransformer(Transformer):
                 for dashboard in dashboards:
                     if dashboard.get("dashboard_title") == title:
                         return dashboard.get("id")
-        except Exception:
-            pass
+        except Exception as e:
+            self.warn(f"Failed to find existing dashboard '{title}': {e}")
         return None
 
     def _set_dashboard_colors(self, dashboard_id: int, style_config: Dict[str, Any], label_colors: Dict[str, str] = None) -> None:
@@ -1073,9 +1077,9 @@ class SupersetTransformer(Transformer):
                             color_index = i % len(custom_colors)
                             color = custom_colors[color_index]
                             params["label_colors"][str(value)] = color
-                except Exception:
+                except Exception as e:
                     # If we can't get unique values, just use the base color scheme
-                    pass
+                    self.warn(f"Could not apply custom colors for '{category_column}': {e}")
 
         # Add metrics only for chart types that use them
         # Build metric label for orderby
@@ -1170,6 +1174,61 @@ class SupersetTransformer(Transformer):
             elif not sort_field and x_type != "date":
                 # Default: sort strings alphabetically for consistency across transformers
                 params["orderby"] = [[x, True]]
+        elif chart_type == "bubble":
+            # ECharts bubble_v2 - 4D visualization (entity, x, y, size)
+            # Controls: entity (grouping column), x/y/size (metrics), series (optional)
+            size_field = chart.get("size", y)  # Default to y if size not specified
+            bubble_group = group if group else x  # Use group field as entity
+            agg_upper = agg.upper() if agg else "SUM"
+            x_metric = {"label": f"{agg_upper}({x})", "expressionType": "SIMPLE", "column": {"column_name": x}, "aggregate": agg_upper}
+            y_metric = {"label": f"{agg_upper}({y})", "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg_upper}
+            size_metric = {"label": f"{agg_upper}({size_field})", "expressionType": "SIMPLE", "column": {"column_name": size_field}, "aggregate": agg_upper}
+            params["entity"] = bubble_group
+            params["x"] = x_metric
+            params["y"] = y_metric
+            params["size"] = size_metric
+            params["metrics"] = [x_metric, y_metric, size_metric]
+            params["max_bubble_size"] = 25
+        elif chart_type == "heatmap":
+            # Heatmap v2: 2D grid with color intensity
+            # x_axis = x-axis column, groupby = y-axis column, metric = value for color
+            heatmap_y = group if group else y
+            params["x_axis"] = x
+            params["groupby"] = [heatmap_y]  # Y-axis dimension (multi=false but still array)
+            # Metric for the value (color intensity)
+            if agg.upper() == "COUNT":
+                params["metric"] = {
+                    "expressionType": "SQL",
+                    "label": f"COUNT({y})",
+                    "sqlExpression": f"COUNT({y})"
+                }
+            else:
+                params["metric"] = {
+                    "expressionType": "SIMPLE",
+                    "column": {"column_name": y},
+                    "aggregate": agg.upper(),
+                    "label": f"{agg.upper()}({y})"
+                }
+            params["linear_color_scheme"] = "blue_white_yellow"
+            params["normalize_across"] = "heatmap"
+            # Apply sorting
+            if sort_field == "y":
+                params["sort_by_metric"] = True
+                params["order_desc"] = sort_order == "desc"
+        elif chart_type == "box":
+            # Box plot: shows distribution (min, Q1, median, Q3, max)
+            # x = grouping column, y = values to compute distribution
+            # boxplotOperator post-processing needs metrics to know which columns
+            # to compute percentile statistics on
+            params["groupby"] = [x]  # Group by x to show separate boxes
+            params["columns"] = []  # Distribution column provided via metrics
+            params["metrics"] = [{
+                "label": y,
+                "expressionType": "SIMPLE",
+                "column": {"column_name": y},
+                "aggregate": "AVG"
+            }]
+            params["whiskerOptions"] = "Tukey"
         elif chart_type == "histogram":
             # Histogram v2 uses different params than legacy histogram
             # NOTE: Superset uses numpy's exact bin calculation (data_range / bins),
@@ -1184,8 +1243,10 @@ class SupersetTransformer(Transformer):
         elif chart_type == "geo":
             # World map choropleth
             # x = country column, y = metric column
-            params["entity"] = x  # Column containing country names
-            params["country_fieldtype"] = "name"  # Using country names (not codes)
+            # geo_format option: "name" (full names), "cca2" (2-letter), "cca3" (3-letter)
+            geo_format = chart.get("geo_format", "cca2")  # Default to 2-letter codes (US, GB, etc.)
+            params["entity"] = x  # Column containing country names/codes
+            params["country_fieldtype"] = geo_format
             # Build metric for the value to color by
             if agg.upper() == "COUNT":
                 params["metric"] = {
@@ -1212,6 +1273,18 @@ class SupersetTransformer(Transformer):
                 # Histogram v2 uses a simpler structure
                 query_obj = {
                     "columns": [x],
+                    "groupby": [],
+                    "metrics": [],
+                    "filters": [],
+                    "orderby": [],
+                    "row_limit": RAW_DATA_ROW_LIMIT
+                }
+                query_context_queries.append(query_obj)
+            elif chart_type == "box":
+                # Box plot: fetch raw data, let viz compute statistics client-side
+                # Superset's box_plot buildQuery sets groupby=[] and puts everything in columns
+                query_obj = {
+                    "columns": [x, y],
                     "groupby": [],
                     "metrics": [],
                     "filters": [],
@@ -1246,30 +1319,60 @@ class SupersetTransformer(Transformer):
             elif chart_type == "geo":
                 # World map needs the country column (x) for grouping
                 columns = [x]
+            elif chart_type == "bubble":
+                # Bubble chart: entity column for grouping, 3 metrics for x/y/size
+                columns = [group if group else x]
+                size_f = chart.get("size", y)
+                agg_up = agg.upper() if agg else "SUM"
+                # Build deduplicated metrics for query_context
+                bubble_metrics = {}
+                for col in [x, y, size_f]:
+                    label = f"{agg_up}({col})"
+                    if label not in bubble_metrics:
+                        bubble_metrics[label] = {
+                            "label": label,
+                            "expressionType": "SIMPLE",
+                            "column": {"column_name": col},
+                            "aggregate": agg_up
+                        }
+                query_metrics = list(bubble_metrics.values())
+                query_orderby = []
+                query_context_queries.append({
+                    "columns": columns,
+                    "metrics": query_metrics,
+                    "filters": [],
+                    "orderby": query_orderby,
+                    "row_limit": RAW_DATA_ROW_LIMIT
+                })
+            elif chart_type == "heatmap":
+                # Heatmap needs both x and y (group) for the 2D grid
+                heatmap_y = group if group else y
+                columns = [x, heatmap_y]
             else:
                 columns = [x]
 
-            # Build metrics for query_context
-            # Metric label format: "aggregate__column" (e.g., "sum__total_amount")
-            metric_label = f"{agg.lower()}__{y}"
-            metric_obj = {
-                "label": metric_label,
-                "expressionType": "SIMPLE",
-                "column": {"column_name": y},
-                "aggregate": agg.upper()
-            }
-            query_metrics = [metric_obj]
+            if chart_type != "bubble":
+                # Build metrics for query_context (bubble handles its own above)
+                # Metric label format: "aggregate__column" (e.g., "sum__total_amount")
+                metric_label = f"{agg.lower()}__{y}"
+                metric_obj = {
+                    "label": metric_label,
+                    "expressionType": "SIMPLE",
+                    "column": {"column_name": y},
+                    "aggregate": agg.upper()
+                }
+                query_metrics = [metric_obj]
 
-            # Orderby uses the metric label string
-            query_orderby = [[metric_label, False]]
+                # Orderby uses the metric label string
+                query_orderby = [[metric_label, False]]
 
-            query_context_queries.append({
-                "columns": columns,
-                "metrics": query_metrics,
-                "filters": [],
-                "orderby": query_orderby,
-                "row_limit": RAW_DATA_ROW_LIMIT
-            })
+                query_context_queries.append({
+                    "columns": columns,
+                    "metrics": query_metrics,
+                    "filters": [],
+                    "orderby": query_orderby,
+                    "row_limit": RAW_DATA_ROW_LIMIT
+                })
 
         chart_config = {
             "slice_name": title,
@@ -1279,8 +1382,8 @@ class SupersetTransformer(Transformer):
             "params": json.dumps(params),
         }
 
-        # Skip query_context for pie - let Superset's buildQuery handle it
-        if chart_type != "pie":
+        # Skip query_context for pie, box - let Superset's buildQuery handle it
+        if chart_type not in ("pie", "box"):
             chart_config["query_context"] = json.dumps({
                 "datasource": {"id": self.dataset_id, "type": "table"},
                 "force": False,
@@ -1332,50 +1435,66 @@ class SupersetTransformer(Transformer):
             print(f"⚠ Warning checking for existing dashboard: {e}")
 
         if existing_dashboard_id:
-            # Update existing
+            # Keep dashboard, delete all old charts, update with new charts
             try:
+                print(f"  Cleaning up old charts from dashboard (ID: {existing_dashboard_id})...")
                 detail_url = f"{self.superset_url}/api/v1/dashboard/{existing_dashboard_id}"
                 detail_response = self.session.get(detail_url, headers=self._get_headers())
-                old_chart_ids = []
+
+                # Collect ALL old chart IDs from every source
+                old_chart_ids_set = set()
                 if detail_response.status_code == 200:
-                    # Query the chart API to find ALL charts associated with this dashboard
-                    # This is more reliable than parsing position_json which may not include all charts
+                    dashboard_result = detail_response.json().get("result", {})
+
+                    # From position_json
                     try:
-                        # Use RISON filter to find charts where dashboard ID matches
-                        # Fetch with large page size to get all charts at once
-                        filter_params = {"filters": [{"col": "dashboards", "opr": "rel_m_m", "value": existing_dashboard_id}], "page_size": CHART_LIST_PAGE_SIZE}
-                        filter_rison = prison.dumps(filter_params) if prison else None
-
-                        if filter_rison:
-                            charts_url = f"{self.superset_url}{API_CHART_ENDPOINT}?q={filter_rison}"
-                        else:
-                            # Fallback without page_size if prison not available
-                            charts_url = f"{self.superset_url}{API_CHART_ENDPOINT}"
-
-                        charts_response = self.session.get(charts_url, headers=self._get_headers())
-
-                        if charts_response.status_code == 200:
-                            charts_data = charts_response.json()
-                            old_chart_ids = [chart["id"] for chart in charts_data.get("result", [])]
-                            print(f"  Found {len(old_chart_ids)} existing charts associated with dashboard")
-                    except Exception as e:
-                        print(f"  Warning: Could not fetch associated charts: {e}")
-                        # Fallback to position_json parsing
-                        dashboard_result = detail_response.json().get("result", {})
                         position_json_str = dashboard_result.get("position_json", "{}")
                         position_json_data = json.loads(position_json_str)
                         for key, value in position_json_data.items():
                             if key.startswith("CHART-"):
                                 if isinstance(value, dict) and "meta" in value:
-                                    chart_id = value["meta"].get("chartId")
-                                    if chart_id:
-                                        old_chart_ids.append(chart_id)
+                                    cid = value["meta"].get("chartId")
+                                    if cid:
+                                        old_chart_ids_set.add(cid)
+                    except Exception:
+                        pass
 
-                # Build position_json with NEW chart layout
+                    # From dashboard detail charts field
+                    try:
+                        for cid in dashboard_result.get("charts", []):
+                            if isinstance(cid, int):
+                                old_chart_ids_set.add(cid)
+                            elif isinstance(cid, dict) and "id" in cid:
+                                old_chart_ids_set.add(cid["id"])
+                    except Exception:
+                        pass
+
+                # From chart API association query
+                try:
+                    if prison:
+                        filter_params = {"filters": [{"col": "dashboards", "opr": "rel_m_m", "value": existing_dashboard_id}], "page_size": CHART_LIST_PAGE_SIZE}
+                        charts_url = f"{self.superset_url}{API_CHART_ENDPOINT}?q={prison.dumps(filter_params)}"
+                        charts_response = self.session.get(charts_url, headers=self._get_headers())
+                        if charts_response.status_code == 200:
+                            for chart in charts_response.json().get("result", []):
+                                old_chart_ids_set.add(chart["id"])
+                except Exception:
+                    pass
+
+                # Remove new chart_ids from deletion set (keep them!)
+                charts_to_delete = old_chart_ids_set - set(chart_ids)
+                if charts_to_delete:
+                    print(f"  Deleting {len(charts_to_delete)} old charts...")
+                    for cid in charts_to_delete:
+                        try:
+                            del_url = f"{self.superset_url}{API_CHART_ENDPOINT}{cid}"
+                            self.session.delete(del_url, headers=self._get_headers())
+                        except Exception:
+                            pass
+                    print(f"  ✓ Deleted old charts")
+
+                # Update dashboard with new position_json
                 position_json = self._build_position_json(chart_ids)
-
-                # Update dashboard with just position_json
-                # Charts will be extracted from position_json automatically by Superset
                 update_config = {
                     "position_json": json.dumps(position_json)
                 }
@@ -1383,62 +1502,12 @@ class SupersetTransformer(Transformer):
 
                 if update_response.status_code not in [200, 201]:
                     print(f"✗ Failed to update dashboard: {update_response.status_code}")
-                    try:
-                        print(f"  Error: {update_response.json()}")
-                    except:
-                        print(f"  Error: {update_response.text[:500]}")
                     return None
-
-                # Delete old chart references that are NOT in the new chart_ids list
-                # This removes duplicates and charts that are no longer needed
-                if old_chart_ids:
-                    charts_to_remove = [cid for cid in old_chart_ids if cid not in chart_ids]
-                    if charts_to_remove:
-                        print(f"  Removing {len(charts_to_remove)} old/duplicate charts...")
-                        try:
-                            # Use bulk delete with RISON encoding
-                            if prison:
-                                # Use prison library for RISON encoding
-                                rison_encoded = prison.dumps(charts_to_remove)
-                            else:
-                                # Manual RISON encoding: [1,2,3] -> !(1,2,3)
-                                rison_encoded = f"!({','.join(map(str, charts_to_remove))})"
-
-                            delete_url = f"{self.superset_url}{API_CHART_ENDPOINT}?q={rison_encoded}"
-                            delete_response = self.session.delete(delete_url, headers=self._get_headers())
-
-                            if delete_response.status_code == 200:
-                                print(f"  ✓ Removed {len(charts_to_remove)} old/duplicate charts")
-                            else:
-                                print(f"  ✗ Bulk delete failed ({delete_response.status_code}), trying individual deletes...")
-                                # Fallback to individual deletes
-                                removed_count = 0
-                                for chart_id in charts_to_remove:
-                                    try:
-                                        single_delete_url = f"{self.superset_url}{API_CHART_ENDPOINT}{chart_id}"
-                                        single_response = self.session.delete(single_delete_url, headers=self._get_headers())
-                                        if single_response.status_code in [200, 204]:
-                                            removed_count += 1
-                                    except Exception:
-                                        pass
-                                if removed_count > 0:
-                                    print(f"  ✓ Removed {removed_count} old/duplicate charts")
-                        except Exception as e:
-                            print(f"  ✗ Failed to delete old charts: {e}")
-
-                # Now associate only the current charts with the dashboard
-                for chart_id in chart_ids:
-                    self._associate_chart_with_dashboard(chart_id, existing_dashboard_id)
 
                 print(f"✓ Updated dashboard with {len(chart_ids)} charts")
                 return existing_dashboard_id
             except Exception as e:
                 print(f"✗ Failed to update dashboard: {e}")
-                try:
-                    if hasattr(e, 'response') and e.response:
-                        print(f"  Error details: {e.response.text[:500]}")
-                except:
-                    pass
                 return None
         else:
             # Create new
@@ -1472,7 +1541,7 @@ class SupersetTransformer(Transformer):
                         print(f"✗ Failed to add charts: {update_response.status_code}")
                         try:
                             print(f"  Error: {update_response.json()}")
-                        except:
+                        except Exception:
                             print(f"  Error: {update_response.text[:500]}")
                         # Don't fail - dashboard is created, just without charts
                         print(f"  Dashboard created but charts not added. You can add them manually.")
@@ -1485,7 +1554,8 @@ class SupersetTransformer(Transformer):
                 try:
                     if hasattr(e, 'response') and e.response:
                         print(f"  Error details: {e.response.text[:500]}")
-                except:
+                except Exception:
+                    # Suppress secondary errors when printing error details
                     pass
                 return None
 

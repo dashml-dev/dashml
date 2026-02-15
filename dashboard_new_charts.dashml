@@ -1,5 +1,5 @@
 version: 0.000000001
-title: "New Chart Types Demo"
+title: "All Chart Types Demo"
 style: "styles/dracula.dmls"
 
 data:
@@ -9,7 +9,7 @@ data:
 pages:
   - id: "basic"
     title: "📊 Basic Charts"
-    description: "Original chart types (bar, line, scatter, pie)"
+    description: "Bar, line, scatter, pie"
     charts:
       - id: "bar_example"
         type: "bar"
@@ -25,9 +25,23 @@ pages:
         y: "sales"
         agg: "sum"
 
-  - id: "new"
-    title: "✨ New Chart Types"
-    description: "Priority 1 additions (area, histogram)"
+      - id: "scatter_example"
+        type: "scatter"
+        title: "Scatter Plot"
+        x: "date"
+        y: "sales"
+        agg: "mean"
+
+      - id: "pie_example"
+        type: "pie"
+        title: "Pie Chart"
+        x: "country"
+        y: "sales"
+        agg: "sum"
+
+  - id: "distributions"
+    title: "📈 Distributions"
+    description: "Area, histogram, box"
     charts:
       - id: "area_example"
         type: "area"
@@ -41,11 +55,16 @@ pages:
         title: "Histogram - Sales Distribution"
         x: "sales"
         y: "sales"
-        agg: "count"
 
-  - id: "advanced"
-    title: "📊 Advanced Charts"
-    description: "Stacked and grouped bar charts"
+      - id: "box_example"
+        type: "box"
+        title: "Box Plot - Sales by Country"
+        x: "country"
+        y: "sales"
+
+  - id: "grouped"
+    title: "📊 Grouped Charts"
+    description: "Stacked bar, grouped bar, heatmap"
     charts:
       - id: "stacked_example"
         type: "stacked_bar"
@@ -61,4 +80,32 @@ pages:
         x: "country"
         y: "sales"
         group: "product"
+        agg: "sum"
+
+      - id: "heatmap_example"
+        type: "heatmap"
+        title: "Heatmap - Sales by Country and Product"
+        x: "country"
+        y: "sales"
+        group: "product"
+        agg: "sum"
+
+  - id: "special"
+    title: "🌍 Special Charts"
+    description: "Bubble, geo"
+    charts:
+      - id: "bubble_example"
+        type: "bubble"
+        title: "Bubble Chart - Sales by Country"
+        group: "country"
+        x: "sales"
+        y: "sales"
+        size: "sales"
+        agg: "sum"
+
+      - id: "geo_example"
+        type: "geo"
+        title: "World Map - Sales by Country"
+        x: "country"
+        y: "sales"
         agg: "sum"

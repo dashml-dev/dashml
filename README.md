@@ -1,51 +1,28 @@
-# DashML Playground
+# DashML
 
-**DashML** - A declarative language for data visualization dashboards that compiles to multiple platforms.
+A declarative language for data visualization dashboards that compiles to multiple platforms.
 
-## ⚠️ Active Development
+Write your dashboard spec once in `.dashml` format, then compile it to **Streamlit**, **Plotly**, **Observable Plot**, or **Apache Superset**.
 
-This repository contains both the **legacy runtime architecture** and the **new compiler architecture**.
+## Quick Start
 
-### Current Implementation: `dashml_new/` ✅
-
-The active implementation is in the `dashml_new/` directory. This is a **build-time compiler** that generates standalone code.
-
-**Documentation:**
-- **[Main README](dashml_new/README.md)** - Complete guide to DashML
-- **[Chart Types Roadmap](dashml_new/CHART_TYPES_ROADMAP.md)** - Supported chart types and future plans
-- **[TypedDict Architecture](dashml_new/TYPEDDICT_IR.md)** - Type system design
-
-**Quick Start:**
 ```bash
-cd dashml_new
-
-# Generate Streamlit app
-python -m dashml_new.cli dashboard.dashml --backend streamlit --output app.py
+# Generate a Streamlit app
+python -m dashml_new.cli build dashboard.dashml --target streamlit --output app.py
 streamlit run app.py
 
-# Generate Plotly HTML
-python -m dashml_new.cli dashboard.dashml --backend plotly --output dashboard.html
+# Generate a standalone Plotly HTML dashboard
+python -m dashml_new.cli build dashboard.dashml --target plotly --output dashboard.html
 
-# Generate Observable Plot HTML
-python -m dashml_new.cli dashboard.dashml --backend observable --output dashboard.html
+# Generate an Observable Plot HTML dashboard
+python -m dashml_new.cli build dashboard.dashml --target observable --output dashboard.html
+
+# Create a dashboard directly in Apache Superset
+python -m dashml_new.cli build dashboard.dashml --target superset \
+  --superset-user admin --superset-password admin
 ```
 
-### Legacy Implementation: Root Directory ⚠️ Deprecated
-
-The files in the playground root (`dashml/`, `js/`, `app.py`, `index.html`, etc.) are from the **old runtime architecture** and are no longer actively developed.
-
-**Old approach**: Runtime interpreter that materializes data
-**New approach**: Build-time compiler that generates standalone code
-
-## What is DashML?
-
-DashML is a declarative language for defining analytics dashboards. Write your dashboard spec once in `.dashml` format, then compile it to:
-
-- **Streamlit** (Python) - Interactive data apps
-- **Plotly** (HTML/JS) - Standalone web dashboards
-- **Observable Plot** (HTML/JS) - Modern web visualizations
-
-### Example Spec
+## Example
 
 ```yaml
 version: 0.1
@@ -63,43 +40,23 @@ charts:
     x: "country"
     y: "sales"
     agg: "sum"
+    sort: "y"
+    sort_order: "desc"
+    limit: 10
 ```
-
-Compile to Streamlit:
-```bash
-python -m dashml_new.cli dashboard.dashml --backend streamlit --output app.py
-```
-
-## Supported Features
-
-- ✅ **8 chart types**: bar, line, scatter, pie, area, histogram, stacked_bar, grouped_bar
-- ✅ **Multi-page dashboards**: Organize charts into pages
-- ✅ **Theme system**: 6 built-in themes (Dracula, Nord, Gruvbox, etc.)
-- ✅ **3 backends**: Streamlit, Plotly, Observable Plot
-- ✅ **CSV data sources**: Load data from CSV files
-- ✅ **Aggregations**: sum, mean, count
 
 ## Documentation
 
-All current documentation is in `dashml_new/`:
+- **[User Guide](dashml_new/README.md)** - Full specification reference, chart types, CLI, themes
+- **[Architecture](ARCHITECTURE.md)** - System design, compiler pipeline, type system
 
-1. **[README.md](dashml_new/README.md)** - Complete user guide
-2. **[CHART_TYPES_ROADMAP.md](dashml_new/CHART_TYPES_ROADMAP.md)** - Chart implementation status
-3. **[TYPEDDICT_IR.md](dashml_new/TYPEDDICT_IR.md)** - Architecture details
+## Key Concepts
 
-## Architecture
-
-DashML follows **hexagonal architecture** principles:
-
-```
-.dashml spec → Parser → Validator → Transformer → Generated Code
-                                         ↓
-                            ┌────────────┼────────────┐
-                            ↓            ↓            ↓
-                        Streamlit    Plotly    Observable
-```
-
-**Key principle**: DashML never materializes data. It only generates code that will load data at runtime.
+- **Compiler, not runtime** - DashML generates standalone code; it never loads or touches your data
+- **12 chart types** - bar, line, scatter, pie, area, histogram, stacked_bar, grouped_bar, bubble, heatmap, box, geo
+- **3 data sources** - CSV, SQL (PostgreSQL/MySQL/SQLite), Google BigQuery
+- **4 backends** - Streamlit, Plotly, Observable Plot, Apache Superset
+- **6 built-in themes** - Dracula, Nord, Gruvbox, Monokai, One Dark, Solarized Light
 
 ## Authors
 

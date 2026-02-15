@@ -117,8 +117,7 @@ class StreamlitTransformer(Transformer):
     def _generate_imports(self, data_type: str = "csv") -> str:
         imports = """import streamlit as st
 import pandas as pd
-import altair as alt
-import plotly.express as px"""
+import altair as alt"""
 
         if data_type == "sql":
             imports += "\nfrom sqlalchemy import create_engine"
@@ -386,6 +385,17 @@ import plotly.express as px"""
             if chart_type in ["stacked_bar", "grouped_bar"] and group:
                 code_parts.append(f'    # Aggregate: {agg}({y}) group by {x} and {group}')
                 code_parts.append(f'    chart_data = chart_df.groupby(["{x}", "{group}"])["{y}"].{agg_method}().reset_index()')
+            elif chart_type == "bubble" and group:
+                size_field = chart.get("size", y)
+                # Bubble: aggregate x, y, size independently grouped by group field
+                # Deduplicate metrics (e.g. x and size may be the same column)
+                metrics = {x: agg_method, y: agg_method, size_field: agg_method}
+                # Cast metric columns to numeric before aggregation
+                for col in metrics:
+                    code_parts.append(f'    chart_df["{col}"] = pd.to_numeric(chart_df["{col}"], errors="coerce")')
+                agg_dict_str = ", ".join(f'"{k}": "{v}"' for k, v in metrics.items())
+                code_parts.append(f'    # Bubble: aggregate {x}, {y}, {size_field} group by {group}')
+                code_parts.append(f'    chart_data = chart_df.groupby("{group}").agg({{{agg_dict_str}}}).reset_index()')
             else:
                 code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
                 code_parts.append(f'    chart_data = chart_df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
@@ -448,6 +458,47 @@ import plotly.express as px"""
     ).properties(title="{title}")
     st.altair_chart(c, use_container_width=True)''')
 
+        elif chart_type == "bubble":
+            size_field = chart.get("size", y)  # Default to y if size not specified
+            if group:
+                code_parts.append(f'''    # Bubble: 4D visualization (group, x, y, size)
+    c = alt.Chart(chart_data).mark_circle().encode(
+        x=alt.X("{x}:Q"),
+        y=alt.Y("{y}:Q"),
+        size=alt.Size("{size_field}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_field}")),
+        color=alt.Color("{group}:N", legend=alt.Legend(title="{group}")),
+        tooltip=["{group}", "{x}", "{y}", "{size_field}"]
+    ).properties(title="{title}")
+    st.altair_chart(c, use_container_width=True)''')
+            else:
+                code_parts.append(f'''    # Bubble: scatter with size encoding
+    c = alt.Chart(chart_data).mark_circle(color="{primary_color}").encode(
+        x=alt.X("{x}:Q"),
+        y="{y}",
+        size=alt.Size("{size_field}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_field}")),
+        tooltip=["{x}", "{y}", "{size_field}"]
+    ).properties(title="{title}")
+    st.altair_chart(c, use_container_width=True)''')
+
+        elif chart_type == "heatmap":
+            # Heatmap needs aggregation by both x and y (like grouped bars)
+            # The 'group' field serves as the y-axis categories
+            heatmap_y = chart.get("group", y)  # Use group as y-axis if specified
+            value_field = y  # The value to aggregate for color
+            code_parts.append(f'''    # Heatmap: 2D grid with color intensity
+    # Re-aggregate for heatmap (group by both x and y)
+    heatmap_data = chart_df.groupby(["{x}", "{heatmap_y}"])["{value_field}"].{agg}().reset_index()
+    c = alt.Chart(heatmap_data).mark_rect().encode(
+        x=alt.X("{x}:N", sort=None),
+        y=alt.Y("{heatmap_y}:N"),
+        color=alt.Color("{value_field}:Q",
+            scale=alt.Scale(scheme="blues"),
+            legend=alt.Legend(title="{value_field}")
+        ),
+        tooltip=["{x}", "{heatmap_y}", "{value_field}"]
+    ).properties(title="{title}")
+    st.altair_chart(c, use_container_width=True)''')
+
         elif chart_type == "pie":
             # Use secondary colors from theme for categorical data
             code_parts.append(f'''    # Use theme secondary colors for pie chart
@@ -477,6 +528,16 @@ import plotly.express as px"""
         x=alt.X("{x}:Q", bin=alt.Bin(maxbins={bins})),
         y="count()",
         tooltip=["count()"]
+    ).properties(title="{title}")
+    st.altair_chart(c, use_container_width=True)''')
+
+        elif chart_type == "box":
+            # Box plot: shows distribution (min, Q1, median, Q3, max)
+            code_parts.append(f'''    # Box plot: distribution by {x}
+    c = alt.Chart(chart_df).mark_boxplot(color="{primary_color}").encode(
+        x=alt.X("{x}:N"),
+        y=alt.Y("{y}:Q"),
+        tooltip=["{x}"]
     ).properties(title="{title}")
     st.altair_chart(c, use_container_width=True)''')
 
@@ -512,26 +573,62 @@ import plotly.express as px"""
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "geo":
-            # Choropleth map using Plotly
+            # Choropleth map using Altair with world topojson
             code_parts.append(f'''    # Geo chart: choropleth map colored by {y}
-    fig = px.choropleth(
-        chart_data,
-        locations="{x}",
-        locationmode="country names",
-        color="{y}",
-        hover_name="{x}",
-        color_continuous_scale="Blues",
-        title="{title}"
+    # Country name normalization (map common variations to topojson names)
+    country_name_map = {{
+        "USA": "United States of America",
+        "US": "United States of America",
+        "United States": "United States of America",
+        "UK": "United Kingdom",
+        "Britain": "United Kingdom",
+        "Great Britain": "United Kingdom",
+        "Russia": "Russian Federation",
+        "South Korea": "Korea, Republic of",
+        "Korea": "Korea, Republic of",
+        "North Korea": "Korea, Democratic People's Republic of",
+        "Iran": "Iran, Islamic Republic of",
+        "Syria": "Syrian Arab Republic",
+        "Venezuela": "Venezuela, Bolivarian Republic of",
+        "Bolivia": "Bolivia, Plurinational State of",
+        "Tanzania": "Tanzania, United Republic of",
+        "Vietnam": "Viet Nam",
+        "Laos": "Lao People's Democratic Republic",
+        "Czech Republic": "Czechia",
+        "Moldova": "Moldova, Republic of",
+        "Taiwan": "Taiwan, Province of China",
+    }}
+
+    # Normalize country names in chart_data
+    chart_data["{x}_normalized"] = chart_data["{x}"].apply(
+        lambda x: country_name_map.get(x, x) if pd.notna(x) else x
     )
-    fig.update_layout(
-        geo=dict(
-            showframe=False,
-            showcoastlines=True,
-            projection_type="natural earth"
+
+    # Load world countries topojson (has country names in properties.name)
+    countries_url = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"
+    countries = alt.topo_feature(countries_url, "countries")
+
+    # Create choropleth map
+    c = alt.Chart(countries).mark_geoshape(
+        stroke="#fff",
+        strokeWidth=0.5
+    ).encode(
+        color=alt.Color("{y}:Q",
+            scale=alt.Scale(scheme="blues"),
+            legend=alt.Legend(title="{y}")
         ),
-        margin=dict(l=0, r=0, t=40, b=0)
+        tooltip=["properties.name:N", "{y}:Q"]
+    ).transform_lookup(
+        lookup="properties.name",
+        from_=alt.LookupData(data=chart_data, key="{x}_normalized", fields=["{y}"])
+    ).project(
+        type="naturalEarth1"
+    ).properties(
+        title="{title}",
+        width=800,
+        height=450
     )
-    st.plotly_chart(fig, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True)''')
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')

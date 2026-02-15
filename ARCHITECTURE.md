@@ -1,414 +1,207 @@
 # DashML Architecture
 
-**Date:** 29 November 2025  
-**Author:** Dawid Olejniczak  
-**Based on:** Architectural Memo (29 Nov 2025)
+## Overview
+
+DashML is a build-time compiler that takes a `.dashml` YAML specification and generates standalone dashboard code for one of four target platforms. The core never loads, queries, or materializes data.
+
+```
+.dashml (YAML)
+     |
+     v
+  Parser (yaml.safe_load)
+     |
+     v
+  Validator (semantic checks)
+     |
+     v
+  Validated spec (plain Python dict, annotated with TypedDict)
+     |
+     +---> Streamlit Transformer ---> Python code (Streamlit + Altair)
+     +---> Plotly Transformer ------> HTML + JS (Plotly.js)
+     +---> Observable Transformer --> HTML + JS (Observable Plot + D3)
+     +---> Superset Transformer ----> REST API calls (creates dashboard directly)
+```
+
+Data loading, aggregation, filtering, and rendering all happen in the generated code at runtime, not during compilation.
 
 ---
 
-## 🎯 Architectural Style
-
-**Microkernel (Plugin) Architecture** with **Compiler Pipeline**
+## Project Structure
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│                    DashML CORE                            │
-│                  (Microkernel)                            │
-│                                                           │
-│   .dashml → Parser → AST → IR Builder → IR               │
-│                                                           │
-│   Responsibilities:                                       │
-│   - Parse YAML                                            │
-│   - Validate structure                                    │
-│   - Build IR (semantic model)                             │
-│   - Version management                                    │
-│                                                           │
-│   NEVER:                                                  │
-│   - Loads data                                            │
-│   - Executes queries                                      │
-│   - Materializes results                                  │
-└───────────────────────────────────────────────────────────┘
-                            │
-                            │ IR (Intermediate Representation)
-                            │
-        ┌───────────────────┼───────────────────┐
-        │                   │                   │
-        ↓                   ↓                   ↓
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   Streamlit  │    │    Plotly    │    │    Looker    │
-│   Backend    │    │   Backend    │    │   Backend    │
-│   (Plugin)   │    │   (Plugin)   │    │   (Plugin)   │
-└──────────────┘    └──────────────┘    └──────────────┘
-        │                   │                   │
-        ↓                   ↓                   ↓
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ Generated    │    │ Generated    │    │ Generated    │
-│ Python code  │    │ HTML + JSON  │    │ LookML       │
-│              │    │ config       │    │              │
-│ + Live       │    │              │    │ + Dashboard  │
-│ queries      │    │ + Browser    │    │ tiles        │
-│              │    │ queries      │    │              │
-└──────────────┘    └──────────────┘    └──────────────┘
-        │                   │                   │
-        ↓                   ↓                   ↓
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  Streamlit   │    │   Browser    │    │   Looker     │
-│  runtime     │    │   runtime    │    │   runtime    │
-│              │    │              │    │              │
-│  EXECUTES    │    │  EXECUTES    │    │  EXECUTES    │
-│  QUERIES     │    │  QUERIES     │    │  QUERIES     │
-└──────────────┘    └──────────────┘    └──────────────┘
+dashml_new/
+  core/
+    engine.py          # Orchestrates parse -> validate -> transform
+    parser.py          # YAML loading via yaml.safe_load
+    validator.py       # Semantic validation of specs
+    types.py           # TypedDict definitions for type hints
+    watcher.py         # File watcher for watch mode (polling-based)
+
+  transformers/
+    base.py            # Abstract Transformer interface
+    registry.py        # Name-based transformer registry
+    constants.py       # Shared constants (chart categories, colors, filter ops)
+    streamlit.py       # Streamlit + Altair code generator
+    plotly.py          # Plotly.js HTML generator
+    observable.py      # Observable Plot + D3 HTML generator
+    superset.py        # Superset REST API integration
+
+  cli.py               # CLI entry point (build, list, watch commands)
 ```
 
 ---
 
-## 🧠 Core Principle: DashML NEVER Returns Data
+## Core
 
-### What DashML Core Does:
+### Parser (`core/parser.py`)
 
-✅ Parses `.dashml` YAML files  
-✅ Validates semantic correctness  
-✅ Builds IR (Intermediate Representation)  
-✅ Passes IR to backends  
+Loads a `.dashml` file using `yaml.safe_load` and returns a plain Python dictionary. No AST or intermediate representation classes are constructed.
 
-### What DashML Core NEVER Does:
+### Validator (`core/validator.py`)
 
-❌ Loads data from sources  
-❌ Executes SQL queries  
-❌ Materializes DataFrames  
-❌ Passes data rows to backends  
-❌ Aggregates or transforms data  
+Validates the parsed dict for semantic correctness:
 
-**Why?** DashML is purely semantic. It describes WHAT to query, not the results.
+- Required top-level fields: `version`, `data`
+- Must have either `charts` or `pages`
+- Chart validation: required `id`, `type`, `x`, `y`; type must be one of 12 supported types
+- Data source validation: `csv` requires `path`; `sql` requires `path` in `schema.table` format; `bigquery` requires `path` in `dataset.table` format
+- Aggregation must be `sum`, `mean`, or `count`
+- Filter operators must be one of `eq`, `ne`, `gt`, `lt`, `gte`, `lte`, `in`, `contains`
+- `stacked_bar` and `grouped_bar` require a `group` field
+- `bubble` requires a `size` field
 
----
+The validator never checks whether data files exist or whether columns are valid. It validates structure only.
 
-## 📊 IR (Intermediate Representation)
+### Type System (`core/types.py`)
 
-The IR is the **heart of DashML** - a backend-neutral logical model.
+Uses `TypedDict` to annotate the spec dictionary. This provides IDE autocomplete and static type checking via mypy with zero runtime overhead. The parsed YAML dict flows through the entire system without conversion.
 
-### IR Contains:
+Key types:
+- `DashMLSpec` - top-level spec
+- `ChartSpec` - individual chart configuration
+- `PageSpec` - page in multi-page dashboards
+- `DataSpec` - data source configuration
+- `FilterSpec` - filter condition
+- `StyleColors` - theme color definitions
 
-```python
-IR(
-    version="0.0.1",
-    title="My Dashboard",
-    datasets={
-        "sales": Dataset(
-            id="sales",
-            type="csv",
-            source="data/sales.csv",
-            schema={"date": "datetime", "amount": "float"}
-        )
-    },
-    charts=[
-        Chart(
-            id="sales_by_region",
-            type=ChartType.BAR,
-            dataset_id="sales",
-            x_dimension=Dimension("region", "region", "string"),
-            y_measure=Measure("revenue", "amount", AggregationType.SUM),
-            filters=[
-                Filter("date", "gt", "2025-01-01")
-            ]
-        )
-    ]
-)
-```
+All TypedDicts use `total=False` for backward-compatible schema evolution.
 
-### IR Does NOT Contain:
+### Engine (`core/engine.py`)
 
-❌ Actual data rows  
-❌ Pandas DataFrames  
-❌ SQL result sets  
-❌ Materialized aggregations  
-❌ Plotly figure objects  
+Orchestrates the pipeline: load spec, validate, pass to transformer, return generated code.
 
-**IR is query semantics, not query results.**
+### Watcher (`core/watcher.py`)
+
+Polls a file's modification time at a configurable interval (default: 1 second). When a change is detected, invokes a callback to trigger a rebuild.
 
 ---
 
-## 🔌 Backend Plugins
+## Transformers
 
-Each backend is a plugin that:
+### Base Interface (`transformers/base.py`)
 
-1. **Reads IR** (semantic specification)
-2. **Generates code/config** for its platform
-3. **Handles ALL data access** at runtime
+Abstract base class that all transformers implement:
 
-### Backend Responsibilities:
+- `name` (property) - transformer identifier (e.g. `"streamlit"`)
+- `description` (property) - human-readable description
+- `build(spec)` - takes a validated spec dict, returns generated code as a string
+- `get_run_command(output_path)` - returns the shell command to run the generated output
+- `warn(message)` - emits a non-fatal warning
+- `_load_style_config(spec)` - loads and parses a `.dmls` theme file
 
-| Responsibility | Description |
-|----------------|-------------|
-| **Code Generation** | Transform IR → platform-specific artifacts |
-| **Data Loading** | Execute queries, fetch from sources |
-| **Aggregation** | Perform GROUP BY, SUM, COUNT, etc. |
-| **Filtering** | Apply WHERE clauses |
-| **Rendering** | Create visualizations |
+### Registry (`transformers/registry.py`)
 
-### Backends NEVER Receive:
+A simple dict-based registry that maps transformer names to classes. Transformers are registered at CLI startup. `registry.get("streamlit")` returns a new `StreamlitTransformer` instance.
 
-❌ Pre-loaded data from core  
-❌ Materialized DataFrames  
-❌ Query results  
+### Constants (`transformers/constants.py`)
 
----
+Shared constants used across all transformers:
 
-## 🏗️ Component Architecture
-
-### Core Components
-
-```python
-dashml/
-├── core/                    # Microkernel
-│   ├── __init__.py
-│   ├── parser.py           # YAML → AST → IR
-│   ├── ir.py               # IR data structures
-│   └── compiler.py         # Orchestration
-│
-├── backends/                # Plugins
-│   ├── __init__.py
-│   ├── base.py             # Backend interface
-│   ├── streamlit_backend.py
-│   ├── plotly_backend.py
-│   └── looker_backend.py   # Future
-```
-
-### Core API
-
-```python
-from dashml.core import DashMLCompiler
-
-# Compile .dashml to IR
-compiler = DashMLCompiler()
-ir = compiler.compile("dashboard.dashml")
-
-# IR contains ONLY semantics, NO data
-print(ir.charts[0].y_measure.aggregation)  # AggregationType.SUM
-```
-
-### Backend API
-
-```python
-from dashml.backends import StreamlitBackend
-
-# Backend reads IR and handles data
-backend = StreamlitBackend()
-code = backend.generate(ir)  # Generate Python code
-backend.execute(ir)           # Run dashboard (loads data)
-```
+- `CHARTS_NEED_AGGREGATION` - chart types that require groupby + agg: `bar`, `line`, `area`, `pie`, `stacked_bar`, `grouped_bar`, `scatter`, `bubble`, `heatmap`, `geo`
+- `CHARTS_USE_RAW_DATA` - chart types that skip aggregation: `histogram`, `box`
+- `AGG_METHODS` - mapping of aggregation names to pandas/JS equivalents
+- `SUPPORTED_FILTER_OPS` - valid filter operators
+- `DEFAULT_HISTOGRAM_BINS` - 20
+- `DEFAULT_PRIMARY_COLOR` - `#29b5e8`
+- `DEFAULT_SECONDARY_COLORS` - 10 categorical colors
+- `TEMPORAL_FIELD_NAMES` - heuristic field names used for date detection
 
 ---
 
-## 🔄 Execution Flow
+## Data Flow by Backend
 
-### Design-Time (Development)
+### Streamlit Transformer
 
-```
-User edits dashboard.dashml
-         ↓
-DashML Core compiles to IR
-         ↓
-Backend generates code
-         ↓
-Code saved to file or executed
-```
+Generates a single Python file that uses Streamlit for layout and Altair for charts.
 
-### Runtime (Production)
+- **CSV**: `pd.read_csv()` inline. Column types inferred from pandas dtypes with fallback date detection.
+- **SQL**: `sqlalchemy.create_engine()` + `pd.read_sql()`. Column types detected from `information_schema.columns`.
+- **BigQuery**: `google.cloud.bigquery.Client` + `pd.read_sql()`. Column types detected from `INFORMATION_SCHEMA.COLUMNS`.
 
-```
-User opens dashboard
-         ↓
-Backend code executes
-         ↓
-Backend loads data from sources
-         ↓
-Backend aggregates & filters
-         ↓
-Backend renders charts
-```
+Multi-page dashboards render as `st.tabs()`.
 
-**DashML Core is NOT involved at runtime.**
+### Plotly Transformer
 
----
+Generates standalone HTML with embedded JavaScript using Plotly.js.
 
-## 🔥 Hot Reload
+- **CSV**: Client-side fetch and parse (simple comma-split parser). Single HTML file.
+- **SQL/BigQuery**: Flask backend (`app.py`) with `/api/data` and `/api/schema` endpoints. Frontend (`index.html`) fetches JSON and renders client-side.
 
-Development mode supports hot reload:
+Aggregation, filtering, sorting, and limiting all happen in JavaScript.
 
-```bash
-dashml dev dashboard.dashml
-```
+### Observable Transformer
 
-**How it works:**
+Generates standalone HTML using Observable Plot (v0.6) and D3.js (v7).
 
-1. Watch `.dashml` file for changes
-2. On change → re-compile to IR
-3. Re-generate backend code
-4. Trigger backend reload (Streamlit auto-reload, browser refresh)
+- **CSV**: Client-side fetch and parse. Single HTML file.
+- **SQL/BigQuery**: Flask backend with API endpoints, same pattern as Plotly.
 
-**Key insight:** Hot reload regenerates CODE, not DATA.
+Pie charts use D3 directly (`d3.pie()`) since Observable Plot has no native pie support. Geo charts load world topology from a CDN.
+
+### Superset Transformer
+
+Does not generate files. Communicates with a Superset instance via REST API.
+
+- **CSV**: Uploads the CSV file to Superset, creates a dataset.
+- **SQL**: References an existing table. Optionally creates a database connection from CLI args.
+- **BigQuery**: Creates a BigQuery database connection using service account credentials.
+
+Charts are created with Superset's `POST /api/v1/chart/` endpoint. Dashboards are created or updated (deduplicated by title). Running the command again cleans up old charts and replaces them.
 
 ---
 
-## 🎯 Why Microkernel?
+## CLI (`cli.py`)
 
-### Advantages:
+Three commands:
 
-| Benefit | Description |
-|---------|-------------|
-| **Separation of Concerns** | Core = semantics, Backends = execution |
-| **Backend Independence** | Add Looker without touching Streamlit code |
-| **No Data Coupling** | Core never depends on pandas, SQL, etc. |
-| **Pluggable** | New backend = new plugin |
-| **Testable** | Test IR generation independently of data |
-| **Scalable** | Core stays small and stable |
+- `build` - compile a `.dashml` spec to the target platform
+- `list` - show registered transformers
+- `watch` - poll the spec file and rebuild on change
 
-### Perfect For:
+The CLI registers the four built-in transformers on startup, parses arguments, loads the spec through the engine, and writes the transformer output to disk (or executes the Superset API calls).
 
-✅ "One language, many runtimes"  
-✅ Diverse backend requirements (Streamlit, Looker, React)  
-✅ Academic demonstration of clean architecture  
-✅ Future extensibility  
+For SQL/BigQuery targets, database configuration is collected from CLI flags and passed to the transformer via `set_db_config()`.
 
 ---
 
-## 📐 Design Decisions
+## Theme System
 
-### 1. No Data in Core
+`.dmls` files are YAML with a `colors` block. The transformer's `_load_style_config()` method reads the file and extracts color values. If no style is specified, default colors from `constants.py` are used.
 
-**Decision:** Core never loads or passes data.
+Color fields: `background`, `card`, `primary`, `text`, `secondary` (array).
 
-**Rationale:**
-- Clean separation of concerns
-- Backends have full control over data access
-- Works with Looker (which expects semantics, not data)
-- More efficient (no unnecessary materialization)
-
-### 2. IR as Common Format
-
-**Decision:** All backends consume IR, not .dashml directly.
-
-**Rationale:**
-- Single source of truth
-- Validation happens once
-- Easy to inspect/debug
-- Can serialize IR for tooling
-
-### 3. Code Generation
-
-**Decision:** Backends generate code, not runtime interpreters.
-
-**Rationale:**
-- Better performance (no interpretation overhead)
-- Easier to debug (generated code is readable)
-- Works with existing tools (Streamlit, React)
-- Hot reload still works (regenerate on change)
-
-### 4. Backend Responsibility for Data
-
-**Decision:** Backends handle ALL data operations.
-
-**Rationale:**
-- Streamlit can use SQLAlchemy directly
-- Plotly can fetch data in browser
-- Looker uses its own engine
-- No need for unified data layer
+The `buttons` field is accepted but not used by any transformer (all emit a warning if it's present).
 
 ---
 
-## 🚀 Future Extensions
+## Design Decisions
 
-### Planned Backends:
+**TypedDict over dataclasses** - The spec is a plain dict throughout. TypedDict provides compile-time type checking and IDE support without any runtime conversion cost.
 
-- **Looker** - Generate LookML
-- **React** - Generate components + API
-- **PowerBI** - Generate PBIX config
-- **Observable** - Generate Observable notebooks
+**No intermediate representation classes** - Unlike a traditional compiler with AST/IR objects, DashML passes the parsed YAML dict directly to transformers. Validation happens on the dict. This keeps the system simple and avoids conversion overhead.
 
-### Planned Core Features:
+**Code generation over runtime interpretation** - Transformers emit standalone code that runs independently of DashML. This makes debugging easier (generated code is readable), works with existing tools, and enables hot reload by regenerating.
 
-- Schema validation
-- Type inference
-- Query optimization hints
-- Multi-dataset joins
-- Calculated fields
-- Dashboard templates
+**Core never touches data** - The validator checks structural correctness only. All data loading, aggregation, filtering, and rendering is the responsibility of the generated code or the target platform.
 
----
-
-## 📚 For Your Thesis
-
-### Key Points to Emphasize:
-
-1. **Clean Architecture**
-   - Microkernel pattern
-   - Plugin system
-   - Separation of concerns
-
-2. **Compiler Pipeline**
-   - YAML → AST → IR → Backend
-   - Similar to LLVM (source → IR → machine code)
-
-3. **Backend Neutrality**
-   - IR works for any platform
-   - No data coupling
-
-4. **Declarative Paradigm**
-   - Describe WHAT, not HOW
-   - Backends handle execution
-
-5. **Production Ready**
-   - Hot reload
-   - Code generation
-   - Extensible design
-
----
-
-## 🎓 Academic Contribution
-
-DashML demonstrates:
-
-✅ **DSL Design** - Proper domain-specific language  
-✅ **Compiler Theory** - Frontend/IR/Backend separation  
-✅ **Software Architecture** - Microkernel pattern  
-✅ **Separation of Concerns** - Semantics vs. execution  
-✅ **Pluggable Systems** - Backend plugins  
-
-**Novel aspect:** A dashboard language that compiles to multiple platforms without touching data.
-
----
-
-## 📖 References
-
-- **Microkernel Architecture**: Tanenbaum, A. S. (1987)
-- **LLVM Compiler**: Lattner & Adve (2004)
-- **Vega-Lite**: Satyanarayan et al. (2017)
-- **LookML**: Looker/Google documentation
-
----
-
-## ✅ Summary
-
-**DashML is:**
-- A semantic declarative language
-- Built on microkernel architecture
-- Using compiler pipeline (YAML → IR → Backend)
-- That never executes queries or materializes data
-- Pushing data responsibility to runtime backends
-- Supporting hot reload through code regeneration
-
-**Backends:**
-- Read IR (semantics only)
-- Generate platform-specific code
-- Handle ALL data access
-- Execute queries at runtime
-
-**This architecture is:**
-- ✅ Scalable
-- ✅ Backend-agnostic
-- ✅ Efficient
-- ✅ Clean
-- ✅ Future-proof
-- ✅ Thesis-worthy
-
+**Polling-based file watcher** - Uses simple mtime polling instead of OS-level file watchers (e.g. inotify/fsevents) to avoid external dependencies.

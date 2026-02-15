@@ -446,6 +446,7 @@ class ObservablePlotTransformer(Transformer):
         sort_field = chart.get("sort")  # Optional: "x" or "y"
         sort_order = chart.get("sort_order", DEFAULT_SORT_ORDER)
         limit = chart.get("limit")  # Optional: max rows after aggregation
+        size_field = chart.get("size")  # Optional: size field for bubble charts
 
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
         secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
@@ -485,21 +486,26 @@ class ObservablePlotTransformer(Transformer):
                 data_code = f"dashmlData.filter(d => {filter_code})"
             else:
                 data_code = "dashmlData"
-        elif chart_type in ["stacked_bar", "grouped_bar"] and group:
-            # For stacked/grouped bars, need to group by both x and group field
+        elif chart_type in ["stacked_bar", "grouped_bar", "heatmap"] and group:
+            # For stacked/grouped bars and heatmap, need to group by both x and group field
             data_code = self._get_aggregation_code_with_group(x, y, group, agg, x_type,
                                                                y_type, filters, sort_field, sort_order, limit)
+        elif chart_type == "bubble" and group:
+            # Bubble chart: 4D visualization - group by group field, aggregate x/y/size independently
+            data_code = self._get_bubble_aggregation_code(group, x, y, size_field or y, agg,
+                                                           filters, sort_field, sort_order, limit)
         else:
             # Aggregate data for other chart types
             data_code = self._get_aggregation_code(x, y, agg, x_type,
-                                                    y_type, filters, sort_field, sort_order, limit)
+                                                    y_type, filters, sort_field, sort_order, limit,
+                                                    size_field=size_field)
 
         # Pie charts use D3 directly instead of Observable Plot
         if chart_type == "pie":
             return self._generate_d3_pie_chart(safe_var_name, x, y, data_code, container_id, colors)
 
         # Generate Observable Plot mark based on chart type
-        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins)
+        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field)
 
         # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
         # TODO: [Magic Values] Extract temporal field names to module-level constant
@@ -594,7 +600,7 @@ class ObservablePlotTransformer(Transformer):
     def _get_aggregation_code(self, x: str, y: str, agg: str, x_type: str = None,
                                y_type: str = None, filters: List = None,
                                sort_field: str = None, sort_order: str = "asc",
-                               limit: int = None) -> str:
+                               limit: int = None, size_field: str = None) -> str:
         """Generate JavaScript code to aggregate data with filtering, sorting, and limiting"""
         if agg == "sum":
             agg_expr = f"d3.sum(v, d => d['{y}'])"
@@ -675,6 +681,41 @@ class ObservablePlotTransformer(Transformer):
 
         # Limit code
         limit_code = f"result = result.slice(0, {limit});" if limit else ""
+
+        # Generate size aggregation for bubble charts
+        if size_field and size_field != y:
+            if agg == "sum":
+                size_agg_expr = f"d3.sum(v, d => d['{size_field}'])"
+            elif agg == "mean":
+                size_agg_expr = f"d3.mean(v, d => d['{size_field}'])"
+            elif agg == "count":
+                size_agg_expr = "v.length"
+            else:
+                size_agg_expr = f"d3.sum(v, d => d['{size_field}'])"
+
+            return f"""(() => {{
+                const effectiveXType = getEffectiveType('{x}', {x_type_js});
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => {filter_code});
+
+                // Cast y values if y_type specified
+                {"filteredData = filteredData.map(d => { const newD = {...d}; " + y_cast + " return newD; });" if y_cast else ""}
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => ({{ {y}: {agg_expr}, {size_field}: {size_agg_expr} }}),
+                    d => d['{x}']
+                ).map(([{x}, vals]) => ({{ {x}, {y}: vals.{y}, {size_field}: vals.{size_field} }}));
+
+                // Sort
+                {sort_code}
+
+                // Limit
+                {limit_code}
+
+                return result;
+            }})()"""
 
         return f"""(() => {{
                 const effectiveXType = getEffectiveType('{x}', {x_type_js});
@@ -816,7 +857,80 @@ class ObservablePlotTransformer(Transformer):
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS) -> str:
+    def _get_bubble_aggregation_code(self, group: str, x: str, y: str, size_field: str, agg: str,
+                                       filters: list = None, sort_field: str = None,
+                                       sort_order: str = "asc", limit: int = None) -> str:
+        """Generate JavaScript code to aggregate data for bubble charts: group by group field, aggregate x/y/size independently"""
+        def agg_expr(field):
+            if agg == "sum":
+                return f"d3.sum(v, d => d['{field}'])"
+            elif agg == "mean":
+                return f"d3.mean(v, d => d['{field}'])"
+            elif agg == "count":
+                return "v.length"
+            else:
+                return f"d3.sum(v, d => d['{field}'])"
+
+        x_agg = agg_expr(x)
+        y_agg = agg_expr(y)
+        size_agg = agg_expr(size_field)
+
+        # Generate filter conditions
+        filter_conditions = []
+        if filters:
+            for f in filters:
+                field = f["field"]
+                op = f["op"]
+                value = json.dumps(f["value"])
+                if op == "eq":
+                    filter_conditions.append(f"d['{field}'] === {value}")
+                elif op == "ne":
+                    filter_conditions.append(f"d['{field}'] !== {value}")
+                elif op == "gt":
+                    filter_conditions.append(f"d['{field}'] > {value}")
+                elif op == "lt":
+                    filter_conditions.append(f"d['{field}'] < {value}")
+                elif op == "gte":
+                    filter_conditions.append(f"d['{field}'] >= {value}")
+                elif op == "lte":
+                    filter_conditions.append(f"d['{field}'] <= {value}")
+                elif op == "in":
+                    filter_conditions.append(f"{value}.includes(d['{field}'])")
+                elif op == "contains":
+                    filter_conditions.append(f"String(d['{field}']).includes({value})")
+
+        filter_code = " && ".join(filter_conditions) if filter_conditions else "true"
+
+        # Sort logic
+        sort_ascending = sort_order == "asc"
+        if sort_field == "y":
+            sort_code = f"result.sort((a, b) => {'1' if sort_ascending else '-1'} * (a.{y} - b.{y}));"
+        else:
+            sort_code = f"result.sort((a, b) => {'1' if sort_ascending else '-1'} * (a.{x} - b.{x}));"
+
+        # Limit code
+        limit_code = f"result = result.slice(0, {limit});" if limit else ""
+
+        return f"""(() => {{
+                // Filter data
+                let filteredData = dashmlData.filter(d => {filter_code});
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => ({{ {x}: {x_agg}, {y}: {y_agg}, {size_field}: {size_agg} }}),
+                    d => d['{group}']
+                ).map(([{group}, vals]) => ({{ {group}, {x}: vals.{x}, {y}: vals.{y}, {size_field}: vals.{size_field} }}));
+
+                // Sort
+                {sort_code}
+
+                // Limit
+                {limit_code}
+
+                return result;
+            }})()"""
+
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None) -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -865,6 +979,69 @@ class ObservablePlotTransformer(Transformer):
                     Plot.ruleY([0])
                 ]"""
 
+        elif chart_type == "bubble":
+            # Bubble chart: 4D visualization (group, x, y, size)
+            size_ref = size_field if size_field else y
+            color_scale_json = str(secondary_colors).replace("'", '"')
+            if group:
+                return f"""marks: [
+                    Plot.dot(data_{data_var}, {{
+                        x: "{x}",
+                        y: "{y}",
+                        fill: "{group}",
+                        r: d => {{
+                            const maxVal = d3.max(data_{data_var}, d => Math.abs(d["{size_ref}"]));
+                            return 5 + (Math.abs(d["{size_ref}"]) / maxVal) * 25;
+                        }},
+                        tip: true
+                    }}),
+                    Plot.text(data_{data_var}, {{
+                        x: "{x}",
+                        y: "{y}",
+                        text: "{group}",
+                        dy: -12,
+                        fontSize: 10
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                color: {{
+                    domain: [...new Set(data_{data_var}.map(d => d.{group}))],
+                    range: {color_scale_json}
+                }}"""
+            else:
+                return f"""marks: [
+                    Plot.dot(data_{data_var}, {{
+                        x: "{x}",
+                        y: "{y}",
+                        fill: "{color}",
+                        r: d => {{
+                            const maxVal = d3.max(data_{data_var}, d => Math.abs(d.{size_ref}));
+                            return 5 + (Math.abs(d.{size_ref}) / maxVal) * 25;
+                        }},
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ]"""
+
+        elif chart_type == "heatmap":
+            # Heatmap: 2D grid with color intensity
+            # Uses group field as y-axis categories if specified
+            heatmap_y = group if group else y
+            return f"""marks: [
+                    Plot.cell(data_{data_var}, {{
+                        x: "{x}",
+                        y: "{heatmap_y}",
+                        fill: "{y}",
+                        tip: true
+                    }})
+                ],
+                color: {{
+                    type: "linear",
+                    scheme: "blues",
+                    legend: true,
+                    label: "{y}"
+                }}"""
+
         elif chart_type == "area":
             return f"""marks: [
                     Plot.areaY(data_{data_var}, {{
@@ -885,6 +1062,18 @@ class ObservablePlotTransformer(Transformer):
                         fill: "{color}",
                         tip: true
                     }})),
+                    Plot.ruleY([0])
+                ]"""
+
+        elif chart_type == "box":
+            # Box plot: shows distribution (min, Q1, median, Q3, max)
+            return f"""marks: [
+                    Plot.boxY(data_{data_var}, {{
+                        x: "{x}",
+                        y: "{y}",
+                        fill: "{color}",
+                        tip: true
+                    }}),
                     Plot.ruleY([0])
                 ]"""
 
@@ -932,16 +1121,41 @@ class ObservablePlotTransformer(Transformer):
                 }}"""
 
         elif chart_type == "geo":
-            # Choropleth map using D3 and world topojson
+            # Choropleth map using Observable Plot with world topojson
             return f"""marks: [
-                    // Note: Geo charts require world topojson data to be loaded
-                    // This creates a simple choropleth colored by country values
+                    // Geo chart with country name normalization
                     Plot.geo(window.worldTopojson, {{
                         fill: d => {{
-                            const countryData = data_{data_var}.find(row =>
-                                row.{x} && d.properties &&
-                                row.{x}.toLowerCase() === (d.properties.name || '').toLowerCase()
-                            );
+                            // Country name normalization map
+                            const countryNameMap = {{
+                                "USA": "United States of America",
+                                "US": "United States of America",
+                                "United States": "United States of America",
+                                "UK": "United Kingdom",
+                                "Britain": "United Kingdom",
+                                "Great Britain": "United Kingdom",
+                                "Russia": "Russian Federation",
+                                "South Korea": "Korea, Republic of",
+                                "Korea": "Korea, Republic of",
+                                "North Korea": "Korea, Democratic People's Republic of",
+                                "Iran": "Iran, Islamic Republic of",
+                                "Syria": "Syrian Arab Republic",
+                                "Venezuela": "Venezuela, Bolivarian Republic of",
+                                "Bolivia": "Bolivia, Plurinational State of",
+                                "Tanzania": "Tanzania, United Republic of",
+                                "Vietnam": "Viet Nam",
+                                "Laos": "Lao People's Democratic Republic",
+                                "Czech Republic": "Czechia",
+                                "Moldova": "Moldova, Republic of",
+                                "Taiwan": "Taiwan, Province of China"
+                            }};
+                            const topoName = d.properties ? d.properties.name : null;
+                            if (!topoName) return null;
+                            const countryData = data_{data_var}.find(row => {{
+                                if (!row.{x}) return false;
+                                const normalizedName = countryNameMap[row.{x}] || row.{x};
+                                return normalizedName.toLowerCase() === topoName.toLowerCase();
+                            }});
                             return countryData ? countryData.{y} : null;
                         }},
                         stroke: "#ccc",
@@ -1286,6 +1500,8 @@ if __name__ == '__main__':
         let columnTypes = {};
         // Load data from Flask API
         let dashmlData = [];
+        // World topojson for geo charts
+        window.worldTopojson = null;
 
         // Get effective type: explicit > schema-detected > undefined
         function getEffectiveType(column, explicitType) {
@@ -1293,13 +1509,17 @@ if __name__ == '__main__':
             return columnTypes[column] || undefined;
         }
 
-        // Fetch schema first, then data
+        // Fetch schema, data, and world topojson in parallel
         Promise.all([
             fetch('/api/schema').then(r => r.json()),
-            fetch('/api/data').then(r => r.json())
+            fetch('/api/data').then(r => r.json()),
+            fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(r => r.json())
         ])
-            .then(([schema, data]) => {
+            .then(([schema, data, worldData]) => {
                 columnTypes = schema;
+
+                // Convert topojson to geojson for Observable Plot
+                window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
 
                 // Parse ISO 8601 date strings to Date objects
                 // Server already cast types, we just need to parse ISO dates

@@ -1,99 +1,196 @@
-# DashML - Declarative Dashboard Markup Language
+# DashML User Guide
 
-DashML is a declarative language for defining analytics dashboards that can be compiled to multiple visualization platforms (Streamlit, Plotly, Observable Plot).
+## Specification Format
 
-## Philosophy
+DashML specs are YAML files with the `.dashml` extension. A spec defines a data source, charts, and optional theming.
 
-- **Write once, deploy anywhere**: Single `.dashml` spec generates code for multiple platforms
-- **No runtime dependencies**: Generated code is standalone and self-contained
-- **Build-time compilation**: DashML is a compiler, not a runtime framework
-- **Hexagonal architecture**: Clean separation between core engine and platform transformers
-
-## Quick Start
-
-```bash
-# Generate Streamlit app
-python -m dashml_new.cli dashboard.dashml --backend streamlit --output app.py
-streamlit run app.py
-
-# Generate Plotly HTML
-python -m dashml_new.cli dashboard.dashml --backend plotly --output dashboard.html
-
-# Generate Observable Plot HTML
-python -m dashml_new.cli dashboard.dashml --backend observable --output dashboard.html
-```
-
-## DashML Specification
-
-### Basic Structure
+### Minimal Example
 
 ```yaml
 version: 0.1
 title: "My Dashboard"
-style: "styles/dracula.dmls"
 
 data:
   type: csv
   path: "data/sales.csv"
 
 charts:
-  - id: "sales_by_country"
+  - id: "sales_chart"
     type: "bar"
-    title: "Sales by Country"
     x: "country"
-    y: "sales"
+    y: "revenue"
     agg: "sum"
 ```
 
-### Data Sources
+### Top-Level Fields
 
-DashML supports multiple data source types:
+| Field | Required | Description |
+|-------|----------|-------------|
+| `version` | Yes | Spec version (string or number) |
+| `title` | No | Dashboard title |
+| `style` | No | Path to a `.dmls` theme file |
+| `data` | Yes | Data source configuration |
+| `charts` | Yes* | Array of chart specs (single-page mode) |
+| `pages` | Yes* | Array of page specs (multi-page mode) |
 
-#### CSV (Default)
+*Must have either `charts` or `pages`, not both.
+
+---
+
+## Data Sources
+
+### CSV
+
 ```yaml
 data:
   type: csv
   path: "data/sales.csv"
 ```
 
-#### SQL (PostgreSQL, MySQL, SQLite)
+Generates a single output file. The generated code loads the CSV at runtime.
+
+### SQL (PostgreSQL, MySQL, SQLite)
+
 ```yaml
 data:
   type: sql
   path: "public.orders"  # schema.table format
 ```
 
-Run with database credentials:
+Build with database credentials:
+
 ```bash
 python -m dashml_new.cli build dashboard.dashml --target plotly --output ./output \
   --db-type postgresql --db-host localhost --db-port 5432 \
   --db-name mydb --db-user user --db-password pass
 ```
 
-#### BigQuery
+Generates a multi-file output: a Flask backend (`app.py`) that queries the database and serves `/api/data`, plus a frontend (`index.html`).
+
+### BigQuery
+
 ```yaml
 data:
   type: bigquery
   path: "dataset.table_name"  # dataset.table format
 ```
 
-Run with BigQuery project:
-```bash
-python -m dashml_new.cli build dashboard.dashml --target plotly --output ./output \
-  --bq-project my-gcp-project
+Build with project credentials:
 
-# Or with service account credentials
+```bash
 python -m dashml_new.cli build dashboard.dashml --target plotly --output ./output \
   --bq-project my-gcp-project --bq-credentials /path/to/service-account.json
 ```
 
-**Note**: For SQL and BigQuery, the generated output includes a Flask backend (`app.py`) that connects to the database and serves data via `/api/data`.
+Same multi-file output as SQL. Row limit: 10,000.
 
-### Multi-Page Dashboards
+### Schema Auto-Detection
+
+For SQL and BigQuery, column types are auto-detected from `INFORMATION_SCHEMA.COLUMNS` and mapped to `date`, `number`, or `string`. For CSV, pandas dtype inference is used with fallback date-string detection. You can override with explicit `x_type` / `y_type` on individual charts.
+
+---
+
+## Chart Types
+
+DashML supports 12 chart types across all 4 backends.
+
+### Charts That Use Aggregation
+
+These charts group data by the `x` field and aggregate the `y` field. The `agg` field is required.
+
+| Type | Description | Required Fields |
+|------|-------------|-----------------|
+| `bar` | Vertical bar chart | `x`, `y`, `agg` |
+| `line` | Line chart with markers | `x`, `y`, `agg` |
+| `scatter` | Scatter plot | `x`, `y`, `agg` |
+| `pie` | Pie chart | `x`, `y`, `agg` |
+| `area` | Filled area chart | `x`, `y`, `agg` |
+| `bubble` | Scatter with size encoding | `x`, `y`, `agg`, `size` |
+| `heatmap` | 2D grid with color intensity | `x`, `y`, `agg`, `group` |
+| `geo` | Choropleth world map | `x`, `y`, `agg` |
+| `stacked_bar` | Stacked bar chart | `x`, `y`, `agg`, `group` |
+| `grouped_bar` | Clustered bar chart | `x`, `y`, `agg`, `group` |
+
+### Charts That Use Raw Data
+
+These charts operate on raw (unaggregated) data. They compute their own statistics.
+
+| Type | Description | Required Fields |
+|------|-------------|-----------------|
+| `histogram` | Distribution histogram | `x`, `y` |
+| `box` | Box plot (min, Q1, median, Q3, max) | `x`, `y` |
+
+### Chart Field Reference
+
+```yaml
+- id: "my_chart"              # Required. Unique identifier (alphanumeric, hyphens, underscores)
+  type: "bar"                  # Required. One of the 12 types above
+  title: "Chart Title"         # Optional. Display title
+  x: "column_name"             # Required. X-axis column
+  y: "column_name"             # Required. Y-axis column
+  agg: "sum"                   # Aggregation function: sum, mean, count
+  group: "category_column"     # Grouping column (required for stacked_bar, grouped_bar, heatmap)
+  size: "numeric_column"       # Size encoding column (required for bubble)
+  x_type: "date"               # Explicit axis type override: date, number, string
+  y_type: "number"             # Explicit y-axis type override
+  bins: 20                     # Number of bins (histogram only, default: 20)
+  sort: "y"                    # Sort by: "x" or "y"
+  sort_order: "desc"           # Sort direction: "asc" (default) or "desc"
+  limit: 10                    # Max rows after aggregation
+  filters:                     # Array of filter conditions
+    - field: "date"
+      op: "gte"
+      value: "2025-01-01"
+```
+
+### Aggregation Functions
+
+| Function | Description |
+|----------|-------------|
+| `sum` | Sum of values |
+| `mean` | Average of values |
+| `count` | Count of rows |
+
+### Filter Operators
+
+Filters are applied before aggregation.
+
+| Operator | Description | Example Value |
+|----------|-------------|---------------|
+| `eq` | Equal | `"Poland"` |
+| `ne` | Not equal | `"Germany"` |
+| `gt` | Greater than | `100` |
+| `lt` | Less than | `50` |
+| `gte` | Greater than or equal | `"2025-01-01"` |
+| `lte` | Less than or equal | `"2025-12-31"` |
+| `in` | In list | `["Poland", "Germany"]` |
+| `contains` | Substring match | `"land"` |
+
+### Sorting
+
+If no explicit `sort` is specified, data is sorted automatically based on the detected type of the x-axis: dates sort chronologically, numbers sort numerically, strings sort alphabetically. Use `sort` and `sort_order` to override.
+
+### Chart Type Details
+
+**bubble** - Uses a `size` field to encode a third dimension as circle radius. The validator requires the `size` field to be present.
+
+**heatmap** - Uses `group` as the y-axis of the grid and `y` as the value for color intensity. Both `x` and `group` should be categorical.
+
+**geo** - Renders a choropleth world map. The `x` field should contain country names. Includes built-in normalization for common country name variations (e.g. "USA" to "United States of America").
+
+**box** - Shows distribution statistics. The `x` field is used as a categorical grouping variable, `y` is the continuous variable whose distribution is shown.
+
+**histogram** - Bins the `x` field and counts occurrences. The `bins` parameter controls the number of bins (default: 20).
+
+---
+
+## Multi-Page Dashboards
+
+Use `pages` instead of `charts` to organize charts into tabbed pages:
 
 ```yaml
 version: 0.1
-title: "Multi-Page Dashboard"
+title: "Analytics Dashboard"
 style: "styles/nord.dmls"
 
 data:
@@ -102,7 +199,7 @@ data:
 
 pages:
   - id: "overview"
-    title: "📊 Overview"
+    title: "Overview"
     description: "High-level metrics"
     charts:
       - id: "total_sales"
@@ -111,9 +208,9 @@ pages:
         y: "sales"
         agg: "sum"
 
-  - id: "details"
-    title: "📈 Details"
-    description: "Detailed breakdown"
+  - id: "trends"
+    title: "Trends"
+    description: "Sales over time"
     charts:
       - id: "sales_trend"
         type: "line"
@@ -122,497 +219,268 @@ pages:
         agg: "sum"
 ```
 
-## Supported Chart Types
+Each page has `id`, `title`, optional `description`, and a `charts` array. Streamlit renders pages as tabs. Plotly and Observable render them as tab navigation. Superset flattens all pages into a single dashboard with chart IDs prefixed by page ID.
 
-DashML supports **8 chart types** fully implemented across all backends:
+---
 
-| Chart Type | Description | Example Use Case | Required Fields |
-|------------|-------------|------------------|-----------------|
-| `bar` | Vertical bar chart | Compare categories | x, y, agg |
-| `line` | Line chart with points | Show trends over time | x, y, agg |
-| `scatter` | Scatter plot | Show correlations | x, y |
-| `pie` | Pie chart | Show proportions | x, y, agg |
-| `area` | Filled area chart | Show cumulative trends | x, y, agg |
-| `histogram` | Distribution histogram | Show data distribution | x |
-| `stacked_bar` | Stacked bar chart | Compare subcategories | x, y, group, agg |
-| `grouped_bar` | Grouped/clustered bars | Compare side-by-side | x, y, group, agg |
+## Themes
 
-### Chart Data Requirements
-
-**Charts need aggregation:**
-- `bar`, `line`, `area`, `pie`, `stacked_bar`, `grouped_bar`
-- Must specify `agg` field: `sum`, `mean`, or `count`
-
-**Charts use raw data:**
-- `scatter`, `histogram`
-- Data is plotted without aggregation
-
-**Charts need grouping:**
-- `stacked_bar`, `grouped_bar`
-- Must specify `group` field to define stacking/grouping dimension
-
-### Chart Field Reference
+DashML uses `.dmls` (DashML Style) files for theming. Reference a theme in your spec:
 
 ```yaml
-- id: "chart_identifier"        # Required: Unique ID
-  type: "bar"                    # Required: Chart type (see table above)
-  title: "Chart Title"           # Optional: Display title
-  x: "column_name"               # Required: X-axis field
-  y: "column_name"               # Required: Y-axis field (except histogram)
-  agg: "sum"                     # Optional: sum|mean|count (required for aggregating charts)
-  group: "category_column"       # Optional: Grouping field (required for stacked/grouped bars)
-  x_type: "date"                 # Optional: Explicit type for x-axis (date|number|string)
+style: "styles/dracula.dmls"
 ```
 
-### Axis Type Detection & Sorting
+### Built-In Themes
 
-DashML automatically detects column types from database schema and sorts data appropriately:
+| Theme | File | Description |
+|-------|------|-------------|
+| Dracula | `styles/dracula.dmls` | Dark purple |
+| Nord | `styles/nord.dmls` | Cool blue-gray |
+| Gruvbox | `styles/gruvbox.dmls` | Warm retro |
+| Monokai | `styles/monokai.dmls` | Classic dark |
+| One Dark | `styles/onedark.dmls` | Atom-inspired dark |
+| Solarized Light | `styles/solarized_light.dmls` | Light beige |
 
-#### Auto-Detection (SQL/BigQuery)
-For SQL and BigQuery data sources, DashML queries `INFORMATION_SCHEMA.COLUMNS` to detect column types:
-
-| Database Type | Mapped To | Sorting |
-|---------------|-----------|---------|
-| DATE, DATETIME, TIMESTAMP, TIME | `date` | Chronological |
-| INT, FLOAT, NUMERIC, DECIMAL, etc. | `number` | Numerical |
-| VARCHAR, TEXT, CHAR, etc. | `string` | No sort |
-
-#### Auto-Detection (CSV)
-For CSV files, pandas dtype inference is used, with fallback to string parsing for date detection.
-
-#### Explicit `x_type` Override
-You can explicitly specify the axis type to override auto-detection:
-
-```yaml
-charts:
-  - id: "sales_trend"
-    type: "line"
-    x: "order_date"
-    x_type: "date"    # Force chronological sorting
-    y: "amount"
-    agg: "sum"
-```
-
-**Priority Order**: Explicit `x_type` > Schema-detected > No sorting
-
-## Theme System
-
-DashML uses `.dmls` (DashML Style) files for theming. Six built-in themes are included:
-
-### Available Themes
-
-- `dracula.dmls` - Dark purple theme
-- `nord.dmls` - Cool blue-gray theme
-- `gruvbox.dmls` - Warm retro theme
-- `monokai.dmls` - Classic dark theme
-- `onedark.dmls` - Atom-inspired dark theme
-- `solarized_light.dmls` - Light beige theme
-
-### Theme Structure
+### Theme File Format
 
 ```yaml
 version: 0.1
 colors:
   background: "#282a36"    # Dashboard background
   card: "#313343"          # Chart card background
-  primary: "#bd93f9"       # Primary chart color
+  primary: "#bd93f9"       # Primary chart color (single-series)
   text: "#f8f8f2"          # Text color
-  buttons: "#44475a"       # Button/UI element color
-  secondary:               # Multi-series chart colors
-    - "#ff79c6"
-    - "#8be9fd"
+  secondary:               # Colors for multi-series charts (pie, stacked_bar, grouped_bar)
     - "#50fa7b"
     - "#ffb86c"
     - "#ff5555"
+    - "#8be9fd"
+    - "#f1fa8c"
 ```
 
-## Architecture
+### Color Support by Backend
 
-```
-dashml_new/
-├── core/
-│   ├── engine.py          # Orchestrates parsing, validation, transformation
-│   ├── parser.py          # YAML → Python dict parser
-│   ├── validator.py       # Semantic validation of specs
-│   ├── types.py           # TypedDict definitions for type hints
-│   └── __init__.py
-│
-├── transformers/
-│   ├── base.py            # Abstract Transformer interface
-│   ├── streamlit.py       # Generates Streamlit Python code
-│   ├── plotly.py          # Generates Plotly HTML/JavaScript
-│   ├── observable.py      # Generates Observable Plot HTML
-│   └── __init__.py
-│
-├── cli.py                 # Command-line interface
-└── __init__.py
-```
+| Color | Streamlit | Plotly | Observable | Superset |
+|-------|-----------|--------|------------|----------|
+| `background` | Yes | Yes | Yes | N/A |
+| `card` | No (platform limitation) | Yes | Yes | N/A |
+| `primary` | Yes | Yes | Yes | Yes |
+| `text` | Yes | Yes | Yes | N/A |
+| `secondary` | Yes | Yes | Yes | Yes |
 
-### Key Design Principles
-
-1. **Hexagonal Architecture**: Core engine isolated from transformers via clean interfaces
-2. **No Intermediate Representation**: Spec is a plain Python dict from parsed YAML
-3. **No Data Materialization**: Engine validates structure only, never touches actual data
-4. **Code Generation**: Transformers generate standalone code that loads its own data
-5. **Zero Overhead Types**: TypedDict provides type hints without runtime cost
-6. **Schema Auto-Detection**: For SQL/BigQuery, column types are detected from `INFORMATION_SCHEMA`
-
-### Output Structure
-
-**CSV Data Source**: Single file output (HTML or Python)
-
-**SQL/BigQuery Data Source**: Multi-file output directory:
-```
-output_dir/
-├── app.py       # Flask backend (connects to database, serves /api/data and /api/schema)
-└── index.html   # Frontend (fetches from Flask API, renders charts)
-```
-
-### How It Works
-
-#### 1. Build Time: DashML Compiles Spec
-
-```python
-# User runs CLI
-python -m dashml_new.cli dashboard.dashml --backend streamlit --output app.py
-
-# Engine loads and validates spec
-spec = yaml.safe_load(open("dashboard.dashml"))
-validator.validate(spec)  # Only validates structure, never loads data!
-
-# Transformer generates standalone code
-code = StreamlitTransformer().build(spec)
-```
-
-#### 2. Run Time: Generated Code Executes
-
-```python
-# app.py (generated code)
-import pandas as pd
-import streamlit as st
-
-# Generated code loads its own data
-df = pd.read_csv("data/sales.csv")
-
-# Generated code renders charts
-st.title("My Dashboard")
-chart_data = df.groupby("country")["sales"].sum().reset_index()
-st.bar_chart(chart_data, x="country", y="sales")
-```
-
-**Key Point**: DashML never materializes data - it only generates code that will load data at runtime.
-
-## Design Guidelines
-
-### Naming Conventions
-
-When naming components and concepts, DashML follows this hierarchy:
-
-1. **Primary: Vega/Vega-Lite Nomenclature**
-   - Mark types: `bar`, `line`, `point`, `area`
-   - Encodings: `x`, `y`, `color`, `size`
-   - Aggregations: `sum`, `mean`, `count`
-
-2. **Fallback: Material Design 3**
-   - UI containers: `card` (for chart containers)
-   - Components: Use Material Design naming when Vega has no equivalent
-
-**Rationale**: Vega is the industry standard for declarative visualization grammars. Material Design provides consistent UI terminology.
-
-## Backend Transformers
-
-### Streamlit Transformer
-
-**Output**: Python code using Streamlit + Altair
-**Best for**: Internal data apps, rapid prototyping
-**Features**:
-- Interactive widgets
-- Multi-page navigation
-- Automatic caching
-- Live code execution
-
-**Limitations**:
-- Card backgrounds don't match other backends (Streamlit platform limitation)
-
-### Plotly Transformer
-
-**Output**: Standalone HTML with embedded JavaScript
-**Best for**: Shareable dashboards, presentations, embedding
-**Features**:
-- Full theme support including card colors
-- Interactive hover tooltips
-- Responsive layouts
-- No server required
-
-### Observable Plot Transformer
-
-**Output**: Standalone HTML with Observable Plot + D3
-**Best for**: Modern web-based visualizations, notebooks
-**Features**:
-- Elegant minimalist design
-- Lightweight and fast
-- Full theme support
-- Custom D3 pie charts (Observable Plot doesn't have native pie support)
-
-### Superset Transformer
-
-**Output**: None - creates dashboard directly in Superset!
-**Best for**: Enterprise BI dashboards, SQL-based analytics, team collaboration
-**Features**:
-- **Direct dashboard creation** - no code generation, no intermediate steps
-- Automatic CSV upload to Superset
-- Dashboard deduplication (updates existing dashboards)
-- Automatic cleanup of old charts
-- Full support for all 8 DashML chart types using modern ECharts visualizations
-
-**Requirements**:
-- Running Superset instance (e.g., http://localhost:8088)
-- Superset credentials (username/password)
-- CSV file accessible at the path specified in the DashML spec
-- `requests` library: `pip install requests`
-
-**Usage**:
-```bash
-# Single command - creates dashboard immediately!
-python -m dashml_new.cli build dashboard.dashml \
-  --target superset \
-  --superset-user admin \
-  --superset-password admin
-```
-
-**What happens:**
-1. ✓ Authenticates with Superset
-2. ✓ Uploads CSV automatically (or finds existing dataset)
-3. ✓ Creates all charts with correct ECharts viz types
-4. ✓ Creates/updates dashboard with proper layout
-5. ✓ Associates charts with dashboard
-6. 🎉 Prints dashboard URL - open in browser!
-
-**Chart Type Mappings**:
-- `bar` → `echarts_timeseries` (bar)
-- `line` → `echarts_timeseries` (line)
-- `area` → `echarts_area`
-- `histogram` → `histogram_v2`
-- `scatter` → `scatter`
-- `pie` → `pie`
-- `stacked_bar` → `echarts_timeseries` (stacked)
-- `grouped_bar` → `echarts_timeseries` (grouped)
-
-**Key Benefits**:
-- ⚡ Immediate execution - no intermediate Python scripts
-- ✅ Automatic CSV upload
-- ✅ Dashboard deduplication (updates instead of creating duplicates)
-- ✅ Perfect for CI/CD pipelines
-- ✅ Idempotent - run multiple times safely
-- ✅ Modern ECharts visualizations for better performance
+---
 
 ## Command-Line Interface
 
+### Commands
+
 ```bash
-# Basic usage
-python -m dashml_new.cli <input.dashml> --backend <backend> --output <output_file>
+# Build a dashboard
+python -m dashml_new.cli build <input.dashml> --target <target> [--output <path>]
 
-# Examples
+# List available transformers
+python -m dashml_new.cli list
+
+# Watch for changes and rebuild automatically
+python -m dashml_new.cli watch <input.dashml> --target <target> --output <path>
+```
+
+### Build Options
+
+| Flag | Description |
+|------|-------------|
+| `--target`, `-t` | Target platform: `streamlit`, `plotly`, `observable`, `superset` |
+| `--output`, `-o` | Output file or directory (not needed for `superset`) |
+| `--run`, `-r` | Run the dashboard after building |
+
+### SQL Options
+
+| Flag | Description |
+|------|-------------|
+| `--db-type` | `postgresql`, `mysql`, or `sqlite` |
+| `--db-host` | Database host (default: `localhost`) |
+| `--db-port` | Database port (default: `5432`) |
+| `--db-name` | Database name |
+| `--db-user` | Database username |
+| `--db-password` | Database password |
+
+### BigQuery Options
+
+| Flag | Description |
+|------|-------------|
+| `--bq-project` | Google Cloud project ID |
+| `--bq-credentials` | Path to service account JSON (optional; uses default credentials if omitted) |
+
+### Superset Options
+
+| Flag | Description |
+|------|-------------|
+| `--superset-url` | Superset instance URL (default: `http://localhost:8088`) |
+| `--superset-user` | Superset username |
+| `--superset-password` | Superset password |
+
+### Watch Mode
+
+```bash
+python -m dashml_new.cli watch dashboard.dashml --target streamlit --output app.py --run
+```
+
+Polls the `.dashml` file for changes and rebuilds automatically. With `--run`, restarts the generated app after each rebuild.
+
+---
+
+## Backend Details
+
+### Streamlit
+
+Generates Python code using Streamlit and Altair. Best for interactive data apps.
+
+```bash
 python -m dashml_new.cli build dashboard.dashml --target streamlit --output app.py
-python -m dashml_new.cli build dashboard.dashml --target plotly --output index.html
-python -m dashml_new.cli build dashboard.dashml --target observable --output dashboard.html
+streamlit run app.py
+```
 
-# Superset - no output file needed, creates dashboard directly!
+Output: single `.py` file (CSV) or multi-file directory (SQL/BigQuery).
+
+### Plotly
+
+Generates standalone HTML with Plotly.js. Best for shareable dashboards and embedding.
+
+```bash
+python -m dashml_new.cli build dashboard.dashml --target plotly --output dashboard.html
+```
+
+Output: single `.html` file (CSV) or multi-file directory with Flask backend (SQL/BigQuery).
+
+### Observable Plot
+
+Generates HTML with Observable Plot and D3.js. Best for lightweight, modern web visualizations.
+
+```bash
+python -m dashml_new.cli build dashboard.dashml --target observable --output dashboard.html
+```
+
+Output: single `.html` file (CSV) or multi-file directory with Flask backend (SQL/BigQuery). Pie charts use D3 directly since Observable Plot has no native pie support.
+
+### Superset
+
+Creates dashboards directly in Apache Superset via REST API. No files are generated.
+
+```bash
 python -m dashml_new.cli build dashboard.dashml --target superset \
   --superset-user admin --superset-password admin
-
-# With run flag (Streamlit only)
-python -m dashml_new.cli build dashboard.dashml --target streamlit --output app.py --run
 ```
 
-### Arguments
+The transformer authenticates, uploads CSV (or connects to existing SQL/BigQuery datasets), creates all charts, and assembles the dashboard. Running the command again updates the existing dashboard instead of creating duplicates.
 
-- `input_file`: Path to `.dashml` specification file
-- `--target`, `-t`: Target platform (`streamlit`, `plotly`, `observable`, or `superset`)
-- `--output`, `-o`: Output file/directory path (not needed for `superset`)
-- `--run`, `-r`: Automatically run the generated dashboard after build
+Superset chart type mappings:
 
-**SQL Database Options:**
-- `--db-type`: Database type (`postgresql`, `mysql`, `sqlite`)
-- `--db-host`: Database host (default: `localhost`)
-- `--db-port`: Database port (default: `5432`)
-- `--db-name`: Database name
-- `--db-user`: Database username
-- `--db-password`: Database password
+| DashML Type | Superset Viz Type |
+|-------------|-------------------|
+| `bar` | `echarts_timeseries` (bar) |
+| `line` | `echarts_timeseries` (line) |
+| `scatter` | `echarts_timeseries_scatter` |
+| `pie` | `pie` |
+| `area` | `echarts_area` |
+| `histogram` | `histogram_v2` |
+| `stacked_bar` | `echarts_timeseries` (stacked) |
+| `grouped_bar` | `echarts_timeseries` (grouped) |
+| `bubble` | `echarts_bubble` |
+| `heatmap` | `heatmap` |
+| `box` | `box_plot` |
+| `geo` | `world_map` |
 
-**BigQuery Options:**
-- `--bq-project`: Google Cloud project ID (required for BigQuery)
-- `--bq-credentials`: Path to service account JSON file (optional, uses default credentials if not provided)
+Requires the `requests` library: `pip install requests`.
 
-**Superset Options:**
-- `--superset-url`: Superset instance URL (default: `http://localhost:8088`)
-- `--superset-user`: Superset username (required for `superset` target)
-- `--superset-password`: Superset password (required for `superset` target)
+---
 
-## Creating Custom Transformers
+## Chart Support Matrix
 
-```python
-from dashml_new.transformers.base import Transformer, TransformerError
-from typing import Dict, Any
+All 12 chart types are implemented in all 4 backends.
 
-class MyCustomTransformer(Transformer):
-    @property
-    def name(self) -> str:
-        return "my-platform"
+| Type | Streamlit (Altair) | Plotly (Plotly.js) | Observable (Plot/D3) | Superset |
+|------|--------------------|--------------------|----------------------|----------|
+| `bar` | `mark_bar` | `type: 'bar'` | `Plot.barY` | `echarts_timeseries` |
+| `line` | `mark_line` | `type: 'scatter'` (lines+markers) | `Plot.line` + `Plot.dot` | `echarts_timeseries` |
+| `scatter` | `mark_circle` | `type: 'scatter'` (markers) | `Plot.dot` | `echarts_timeseries_scatter` |
+| `pie` | `mark_arc` | `type: 'pie'` | D3 `d3.pie()` | `pie` |
+| `area` | `mark_area` | `type: 'scatter'` (fill) | `Plot.areaY` | `echarts_area` |
+| `histogram` | `mark_bar` (binned) | `type: 'histogram'` | `Plot.rectY` + `Plot.binX` | `histogram_v2` |
+| `stacked_bar` | `mark_bar` (stack) | Multiple `bar` traces (stack) | `Plot.barY` (fill) | `echarts_timeseries` |
+| `grouped_bar` | `mark_bar` (xOffset) | Multiple `bar` traces (group) | `Plot.barY` (faceted) | `echarts_timeseries` |
+| `bubble` | `mark_circle` (sized) | `type: 'scatter'` (sized markers) | `Plot.dot` (dynamic radius) | `echarts_bubble` |
+| `heatmap` | `mark_rect` | `type: 'heatmap'` | `Plot.cell` | `heatmap` |
+| `box` | `mark_boxplot` | `type: 'box'` | `Plot.boxY` | `box_plot` |
+| `geo` | `mark_geoshape` (topojson) | `type: 'choropleth'` | `Plot.geo` (topojson) | `world_map` |
 
-    @property
-    def description(self) -> str:
-        return "Generates code for My Custom Platform"
+---
 
-    def build(self, spec: Dict[str, Any]) -> str:
-        """Generate code from validated spec"""
-        title = spec.get("title", "Dashboard")
-        charts = spec.get("charts", [])
+## Output Structure
 
-        # Generate platform-specific code
-        code_parts = []
-        code_parts.append(f"# {title}")
+### CSV Data Source
 
-        for chart in charts:
-            chart_code = self._generate_chart(chart)
-            code_parts.append(chart_code)
+Single file output: one `.py` (Streamlit) or `.html` (Plotly/Observable).
 
-        return "\n\n".join(code_parts)
+### SQL / BigQuery Data Source
 
-    def _generate_chart(self, chart: Dict[str, Any]) -> str:
-        # Your chart generation logic
-        pass
+Multi-file output directory:
 
-    def get_run_command(self, output_path: str) -> str:
-        return f"my-platform run {output_path}"
+```
+output_dir/
+  app.py       # Flask backend (database queries, /api/data and /api/schema endpoints)
+  index.html   # Frontend (fetches from Flask, renders charts)
 ```
 
-### Transformer Plugin System
+### Superset
 
-Transformers use a simple name-based lookup (no complex registry):
+No files generated. Dashboard is created directly in the Superset instance.
 
-```python
-from dashml_new.core import DashMLEngine
-
-engine = DashMLEngine()
-
-# Load spec
-spec = engine.load("dashboard.dashml")
-
-# Get transformer by name
-if backend == "streamlit":
-    from dashml_new.transformers.streamlit import StreamlitTransformer
-    transformer = StreamlitTransformer()
-elif backend == "plotly":
-    from dashml_new.transformers.plotly import PlotlyTransformer
-    transformer = PlotlyTransformer()
-# etc.
-
-# Build
-code = transformer.build(spec)
-```
-
-## Warning System
-
-Transformers can emit warnings for unsupported features:
-
-```python
-class MyTransformer(Transformer):
-    def build(self, spec: Dict[str, Any]) -> str:
-        for chart in spec.get("charts", []):
-            if chart["type"] == "unsupported_type":
-                self.warn(f"Chart type '{chart['type']}' not supported")
-
-        # ... continue building
-        return code
-
-# CLI displays warnings after build
-transformer = MyTransformer()
-code = transformer.build(spec)
-
-warnings = transformer.get_warnings()
-if warnings:
-    print("⚠ Transformer warnings:")
-    for warning in warnings:
-        print(f"  - {warning}")
-```
-
-## Validation
-
-DashML validates specs at build time:
-
-```python
-from dashml_new.core import DashMLValidator, ValidationError
-
-validator = DashMLValidator()
-
-try:
-    validator.validate(spec)
-except ValidationError as e:
-    print(f"Invalid spec: {e}")
-```
-
-### Validation Rules
-
-**Required Top-Level Fields:**
-- `version`: String or number (e.g., `0.1` or `"1.0"`)
-- `data`: Data source specification
-
-**Must Have Either:**
-- `charts`: Array of chart specs (legacy single-page format)
-- `pages`: Array of page specs (multi-page format)
-
-**Chart Validation:**
-- Required fields: `id`, `type`, `x`, `y`
-- Chart type must be one of 8 supported types
-- Aggregation (`agg`) must be: `sum`, `mean`, or `count`
-- Stacked/grouped bars must have `group` field
-
-**Data Source Validation:**
-- Supported data types: `csv`, `sql`, `bigquery`
-- Must have `type` and `path` fields
-- SQL path format: `schema.table`
-- BigQuery path format: `dataset.table`
-
-**Axis Type Validation:**
-- Optional `x_type` field: `date`, `number`, or `string`
+---
 
 ## Examples
 
-### Simple Bar Chart
+### Filtering and Sorting
 
 ```yaml
-version: 0.1
-title: "Sales Dashboard"
-style: "styles/dracula.dmls"
-
-data:
-  type: csv
-  path: "data/sales.csv"
-
 charts:
-  - id: "sales_by_country"
+  - id: "top_countries"
     type: "bar"
-    title: "Total Sales by Country"
+    title: "Top 5 Countries by Sales (2025)"
     x: "country"
     y: "sales"
     agg: "sum"
+    sort: "y"
+    sort_order: "desc"
+    limit: 5
+    filters:
+      - field: "date"
+        op: "gte"
+        value: "2025-01-01"
+      - field: "date"
+        op: "lte"
+        value: "2025-12-31"
 ```
 
-### Stacked Bar Chart
+### Bubble Chart
 
 ```yaml
-version: 0.1
-title: "Product Sales"
-style: "styles/nord.dmls"
-
-data:
-  type: csv
-  path: "data/sales.csv"
-
 charts:
-  - id: "stacked_sales"
-    type: "stacked_bar"
+  - id: "sales_bubble"
+    type: "bubble"
+    title: "Sales by Country"
+    x: "country"
+    y: "revenue"
+    size: "num_orders"
+    agg: "sum"
+```
+
+### Heatmap
+
+```yaml
+charts:
+  - id: "sales_heatmap"
+    type: "heatmap"
     title: "Sales by Country and Product"
     x: "country"
     y: "sales"
@@ -620,84 +488,34 @@ charts:
     agg: "sum"
 ```
 
-### Multi-Chart Dashboard
+### Box Plot
 
 ```yaml
-version: 0.1
-title: "Analytics Dashboard"
-style: "styles/gruvbox.dmls"
-
-data:
-  type: csv
-  path: "data/sales.csv"
-
 charts:
-  - id: "total_sales"
-    type: "bar"
-    title: "Total Sales"
-    x: "country"
-    y: "sales"
-    agg: "sum"
+  - id: "price_distribution"
+    type: "box"
+    title: "Price Distribution by Category"
+    x: "category"
+    y: "price"
+```
 
-  - id: "sales_trend"
-    type: "line"
-    title: "Sales Trend"
-    x: "date"
-    y: "sales"
-    agg: "sum"
+### Choropleth Map
 
-  - id: "sales_distribution"
-    type: "histogram"
-    title: "Sales Distribution"
-    x: "sales"
-
-  - id: "sales_breakdown"
-    type: "pie"
+```yaml
+charts:
+  - id: "world_sales"
+    type: "geo"
     title: "Sales by Country"
     x: "country"
-    y: "sales"
+    y: "revenue"
     agg: "sum"
 ```
 
-### BigQuery Dashboard
+### SQL Dashboard
 
 ```yaml
 version: 0.1
-title: "BigQuery Analytics"
-style: "styles/nord.dmls"
-
-data:
-  type: bigquery
-  path: "analytics.orders"
-
-charts:
-  - id: "sales_over_time"
-    type: "line"
-    title: "Sales Over Time"
-    x: "order_date"
-    y: "total_amount"
-    agg: "sum"
-    # x_type auto-detected from BigQuery INFORMATION_SCHEMA
-
-  - id: "sales_by_region"
-    type: "bar"
-    title: "Sales by Region"
-    x: "region"
-    y: "total_amount"
-    agg: "sum"
-```
-
-Build and run:
-```bash
-python -m dashml_new.cli build bigquery.dashml --target plotly \
-  --output ./bq_dashboard --bq-project my-project --run
-```
-
-### SQL Database Dashboard
-
-```yaml
-version: 0.1
-title: "PostgreSQL Analytics"
+title: "Order Analytics"
 style: "styles/dracula.dmls"
 
 data:
@@ -707,50 +525,55 @@ data:
 charts:
   - id: "orders_trend"
     type: "line"
-    title: "Order Trend"
+    title: "Orders Over Time"
     x: "created_at"
-    x_type: "date"  # Explicit type override
+    x_type: "date"
     y: "quantity"
     agg: "sum"
+
+  - id: "top_products"
+    type: "bar"
+    title: "Top Products"
+    x: "product_name"
+    y: "quantity"
+    agg: "sum"
+    sort: "y"
+    sort_order: "desc"
+    limit: 10
 ```
 
-Build and run:
 ```bash
-python -m dashml_new.cli build sql.dashml --target plotly --output ./sql_dashboard \
+python -m dashml_new.cli build orders.dashml --target plotly --output ./output \
   --db-type postgresql --db-host localhost --db-port 5432 \
   --db-name mydb --db-user admin --db-password secret --run
 ```
 
-## Roadmap
+---
 
-### Completed ✅
-- ✅ All 8 Priority 1 chart types
-- ✅ Multi-page dashboards
-- ✅ Theme system with 6 built-in themes
-- ✅ Four backend transformers (Streamlit, Plotly, Observable, Superset)
-- ✅ Stacked and grouped bar charts
-- ✅ Warning system for unsupported features
-- ✅ SQL data sources (PostgreSQL, MySQL, SQLite)
-- ✅ BigQuery data source
-- ✅ Schema auto-detection from INFORMATION_SCHEMA
-- ✅ Explicit `x_type` for axis type control
+## Creating Custom Transformers
 
-### Planned 🚧
-- Box plots (Streamlit + Plotly only)
-- Geographic visualizations (choropleth maps)
-- Additional data sources (JSON, Parquet)
-- Plotly-exclusive charts (treemap, sunburst, 3D)
+```python
+from dashml_new.transformers.base import Transformer
 
-## Contributing
+class MyTransformer(Transformer):
+    @property
+    def name(self) -> str:
+        return "my-platform"
 
-When adding new features:
+    @property
+    def description(self) -> str:
+        return "Generates code for My Platform"
 
-1. **Update types**: Add TypedDict definitions to `core/types.py`
-2. **Update validator**: Add validation rules to `core/validator.py`
-3. **Update transformers**: Implement in all three transformers (Streamlit, Plotly, Observable)
-4. **Add tests**: Create test dashboard in `dashml_example.dashml`
-5. **Document**: Update this README
+    def build(self, spec):
+        title = spec.get("title", "Dashboard")
+        charts = spec.get("charts", [])
+        # Generate platform-specific code...
+        return generated_code
 
-## License
+    def get_run_command(self, output_path):
+        return f"my-platform run {output_path}"
+```
 
-MIT
+Register the transformer in `cli.py` and it becomes available as a `--target` option.
+
+Transformers can emit warnings for unsupported features via `self.warn("message")`. Warnings are displayed after the build completes.

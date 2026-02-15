@@ -173,6 +173,81 @@ def main():
             tooltip=["payment_method", "status", "order_id"]
         ).properties(title="Orders by Payment Method (Stacked by Status)")
         st.altair_chart(c, use_container_width=True)
+        st.divider()
+
+        # Chart: geo_sales_by_country
+        st.subheader("Sales by Country (Map)")
+        chart_df = df.copy()
+        effective_x_type = "None" if "None" != "None" else column_types.get("shipping_address_country")
+        # Aggregate: sum(total_amount) group by shipping_address_country
+        chart_data = chart_df.groupby("shipping_address_country")["total_amount"].sum().reset_index()
+        if effective_x_type == "date":
+            # Sort by date for chronological order
+            chart_data["shipping_address_country"] = pd.to_datetime(chart_data["shipping_address_country"])
+            chart_data = chart_data.sort_values("shipping_address_country")
+        elif effective_x_type == "number":
+            # Sort by number for numerical order
+            chart_data = chart_data.sort_values("shipping_address_country")
+        else:
+            # Sort strings alphabetically for consistency across transformers
+            chart_data = chart_data.sort_values("shipping_address_country")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
+        # Geo chart: choropleth map colored by total_amount
+        # Country name normalization (map common variations to topojson names)
+        country_name_map = {
+            "USA": "United States of America",
+            "US": "United States of America",
+            "United States": "United States of America",
+            "UK": "United Kingdom",
+            "Britain": "United Kingdom",
+            "Great Britain": "United Kingdom",
+            "Russia": "Russian Federation",
+            "South Korea": "Korea, Republic of",
+            "Korea": "Korea, Republic of",
+            "North Korea": "Korea, Democratic People's Republic of",
+            "Iran": "Iran, Islamic Republic of",
+            "Syria": "Syrian Arab Republic",
+            "Venezuela": "Venezuela, Bolivarian Republic of",
+            "Bolivia": "Bolivia, Plurinational State of",
+            "Tanzania": "Tanzania, United Republic of",
+            "Vietnam": "Viet Nam",
+            "Laos": "Lao People's Democratic Republic",
+            "Czech Republic": "Czechia",
+            "Moldova": "Moldova, Republic of",
+            "Taiwan": "Taiwan, Province of China",
+        }
+    
+        # Normalize country names in chart_data
+        chart_data["shipping_address_country_normalized"] = chart_data["shipping_address_country"].apply(
+            lambda x: country_name_map.get(x, x) if pd.notna(x) else x
+        )
+    
+        # Load world countries topojson (has country names in properties.name)
+        countries_url = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"
+        countries = alt.topo_feature(countries_url, "countries")
+    
+        # Create choropleth map
+        c = alt.Chart(countries).mark_geoshape(
+            stroke="#fff",
+            strokeWidth=0.5
+        ).encode(
+            color=alt.Color("total_amount:Q",
+                scale=alt.Scale(scheme="blues"),
+                legend=alt.Legend(title="total_amount")
+            ),
+            tooltip=["properties.name:N", "total_amount:Q"]
+        ).transform_lookup(
+            lookup="properties.name",
+            from_=alt.LookupData(data=chart_data, key="shipping_address_country_normalized", fields=["total_amount"])
+        ).project(
+            type="naturalEarth1"
+        ).properties(
+            title="Sales by Country (Map)",
+            width=800,
+            height=450
+        )
+        st.altair_chart(c, use_container_width=True)
 
     with tab2:
         st.markdown("*Line and area charts for temporal trends*")
@@ -230,7 +305,7 @@ def main():
         st.altair_chart(c, use_container_width=True)
 
     with tab3:
-        st.markdown("*Scatter plots and histograms*")
+        st.markdown("*Scatter plots, histograms, box plots, bubble charts, and heatmaps*")
         st.divider()
 
         # Chart: scatter_amount_vs_tax
@@ -272,6 +347,85 @@ def main():
             y="count()",
             tooltip=["count()"]
         ).properties(title="Distribution of Order Amounts")
+        st.altair_chart(c, use_container_width=True)
+        st.divider()
+
+        # Chart: box_amount_by_status
+        st.subheader("Order Amount Distribution by Status")
+        chart_df = df.copy()
+        effective_x_type = "None" if "None" != "None" else column_types.get("status")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
+        # Box plot: distribution by status
+        c = alt.Chart(chart_df).mark_boxplot(color="#29b5e8").encode(
+            x=alt.X("status:N"),
+            y=alt.Y("total_amount:Q"),
+            tooltip=["status"]
+        ).properties(title="Order Amount Distribution by Status")
+        st.altair_chart(c, use_container_width=True)
+        st.divider()
+
+        # Chart: bubble_region_sales
+        st.subheader("Sales vs Tax by Region")
+        chart_df = df.copy()
+        effective_x_type = "None" if "None" != "None" else column_types.get("total_amount")
+        chart_df["total_amount"] = pd.to_numeric(chart_df["total_amount"], errors="coerce")
+        chart_df["order_id"] = pd.to_numeric(chart_df["order_id"], errors="coerce")
+        # Bubble: aggregate total_amount, order_id, total_amount group by shipping_address_state
+        chart_data = chart_df.groupby("shipping_address_state").agg({"total_amount": "sum", "order_id": "sum"}).reset_index()
+        if effective_x_type == "date":
+            # Sort by date for chronological order
+            chart_data["total_amount"] = pd.to_datetime(chart_data["total_amount"])
+            chart_data = chart_data.sort_values("total_amount")
+        elif effective_x_type == "number":
+            # Sort by number for numerical order
+            chart_data = chart_data.sort_values("total_amount")
+        else:
+            # Sort strings alphabetically for consistency across transformers
+            chart_data = chart_data.sort_values("total_amount")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
+        # Bubble: 4D visualization (group, x, y, size)
+        c = alt.Chart(chart_data).mark_circle().encode(
+            x=alt.X("total_amount:Q"),
+            y=alt.Y("order_id:Q"),
+            size=alt.Size("total_amount:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="total_amount")),
+            color=alt.Color("shipping_address_state:N", legend=alt.Legend(title="shipping_address_state")),
+            tooltip=["shipping_address_state", "total_amount", "order_id", "total_amount"]
+        ).properties(title="Sales vs Tax by Region")
+        st.altair_chart(c, use_container_width=True)
+        st.divider()
+
+        # Chart: heatmap_country_status
+        st.subheader("Order Count by Country and Status")
+        chart_df = df.copy()
+        effective_x_type = "None" if "None" != "None" else column_types.get("shipping_address_country")
+        # Aggregate: count(order_id) group by shipping_address_country
+        chart_data = chart_df.groupby("shipping_address_country")["order_id"].count().reset_index()
+        if effective_x_type == "date":
+            # Sort by date for chronological order
+            chart_data["shipping_address_country"] = pd.to_datetime(chart_data["shipping_address_country"])
+            chart_data = chart_data.sort_values("shipping_address_country")
+        elif effective_x_type == "number":
+            # Sort by number for numerical order
+            chart_data = chart_data.sort_values("shipping_address_country")
+        else:
+            # Sort strings alphabetically for consistency across transformers
+            chart_data = chart_data.sort_values("shipping_address_country")
+        # Determine Altair encoding type based on effective x_type
+        x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
+        # Heatmap: 2D grid with color intensity
+        # Re-aggregate for heatmap (group by both x and y)
+        heatmap_data = chart_df.groupby(["shipping_address_country", "status"])["order_id"].count().reset_index()
+        c = alt.Chart(heatmap_data).mark_rect().encode(
+            x=alt.X("shipping_address_country:N", sort=None),
+            y=alt.Y("status:N"),
+            color=alt.Color("order_id:Q",
+                scale=alt.Scale(scheme="blues"),
+                legend=alt.Legend(title="order_id")
+            ),
+            tooltip=["shipping_address_country", "status", "order_id"]
+        ).properties(title="Order Count by Country and Status")
         st.altair_chart(c, use_container_width=True)
 
 

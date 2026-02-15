@@ -4,17 +4,26 @@
   "title": "DashML Specification",
   "description": "Schema for DashML dashboard specification files (.dashml)",
   "type": "object",
-  "required": ["version", "data", "charts"],
+  "required": ["version", "data"],
+  "oneOf": [
+    { "required": ["charts"] },
+    { "required": ["pages"] }
+  ],
   "properties": {
     "version": {
-      "type": "string",
       "description": "DashML specification version",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "examples": ["0.000000001"]
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" }
+      ]
     },
     "title": {
       "type": "string",
       "description": "Dashboard title"
+    },
+    "style": {
+      "type": "string",
+      "description": "Path to a .dmls theme file"
     },
     "data": {
       "type": "object",
@@ -24,88 +33,151 @@
         "type": {
           "type": "string",
           "description": "Type of data source",
-          "enum": ["csv", "json", "sql", "api"]
+          "enum": ["csv", "sql", "bigquery"]
         },
         "path": {
           "type": "string",
-          "description": "Path or URL to the data source"
+          "description": "File path (CSV), schema.table (SQL), or dataset.table (BigQuery)"
         },
-        "query": {
-          "type": "string",
-          "description": "SQL query (for SQL data sources)"
-        },
-        "connection": {
-          "type": "string",
-          "description": "Database connection string (for SQL data sources)"
+        "database_id": {
+          "type": "integer",
+          "description": "Superset database ID (SQL data sources)"
         }
       }
     },
     "charts": {
       "type": "array",
-      "description": "Array of chart specifications",
+      "description": "Array of chart specifications (single-page mode)",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/chart" }
+    },
+    "pages": {
+      "type": "array",
+      "description": "Array of page specifications (multi-page mode)",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "type", "x", "y"],
+        "required": ["id", "charts"],
         "properties": {
           "id": {
             "type": "string",
-            "description": "Unique chart identifier",
-            "pattern": "^[a-zA-Z0-9_-]+$"
-          },
-          "type": {
-            "type": "string",
-            "description": "Chart type",
-            "enum": ["bar", "line", "scatter", "pie", "area", "histogram"]
+            "description": "Unique page identifier"
           },
           "title": {
             "type": "string",
-            "description": "Chart title"
+            "description": "Page title"
           },
-          "x": {
+          "description": {
             "type": "string",
-            "description": "Column name for X axis"
+            "description": "Page description"
           },
-          "y": {
-            "type": "string",
-            "description": "Column name for Y axis"
-          },
-          "agg": {
-            "type": "string",
-            "description": "Aggregation function",
-            "enum": ["sum", "mean", "count", "min", "max", "median"],
-            "default": "sum"
-          },
-          "filter": {
-            "type": "string",
-            "description": "Filter expression"
-          },
-          "color": {
-            "type": "string",
-            "description": "Color scheme or specific color"
+          "charts": {
+            "type": "array",
+            "description": "Charts on this page",
+            "minItems": 1,
+            "items": { "$ref": "#/definitions/chart" }
           }
         }
       }
-    },
-    "filters": {
+    }
+  },
+  "definitions": {
+    "chart": {
       "type": "object",
-      "description": "Global dashboard filters",
-      "additionalProperties": true
-    },
-    "theme": {
-      "type": "object",
-      "description": "Dashboard theme configuration",
+      "required": ["id", "type", "x", "y"],
       "properties": {
-        "colorScheme": {
+        "id": {
           "type": "string",
-          "enum": ["light", "dark", "auto"]
+          "description": "Unique chart identifier",
+          "pattern": "^[a-zA-Z0-9_-]+$"
         },
-        "primaryColor": {
+        "type": {
           "type": "string",
-          "pattern": "^#[0-9A-Fa-f]{6}$"
+          "description": "Chart type",
+          "enum": [
+            "bar", "line", "scatter", "pie", "area", "histogram",
+            "stacked_bar", "grouped_bar", "bubble", "heatmap", "box", "geo"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "description": "Chart title"
+        },
+        "x": {
+          "type": "string",
+          "description": "Column name for X axis"
+        },
+        "y": {
+          "type": "string",
+          "description": "Column name for Y axis"
+        },
+        "agg": {
+          "type": "string",
+          "description": "Aggregation function",
+          "enum": ["sum", "mean", "count"]
+        },
+        "group": {
+          "type": "string",
+          "description": "Grouping column (required for stacked_bar, grouped_bar, bubble, heatmap)"
+        },
+        "size": {
+          "type": "string",
+          "description": "Size encoding column (required for bubble)"
+        },
+        "x_type": {
+          "type": "string",
+          "description": "Explicit type for X axis",
+          "enum": ["date", "number", "string"]
+        },
+        "y_type": {
+          "type": "string",
+          "description": "Explicit type for Y axis",
+          "enum": ["date", "number", "string"]
+        },
+        "bins": {
+          "type": "integer",
+          "description": "Number of bins (histogram only)",
+          "default": 20
+        },
+        "sort": {
+          "type": "string",
+          "description": "Sort by field",
+          "enum": ["x", "y"]
+        },
+        "sort_order": {
+          "type": "string",
+          "description": "Sort direction",
+          "enum": ["asc", "desc"],
+          "default": "asc"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of rows after aggregation",
+          "minimum": 1
+        },
+        "filters": {
+          "type": "array",
+          "description": "Array of filter conditions applied before aggregation",
+          "items": {
+            "type": "object",
+            "required": ["field", "op", "value"],
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "Column name to filter on"
+              },
+              "op": {
+                "type": "string",
+                "description": "Filter operator",
+                "enum": ["eq", "ne", "gt", "lt", "gte", "lte", "in", "contains"]
+              },
+              "value": {
+                "description": "Value to compare against (use array for 'in' operator)"
+              }
+            }
+          }
         }
       }
     }
   }
 }
-

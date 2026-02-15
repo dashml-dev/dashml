@@ -616,6 +616,7 @@ if __name__ == '__main__':
       const sortField = options.sort;
       const sortOrder = options.sortOrder || 'asc';
       const limit = options.limit;
+      const sizeField = options.sizeField;
 
       // Apply filters first
       let filtered = applyFilters(data, filters);
@@ -626,9 +627,10 @@ if __name__ == '__main__':
       const grouped = {};
       filtered.forEach(row => {
         const key = row[x];
-        if (!grouped[key]) grouped[key] = { values: [], count: 0 };
+        if (!grouped[key]) grouped[key] = { values: [], count: 0, sizeValues: [] };
         grouped[key].values.push(row[y]);
         grouped[key].count++;
+        if (sizeField) grouped[key].sizeValues.push(parseFloat(row[sizeField]) || 0);
       });
 
       let result = [];
@@ -641,7 +643,17 @@ if __name__ == '__main__':
           case 'count': aggregated = grouped[key].count; break;
           default: aggregated = values.reduce((a, b) => a + b, 0);
         }
-        result.push({ x: key, y: aggregated });
+        const entry = { x: key, y: aggregated };
+        if (sizeField) {
+          const sizeVals = grouped[key].sizeValues;
+          switch (agg) {
+            case 'sum': entry.size = sizeVals.reduce((a, b) => a + b, 0); break;
+            case 'mean': entry.size = sizeVals.reduce((a, b) => a + b, 0) / sizeVals.length; break;
+            case 'count': entry.size = grouped[key].count; break;
+            default: entry.size = sizeVals.reduce((a, b) => a + b, 0);
+          }
+        }
+        result.push(entry);
       });
 
       // Sort
@@ -696,6 +708,64 @@ if __name__ == '__main__':
 
       // Sort based on sortField or default x_type
       result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    // Aggregate data for bubble charts: group by groupField, aggregate x, y, size independently
+    function aggregateBubbleData(data, groupField, xMetric, yMetric, sizeMetric, agg, options) {
+      options = options || {};
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const key = row[groupField];
+        if (!grouped[key]) grouped[key] = { xValues: [], yValues: [], sizeValues: [], count: 0 };
+        grouped[key].xValues.push(parseFloat(row[xMetric]) || 0);
+        grouped[key].yValues.push(parseFloat(row[yMetric]) || 0);
+        grouped[key].sizeValues.push(parseFloat(row[sizeMetric]) || 0);
+        grouped[key].count++;
+      });
+
+      function aggArray(values, count) {
+        switch (agg) {
+          case 'sum': return values.reduce((a, b) => a + b, 0);
+          case 'mean': return values.reduce((a, b) => a + b, 0) / values.length;
+          case 'count': return count;
+          default: return values.reduce((a, b) => a + b, 0);
+        }
+      }
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const g = grouped[key];
+        result.push({
+          group: key,
+          x: aggArray(g.xValues, g.count),
+          y: aggArray(g.yValues, g.count),
+          size: aggArray(g.sizeValues, g.count)
+        });
+      });
+
+      // Sort by x by default
+      if (sortField === 'y') {
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.y - b.y : b.y - a.y);
+      } else {
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.x - b.x : b.x - a.x);
+      }
 
       // Limit
       if (limit && limit > 0) {
@@ -820,10 +890,31 @@ if __name__ == '__main__':
         filters: chart.filters || [],
         sort: chart.sort,
         sortOrder: chart.sort_order || 'asc',
-        limit: chart.limit
+        limit: chart.limit,
+        sizeField: chart.size
       }};
 
-      if (chart.type === 'stacked_bar' || chart.type === 'grouped_bar') {{
+      if (chart.type === 'bubble' && chart.group) {{
+        // Bubble chart: 4D visualization (group, x, y, size)
+        const bubbleData = aggregateBubbleData(window.dashmlData, chart.group, chart.x, chart.y, chart.size || chart.y, chart.agg || 'sum', aggOptions);
+        const bubbleSizeVals = bubbleData.map(d => Math.abs(d.size));
+        const maxSize = Math.max(...bubbleSizeVals);
+        const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
+        traces.push({{
+          x: bubbleData.map(d => d.x),
+          y: bubbleData.map(d => d.y),
+          text: bubbleData.map(d => d.group),
+          type: 'scatter',
+          mode: 'markers+text',
+          textposition: 'top center',
+          marker: {{
+            size: normalizedSizes,
+            color: theme.secondary ? theme.secondary.slice(0, bubbleData.length) : theme.primary,
+            sizemode: 'diameter'
+          }},
+          hovertemplate: bubbleData.map(d => `${{d.group}}<br>${{chart.x}}: ${{d.x}}<br>${{chart.y}}: ${{d.y}}<br>${{chart.size || chart.y}}: ${{d.size}}<extra></extra>`)
+        }});
+      }} else if (chart.type === 'stacked_bar' || chart.type === 'grouped_bar') {{
         // Stacked/grouped bars need multiple traces
         const aggregated = aggregateDataWithGroup(window.dashmlData, chart.x, chart.y, chart.group, chart.agg || 'sum', aggOptions);
         const groupValues = [...new Set(aggregated.map(d => d.group))];
@@ -841,7 +932,7 @@ if __name__ == '__main__':
 
         barmode = chart.type === 'stacked_bar' ? 'stack' : 'group';
       }} else {{
-        let xValues, yValues;
+        let xValues, yValues, sizeValues;
         if (chartsUseRawData.has(chart.type)) {{
           // Use raw data for histogram - apply filters only
           let filteredData = applyFilters(window.dashmlData, aggOptions.filters);
@@ -852,6 +943,7 @@ if __name__ == '__main__':
           const aggregated = aggregateData(window.dashmlData, chart.x, chart.y, chart.agg || 'sum', aggOptions);
           xValues = aggregated.map(d => d.x);
           yValues = aggregated.map(d => d.y);
+          if (aggOptions.sizeField) sizeValues = aggregated.map(d => d.size);
         }}
 
         let trace;
@@ -865,6 +957,20 @@ if __name__ == '__main__':
         case 'scatter':
           trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: {{ size: 10, color: theme.primary }} }};
           break;
+        case 'heatmap':
+          // Heatmap: 2D grid with color intensity
+          // Requires aggregated data with x, y (group), and value
+          const heatmapData = aggregateDataWithGroup(window.dashmlData, chart.x, chart.y, chart.group || chart.y, chart.agg || 'sum', aggOptions);
+          const heatmapX = [...new Set(heatmapData.map(d => d.x))];
+          const heatmapY = [...new Set(heatmapData.map(d => d.group))];
+          const heatmapZ = heatmapY.map(yVal =>
+            heatmapX.map(xVal => {{
+              const found = heatmapData.find(d => d.x === xVal && d.group === yVal);
+              return found ? found.y : 0;
+            }})
+          );
+          trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+          break;
         case 'pie':
           trace = {{ labels: xValues, values: yValues, type: 'pie', marker: {{ colors: theme.secondary }} }};
           break;
@@ -873,6 +979,19 @@ if __name__ == '__main__':
           break;
         case 'histogram':
           trace = {{ x: xValues, type: 'histogram', nbinsx: chart.bins || 20, marker: {{ color: theme.primary }} }};
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          // Group by x, show distribution of y values
+          const boxGroups = [...new Set(window.dashmlData.map(d => d[chart.x]))];
+          boxGroups.forEach(group => {{
+            traces.push({{
+              y: window.dashmlData.filter(d => d[chart.x] === group).map(d => d[chart.y]),
+              name: group,
+              type: 'box',
+              marker: {{ color: theme.primary }}
+            }});
+          }});
           break;
         case 'geo':
           trace = {{
@@ -888,7 +1007,7 @@ if __name__ == '__main__':
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
       }}
 
-      traces.push(trace);
+      if (trace) traces.push(trace);
       }}
 
       let layout;
@@ -993,16 +1112,35 @@ if __name__ == '__main__':
             group = chart.get("group")
             title = chart.get("title", chart_id)
             x_type = chart.get("x_type")  # Optional: "date", "number", "string"
+            y_type = chart.get("y_type")  # Optional: "number", "string"
             bins = chart.get("bins", 20)  # Number of bins for histogram
+            filters = chart.get("filters", [])  # Optional: filter conditions
+            sort_field = chart.get("sort")  # Optional: "x" or "y"
+            sort_order = chart.get("sort_order", "asc")  # Optional: "asc" or "desc"
+            limit = chart.get("limit")  # Optional: max rows after aggregation
+            size_field = chart.get("size")  # Optional: size field for bubble charts
+
+            # Build options object for aggregation
+            options_obj = {
+                "xType": x_type,
+                "yType": y_type,
+                "filters": filters,
+                "sort": sort_field,
+                "sortOrder": sort_order,
+                "limit": limit
+            }
+            if size_field:
+                options_obj["sizeField"] = size_field
+            options_js = json.dumps(options_obj)
 
             # Check if this is stacked/grouped bar
             if chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
-                x_type_js = f"'{x_type}'" if x_type else "undefined"
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
       // Stacked/grouped bars need multiple traces
-      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', {x_type_js});
+      const options = {options_js};
+      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', options);
       const groupValues = [...new Set(aggregated.map(d => d.group))];
 
       const traces = [];
@@ -1029,24 +1167,97 @@ if __name__ == '__main__':
 
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
+            elif chart_type == "bubble" and group:
+                chart_functions.append(f'''
+    function render_{chart_id}(data) {{
+      // Bubble chart: 4D visualization (group, x, y, size)
+      const options = {options_js};
+      const bubbleData = aggregateBubbleData(data, '{group}', '{x}', '{y}', '{size_field or y}', '{agg}', options);
+      const bubbleSizeVals = bubbleData.map(d => Math.abs(d.size));
+      const maxSize = Math.max(...bubbleSizeVals);
+      const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
+
+      const trace = {{
+        x: bubbleData.map(d => d.x),
+        y: bubbleData.map(d => d.y),
+        text: bubbleData.map(d => d.group),
+        type: 'scatter',
+        mode: 'markers+text',
+        textposition: 'top center',
+        marker: {{
+          size: normalizedSizes,
+          color: theme.secondary ? theme.secondary.slice(0, bubbleData.length) : theme.primary,
+          sizemode: 'diameter'
+        }},
+        hovertemplate: bubbleData.map(d => d.group + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>{size_field or y}: ' + d.size + '<extra></extra>')
+      }};
+
+      const layout = {{
+        title: {{ text: '{title}', font: {{ color: theme.text }} }},
+        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
+        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      }};
+
+      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
+    }}''')
+            elif chart_type == "heatmap":
+                heatmap_y = group if group else y
+                chart_functions.append(f'''
+    function render_{chart_id}(data) {{
+      // Heatmap: 2D grid with color intensity
+      const options = {options_js};
+      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{heatmap_y}', '{agg}', options);
+      const heatmapX = [...new Set(aggregated.map(d => d.x))];
+      const heatmapY = [...new Set(aggregated.map(d => d.group))];
+      const heatmapZ = heatmapY.map(yVal =>
+        heatmapX.map(xVal => {{
+          const found = aggregated.find(d => d.x === xVal && d.group === yVal);
+          return found ? found.y : 0;
+        }})
+      );
+
+      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+
+      const layout = {{
+        title: {{ text: '{title}', font: {{ color: theme.text }} }},
+        xaxis: {{ title: '{x}', color: theme.text }},
+        yaxis: {{ title: '{heatmap_y}', color: theme.text }},
+        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      }};
+
+      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
+    }}''')
             else:
                 # Standard single-trace charts
-                x_type_js = f"'{x_type}'" if x_type else "undefined"
                 if chart_type in CHARTS_USE_RAW_DATA:
+                    # Raw data charts still need filter support
+                    filters_js = json.dumps(filters)
                     data_prep = f'''
-      // Use raw data for {chart_type}
-      const xValues = data.map(d => d['{x}']);
-      const yValues = data.map(d => d['{y}']);'''
+      // Use raw data for {chart_type} (with filters)
+      const filters = {filters_js};
+      const filteredData = applyFilters(data, filters);
+      const xValues = filteredData.map(d => d['{x}']);
+      const yValues = filteredData.map(d => d['{y}']);'''
                 else:
+                    size_values_code = ""
+                    if size_field:
+                        size_values_code = f"\n      const sizeValues = grouped.map(d => d.size);"
                     data_prep = f'''
-      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', {x_type_js});
-      const xValues = grouped.map(d => d.{x});
-      const yValues = grouped.map(d => d.{y});'''
+      const options = {options_js};
+      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);{size_values_code}'''
 
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{{data_prep}
 
       let trace;
+      let traces = [];
       switch ('{chart_type}') {{
         case 'line':
           trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: {{ color: theme.primary }} }};
@@ -1063,6 +1274,18 @@ if __name__ == '__main__':
         case 'histogram':
           trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
           break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_{chart_id.replace('-', '_')} = [...new Set(data.map(d => d['{x}']))];
+          boxGroups_{chart_id.replace('-', '_')}.forEach(group => {{
+            traces.push({{
+              y: data.filter(d => d['{x}'] === group).map(d => parseFloat(d['{y}'])),
+              name: group,
+              type: 'box',
+              marker: {{ color: theme.primary }}
+            }});
+          }});
+          break;
         case 'geo':
           trace = {{
             type: 'choropleth',
@@ -1076,6 +1299,8 @@ if __name__ == '__main__':
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
       }}
+
+      if (trace) traces.push(trace);
 
       let layout;
       if ('{chart_type}' === 'geo') {{
@@ -1101,7 +1326,7 @@ if __name__ == '__main__':
         }};
       }}
 
-      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
+      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
 
         # Generate page show function
@@ -1129,50 +1354,163 @@ if __name__ == '__main__':
 {chr(10).join(render_pages)}
     }}'''
 
+        # Use the same full-featured aggregation functions as single-page mode
         return f'''  <script>
     const theme = {theme_json};
 
-    function aggregateData(data, xCol, yCol, aggFunc, xType) {{
-      const groups = {{}};
-      data.forEach(row => {{
-        const key = row[xCol];
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(parseFloat(row[yCol]) || 0);
+    // Apply filters to data
+    function applyFilters(data, filters) {{
+      if (!filters || filters.length === 0) return data;
+      return data.filter(row => {{
+        return filters.every(f => {{
+          const val = row[f.field];
+          switch (f.op) {{
+            case 'eq': return val === f.value;
+            case 'ne': return val !== f.value;
+            case 'gt': return val > f.value;
+            case 'lt': return val < f.value;
+            case 'gte': return val >= f.value;
+            case 'lte': return val <= f.value;
+            case 'in': return Array.isArray(f.value) && f.value.includes(val);
+            case 'contains': return String(val).includes(f.value);
+            default: return true;
+          }}
+        }});
       }});
+    }}
 
-      const result = Object.entries(groups).map(([key, values]) => {{
-        let aggValue;
-        switch (aggFunc) {{
-          case 'mean': aggValue = values.reduce((a, b) => a + b, 0) / values.length; break;
-          case 'count': aggValue = values.length; break;
-          default: aggValue = values.reduce((a, b) => a + b, 0);
+    // Cast y values based on y_type
+    function castYValues(data, y, yType) {{
+      if (!yType) return data;
+      return data.map(row => {{
+        const newRow = {{...row}};
+        if (yType === 'number') {{
+          newRow[y] = parseFloat(row[y]) || 0;
+        }} else if (yType === 'string') {{
+          newRow[y] = String(row[y]);
         }}
-        return {{ [xCol]: key, [yCol]: aggValue }};
+        return newRow;
+      }});
+    }}
+
+    // Sort aggregated data
+    function sortData(data, sortField, sortOrder, xType) {{
+      const result = [...data];
+      const ascending = sortOrder !== 'desc';
+
+      if (sortField === 'y') {{
+        result.sort((a, b) => ascending ? a.y - b.y : b.y - a.y);
+      }} else if (sortField === 'x') {{
+        if (xType === 'date') {{
+          result.sort((a, b) => {{
+            const diff = new Date(a.x) - new Date(b.x);
+            return ascending ? diff : -diff;
+          }});
+        }} else if (xType === 'number') {{
+          result.sort((a, b) => ascending ? a.x - b.x : b.x - a.x);
+        }} else {{
+          result.sort((a, b) => {{
+            const cmp = String(a.x).localeCompare(String(b.x));
+            return ascending ? cmp : -cmp;
+          }});
+        }}
+      }} else if (xType === 'date') {{
+        // Default: sort by date if x_type is date
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      }} else if (xType === 'number') {{
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }} else {{
+        // Default: sort strings alphabetically for consistency across transformers
+        result.sort((a, b) => String(a.x).localeCompare(String(b.x)));
+      }}
+      return result;
+    }}
+
+    function aggregateData(data, x, y, agg, options) {{
+      options = options || {{}};
+      const xType = options.xType;
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+      const sizeField = options.sizeField;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
+      const grouped = {{}};
+      filtered.forEach(row => {{
+        const key = row[x];
+        if (!grouped[key]) grouped[key] = {{ values: [], count: 0, sizeValues: [] }};
+        grouped[key].values.push(row[y]);
+        grouped[key].count++;
+        if (sizeField) grouped[key].sizeValues.push(parseFloat(row[sizeField]) || 0);
       }});
 
-      // Sort based on x_type (explicit) or default string sort
-      if (xType === 'date') {{
-        result.sort((a, b) => new Date(a[xCol]) - new Date(b[xCol]));
-      }} else if (xType === 'number') {{
-        result.sort((a, b) => parseFloat(a[xCol]) - parseFloat(b[xCol]));
+      let result = [];
+      Object.keys(grouped).forEach(key => {{
+        const values = grouped[key].values;
+        let aggregated;
+        switch (agg) {{
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = grouped[key].count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }}
+        const entry = {{ x: key, y: aggregated }};
+        if (sizeField) {{
+          const sizeVals = grouped[key].sizeValues;
+          switch (agg) {{
+            case 'sum': entry.size = sizeVals.reduce((a, b) => a + b, 0); break;
+            case 'mean': entry.size = sizeVals.reduce((a, b) => a + b, 0) / sizeVals.length; break;
+            case 'count': entry.size = grouped[key].count; break;
+            default: entry.size = sizeVals.reduce((a, b) => a + b, 0);
+          }}
+        }}
+        result.push(entry);
+      }});
+
+      // Sort
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {{
+        result = result.slice(0, limit);
       }}
-      // No sort for 'string' or undefined - keep aggregation order
 
       return result;
     }}
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {{
+    function aggregateDataWithGroup(data, x, y, groupField, agg, options) {{
+      options = options || {{}};
+      const xType = options.xType;
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
       const grouped = {{}};
-      data.forEach(row => {{
+      filtered.forEach(row => {{
         const xKey = row[x];
         const groupKey = row[groupField];
         const compositeKey = xKey + '|||' + groupKey;
         if (!grouped[compositeKey]) grouped[compositeKey] = {{ x: xKey, group: groupKey, values: [], count: 0 }};
-        grouped[compositeKey].values.push(parseFloat(row[y]) || 0);
+        grouped[compositeKey].values.push(row[y]);
         grouped[compositeKey].count++;
       }});
 
-      const result = [];
+      let result = [];
       Object.keys(grouped).forEach(key => {{
         const entry = grouped[key];
         const values = entry.values;
@@ -1186,11 +1524,67 @@ if __name__ == '__main__':
         result.push({{ x: entry.x, group: entry.group, y: aggregated }});
       }});
 
-      // Sort based on x_type
-      if (xType === 'date') {{
-        result.sort((a, b) => new Date(a.x) - new Date(b.x));
-      }} else if (xType === 'number') {{
-        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      // Sort based on sortField or default x_type
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {{
+        result = result.slice(0, limit);
+      }}
+
+      return result;
+    }}
+
+    // Aggregate data for bubble charts: group by groupField, aggregate x, y, size independently
+    function aggregateBubbleData(data, groupField, xMetric, yMetric, sizeMetric, agg, options) {{
+      options = options || {{}};
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      let filtered = applyFilters(data, filters);
+
+      const grouped = {{}};
+      filtered.forEach(row => {{
+        const key = row[groupField];
+        if (!grouped[key]) grouped[key] = {{ xValues: [], yValues: [], sizeValues: [], count: 0 }};
+        grouped[key].xValues.push(parseFloat(row[xMetric]) || 0);
+        grouped[key].yValues.push(parseFloat(row[yMetric]) || 0);
+        grouped[key].sizeValues.push(parseFloat(row[sizeMetric]) || 0);
+        grouped[key].count++;
+      }});
+
+      function aggArray(values, count) {{
+        switch (agg) {{
+          case 'sum': return values.reduce((a, b) => a + b, 0);
+          case 'mean': return values.reduce((a, b) => a + b, 0) / values.length;
+          case 'count': return count;
+          default: return values.reduce((a, b) => a + b, 0);
+        }}
+      }}
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {{
+        const g = grouped[key];
+        result.push({{
+          group: key,
+          x: aggArray(g.xValues, g.count),
+          y: aggArray(g.yValues, g.count),
+          size: aggArray(g.sizeValues, g.count)
+        }});
+      }});
+
+      if (sortField === 'y') {{
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.y - b.y : b.y - a.y);
+      }} else {{
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.x - b.x : b.x - a.x);
+      }}
+
+      if (limit && limit > 0) {{
+        result = result.slice(0, limit);
       }}
 
       return result;
@@ -1490,16 +1884,35 @@ if __name__ == '__main__':
             group = chart.get("group")
             title = chart.get("title", chart_id)
             x_type = chart.get("x_type")  # Optional: "date", "number", "string"
+            y_type = chart.get("y_type")  # Optional: "number", "string"
             bins = chart.get("bins", 20)  # Number of bins for histogram
+            filters = chart.get("filters", [])  # Optional: filter conditions
+            sort_field = chart.get("sort")  # Optional: "x" or "y"
+            sort_order = chart.get("sort_order", "asc")  # Optional: "asc" or "desc"
+            limit = chart.get("limit")  # Optional: max rows after aggregation
+            size_field = chart.get("size")  # Optional: size field for bubble charts
+
+            # Build options object for aggregation
+            options_obj = {
+                "xType": x_type,
+                "yType": y_type,
+                "filters": filters,
+                "sort": sort_field,
+                "sortOrder": sort_order,
+                "limit": limit
+            }
+            if size_field:
+                options_obj["sizeField"] = size_field
+            options_js = json.dumps(options_obj)
 
             # Check if this is stacked/grouped bar
             if chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
-                x_type_js = f"'{x_type}'" if x_type else "undefined"
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
       // Stacked/grouped bars need multiple traces
-      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', {x_type_js});
+      const options = {options_js};
+      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', options);
       const groupValues = [...new Set(aggregated.map(d => d.group))];
 
       const traces = [];
@@ -1526,24 +1939,97 @@ if __name__ == '__main__':
 
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
+            elif chart_type == "bubble" and group:
+                chart_functions.append(f'''
+    function render_{chart_id}(data) {{
+      // Bubble chart: 4D visualization (group, x, y, size)
+      const options = {options_js};
+      const bubbleData = aggregateBubbleData(data, '{group}', '{x}', '{y}', '{size_field or y}', '{agg}', options);
+      const bubbleSizeVals = bubbleData.map(d => Math.abs(d.size));
+      const maxSize = Math.max(...bubbleSizeVals);
+      const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
+
+      const trace = {{
+        x: bubbleData.map(d => d.x),
+        y: bubbleData.map(d => d.y),
+        text: bubbleData.map(d => d.group),
+        type: 'scatter',
+        mode: 'markers+text',
+        textposition: 'top center',
+        marker: {{
+          size: normalizedSizes,
+          color: theme.secondary ? theme.secondary.slice(0, bubbleData.length) : theme.primary,
+          sizemode: 'diameter'
+        }},
+        hovertemplate: bubbleData.map(d => d.group + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>{size_field or y}: ' + d.size + '<extra></extra>')
+      }};
+
+      const layout = {{
+        title: {{ text: '{title}', font: {{ color: theme.text }} }},
+        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
+        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      }};
+
+      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
+    }}''')
+            elif chart_type == "heatmap":
+                heatmap_y = group if group else y
+                chart_functions.append(f'''
+    function render_{chart_id}(data) {{
+      // Heatmap: 2D grid with color intensity
+      const options = {options_js};
+      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{heatmap_y}', '{agg}', options);
+      const heatmapX = [...new Set(aggregated.map(d => d.x))];
+      const heatmapY = [...new Set(aggregated.map(d => d.group))];
+      const heatmapZ = heatmapY.map(yVal =>
+        heatmapX.map(xVal => {{
+          const found = aggregated.find(d => d.x === xVal && d.group === yVal);
+          return found ? found.y : 0;
+        }})
+      );
+
+      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+
+      const layout = {{
+        title: {{ text: '{title}', font: {{ color: theme.text }} }},
+        xaxis: {{ title: '{x}', color: theme.text }},
+        yaxis: {{ title: '{heatmap_y}', color: theme.text }},
+        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      }};
+
+      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
+    }}''')
             else:
                 # Standard single-trace charts
-                x_type_js = f"'{x_type}'" if x_type else "undefined"
                 if chart_type in CHARTS_USE_RAW_DATA:
+                    # Raw data charts still need filter support
+                    filters_js = json.dumps(filters)
                     data_prep = f'''
-      // Use raw data for {chart_type}
-      const xValues = data.map(d => d['{x}'] || d.{x});
-      const yValues = data.map(d => d['{y}'] || d.{y});'''
+      // Use raw data for {chart_type} (with filters)
+      const filters = {filters_js};
+      const filteredData = applyFilters(data, filters);
+      const xValues = filteredData.map(d => d['{x}'] || d.{x});
+      const yValues = filteredData.map(d => d['{y}'] || d.{y});'''
                 else:
+                    size_values_code = ""
+                    if size_field:
+                        size_values_code = f"\n      const sizeValues = grouped.map(d => d.size);"
                     data_prep = f'''
-      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', {x_type_js});
+      const options = {options_js};
+      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', options);
       const xValues = grouped.map(d => d.x);
-      const yValues = grouped.map(d => d.y);'''
+      const yValues = grouped.map(d => d.y);{size_values_code}'''
 
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{{data_prep}
 
       let trace;
+      let traces = [];
       switch ('{chart_type}') {{
         case 'line':
           trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: {{ color: theme.primary }} }};
@@ -1560,6 +2046,18 @@ if __name__ == '__main__':
         case 'histogram':
           trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
           break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_{chart_id.replace('-', '_')} = [...new Set(data.map(d => d['{x}']))];
+          boxGroups_{chart_id.replace('-', '_')}.forEach(group => {{
+            traces.push({{
+              y: data.filter(d => d['{x}'] === group).map(d => parseFloat(d['{y}'])),
+              name: group,
+              type: 'box',
+              marker: {{ color: theme.primary }}
+            }});
+          }});
+          break;
         case 'geo':
           trace = {{
             type: 'choropleth',
@@ -1573,6 +2071,8 @@ if __name__ == '__main__':
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
       }}
+
+      if (trace) traces.push(trace);
 
       let layout;
       if ('{chart_type}' === 'geo') {{
@@ -1598,7 +2098,7 @@ if __name__ == '__main__':
         }};
       }}
 
-      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
+      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
 
         # Generate page show function
@@ -1626,6 +2126,7 @@ if __name__ == '__main__':
 {chr(10).join(render_pages)}
     }}'''
 
+        # Use the same full-featured aggregation functions with schema support
         return f'''  <script>
     const theme = {theme_json};
     // Column types from INFORMATION_SCHEMA (auto-detected)
@@ -1637,53 +2138,159 @@ if __name__ == '__main__':
       return columnTypes[xColumn] || undefined;
     }}
 
-    function aggregateData(data, xCol, yCol, aggFunc, xType) {{
-      // Use schema-detected type if no explicit type provided
-      const effectiveXType = getEffectiveXType(xCol, xType);
-
-      const groups = {{}};
-      data.forEach(row => {{
-        const key = row[xCol];
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(parseFloat(row[yCol]) || 0);
+    // Apply filters to data
+    function applyFilters(data, filters) {{
+      if (!filters || filters.length === 0) return data;
+      return data.filter(row => {{
+        return filters.every(f => {{
+          const val = row[f.field];
+          switch (f.op) {{
+            case 'eq': return val === f.value;
+            case 'ne': return val !== f.value;
+            case 'gt': return val > f.value;
+            case 'lt': return val < f.value;
+            case 'gte': return val >= f.value;
+            case 'lte': return val <= f.value;
+            case 'in': return Array.isArray(f.value) && f.value.includes(val);
+            case 'contains': return String(val).includes(f.value);
+            default: return true;
+          }}
+        }});
       }});
+    }}
 
-      const result = Object.entries(groups).map(([key, values]) => {{
-        let aggValue;
-        switch (aggFunc) {{
-          case 'mean': aggValue = values.reduce((a, b) => a + b, 0) / values.length; break;
-          case 'count': aggValue = values.length; break;
-          default: aggValue = values.reduce((a, b) => a + b, 0);
+    // Cast y values based on y_type
+    function castYValues(data, y, yType) {{
+      if (!yType) return data;
+      return data.map(row => {{
+        const newRow = {{...row}};
+        if (yType === 'number') {{
+          newRow[y] = parseFloat(row[y]) || 0;
+        }} else if (yType === 'string') {{
+          newRow[y] = String(row[y]);
         }}
-        return {{ x: key, y: aggValue }};
+        return newRow;
+      }});
+    }}
+
+    // Sort aggregated data
+    function sortData(data, sortField, sortOrder, xType) {{
+      const result = [...data];
+      const ascending = sortOrder !== 'desc';
+
+      if (sortField === 'y') {{
+        result.sort((a, b) => ascending ? a.y - b.y : b.y - a.y);
+      }} else if (sortField === 'x') {{
+        if (xType === 'date') {{
+          result.sort((a, b) => {{
+            const diff = new Date(a.x) - new Date(b.x);
+            return ascending ? diff : -diff;
+          }});
+        }} else if (xType === 'number') {{
+          result.sort((a, b) => ascending ? a.x - b.x : b.x - a.x);
+        }} else {{
+          result.sort((a, b) => {{
+            const cmp = String(a.x).localeCompare(String(b.x));
+            return ascending ? cmp : -cmp;
+          }});
+        }}
+      }} else if (xType === 'date') {{
+        // Default: sort by date if x_type is date
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      }} else if (xType === 'number') {{
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      }} else {{
+        // Default: sort strings alphabetically for consistency across transformers
+        result.sort((a, b) => String(a.x).localeCompare(String(b.x)));
+      }}
+      return result;
+    }}
+
+    function aggregateData(data, x, y, agg, options) {{
+      options = options || {{}};
+      const xType = options.xType || getEffectiveXType(x, options.xType);
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+      const sizeField = options.sizeField;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
+      const grouped = {{}};
+      filtered.forEach(row => {{
+        const key = row[x];
+        if (!grouped[key]) grouped[key] = {{ values: [], count: 0, sizeValues: [] }};
+        grouped[key].values.push(row[y]);
+        grouped[key].count++;
+        if (sizeField) grouped[key].sizeValues.push(parseFloat(row[sizeField]) || 0);
       }});
 
-      // Sort based on effective x_type (explicit or schema-detected)
-      if (effectiveXType === 'date') {{
-        result.sort((a, b) => new Date(a.x) - new Date(b.x));
-      }} else if (effectiveXType === 'number') {{
-        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      let result = [];
+      Object.keys(grouped).forEach(key => {{
+        const values = grouped[key].values;
+        let aggregated;
+        switch (agg) {{
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = grouped[key].count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }}
+        const entry = {{ x: key, y: aggregated }};
+        if (sizeField) {{
+          const sizeVals = grouped[key].sizeValues;
+          switch (agg) {{
+            case 'sum': entry.size = sizeVals.reduce((a, b) => a + b, 0); break;
+            case 'mean': entry.size = sizeVals.reduce((a, b) => a + b, 0) / sizeVals.length; break;
+            case 'count': entry.size = grouped[key].count; break;
+            default: entry.size = sizeVals.reduce((a, b) => a + b, 0);
+          }}
+        }}
+        result.push(entry);
+      }});
+
+      // Sort
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {{
+        result = result.slice(0, limit);
       }}
-      // No sort for 'string' or undefined
 
       return result;
     }}
 
-    function aggregateDataWithGroup(data, x, y, groupField, agg, xType) {{
-      // Use schema-detected type if no explicit type provided
-      const effectiveXType = getEffectiveXType(x, xType);
+    function aggregateDataWithGroup(data, x, y, groupField, agg, options) {{
+      options = options || {{}};
+      const xType = options.xType || getEffectiveXType(x, options.xType);
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
 
       const grouped = {{}};
-      data.forEach(row => {{
+      filtered.forEach(row => {{
         const xKey = row[x];
         const groupKey = row[groupField];
         const compositeKey = xKey + '|||' + groupKey;
         if (!grouped[compositeKey]) grouped[compositeKey] = {{ x: xKey, group: groupKey, values: [], count: 0 }};
-        grouped[compositeKey].values.push(parseFloat(row[y]) || 0);
+        grouped[compositeKey].values.push(row[y]);
         grouped[compositeKey].count++;
       }});
 
-      const result = [];
+      let result = [];
       Object.keys(grouped).forEach(key => {{
         const entry = grouped[key];
         const values = entry.values;
@@ -1697,11 +2304,67 @@ if __name__ == '__main__':
         result.push({{ x: entry.x, group: entry.group, y: aggregated }});
       }});
 
-      // Sort based on effective x_type (explicit or schema-detected)
-      if (effectiveXType === 'date') {{
-        result.sort((a, b) => new Date(a.x) - new Date(b.x));
-      }} else if (effectiveXType === 'number') {{
-        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      // Sort based on sortField or default x_type
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {{
+        result = result.slice(0, limit);
+      }}
+
+      return result;
+    }}
+
+    // Aggregate data for bubble charts: group by groupField, aggregate x, y, size independently
+    function aggregateBubbleData(data, groupField, xMetric, yMetric, sizeMetric, agg, options) {{
+      options = options || {{}};
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      let filtered = applyFilters(data, filters);
+
+      const grouped = {{}};
+      filtered.forEach(row => {{
+        const key = row[groupField];
+        if (!grouped[key]) grouped[key] = {{ xValues: [], yValues: [], sizeValues: [], count: 0 }};
+        grouped[key].xValues.push(parseFloat(row[xMetric]) || 0);
+        grouped[key].yValues.push(parseFloat(row[yMetric]) || 0);
+        grouped[key].sizeValues.push(parseFloat(row[sizeMetric]) || 0);
+        grouped[key].count++;
+      }});
+
+      function aggArray(values, count) {{
+        switch (agg) {{
+          case 'sum': return values.reduce((a, b) => a + b, 0);
+          case 'mean': return values.reduce((a, b) => a + b, 0) / values.length;
+          case 'count': return count;
+          default: return values.reduce((a, b) => a + b, 0);
+        }}
+      }}
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {{
+        const g = grouped[key];
+        result.push({{
+          group: key,
+          x: aggArray(g.xValues, g.count),
+          y: aggArray(g.yValues, g.count),
+          size: aggArray(g.sizeValues, g.count)
+        }});
+      }});
+
+      if (sortField === 'y') {{
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.y - b.y : b.y - a.y);
+      }} else {{
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.x - b.x : b.x - a.x);
+      }}
+
+      if (limit && limit > 0) {{
+        result = result.slice(0, limit);
       }}
 
       return result;

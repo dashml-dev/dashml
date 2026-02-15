@@ -22,7 +22,7 @@ class DashMLValidator:
     REQUIRED_TOP_LEVEL = ["version", "data"]
     # TODO: [Immutability] Use frozenset for constants to prevent accidental modification
     # SUPPORTED_CHART_TYPES = frozenset(["bar", "line", ...])
-    SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "pie", "area", "histogram", "stacked_bar", "grouped_bar", "geo"]
+    SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "bubble", "heatmap", "box", "pie", "area", "histogram", "stacked_bar", "grouped_bar", "geo"]
     SUPPORTED_DATA_TYPES = ["csv", "sql", "bigquery"]  # CSV, SQL, and BigQuery datasources
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
     SUPPORTED_COLUMN_TYPES = ["date", "number", "string"]  # For x_type/y_type hints
@@ -202,10 +202,17 @@ class DashMLValidator:
             )
 
         # Group field validation for stacked/grouped charts
-        if chart["type"] in ["stacked_bar", "grouped_bar"]:
+        if chart["type"] in ["stacked_bar", "grouped_bar", "bubble"]:
             if "group" not in chart:
                 raise ValidationError(
                     f"Chart '{chart['id']}' is type '{chart['type']}' and requires a 'group' field"
+                )
+
+        # Size field validation for bubble charts
+        if chart["type"] == "bubble":
+            if "size" not in chart:
+                raise ValidationError(
+                    f"Chart '{chart['id']}' is type 'bubble' and requires a 'size' field"
                 )
 
         # x_type validation (optional field)

@@ -6,6 +6,7 @@
     <title>SQL Definitive - All Chart Types</title>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
     <style>
         * {
             margin: 0;
@@ -98,6 +99,8 @@
         let columnTypes = {};
         // Load data from Flask API
         let dashmlData = [];
+        // World topojson for geo charts
+        window.worldTopojson = null;
 
         // Get effective type: explicit > schema-detected > undefined
         function getEffectiveType(column, explicitType) {
@@ -105,13 +108,17 @@
             return columnTypes[column] || undefined;
         }
 
-        // Fetch schema first, then data
+        // Fetch schema, data, and world topojson in parallel
         Promise.all([
             fetch('/api/schema').then(r => r.json()),
-            fetch('/api/data').then(r => r.json())
+            fetch('/api/data').then(r => r.json()),
+            fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(r => r.json())
         ])
-            .then(([schema, data]) => {
+            .then(([schema, data, worldData]) => {
                 columnTypes = schema;
+
+                // Convert topojson to geojson for Observable Plot
+                window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
 
                 // Parse ISO 8601 date strings to Date objects
                 // Server already cast types, we just need to parse ISO dates
@@ -161,6 +168,10 @@
             <h2>Orders by Payment Method (Stacked by Status)</h2>
             <div id="chart-categorical_charts-stacked_bar_payment_status"></div>
         </div>
+        <div class="card">
+            <h2>Sales by Country (Map)</h2>
+            <div id="chart-categorical_charts-geo_sales_by_country"></div>
+        </div>
     </div>
     <div id="page-time_series" class="page-content">
         <p class="page-description">Line and area charts for temporal trends</p>
@@ -174,7 +185,7 @@
         </div>
     </div>
     <div id="page-distribution" class="page-content">
-        <p class="page-description">Scatter plots and histograms</p>
+        <p class="page-description">Scatter plots, histograms, box plots, bubble charts, and heatmaps</p>
         <div class="card">
             <h2>Order Amount vs Tax Amount</h2>
             <div id="chart-distribution-scatter_amount_vs_tax"></div>
@@ -182,6 +193,18 @@
         <div class="card">
             <h2>Distribution of Order Amounts</h2>
             <div id="chart-distribution-histogram_order_amounts"></div>
+        </div>
+        <div class="card">
+            <h2>Order Amount Distribution by Status</h2>
+            <div id="chart-distribution-box_amount_by_status"></div>
+        </div>
+        <div class="card">
+            <h2>Sales vs Tax by Region</h2>
+            <div id="chart-distribution-bubble_region_sales"></div>
+        </div>
+        <div class="card">
+            <h2>Order Count by Country and Status</h2>
+            <div id="chart-distribution-heatmap_country_status"></div>
         </div>
     </div>
     <script>
@@ -488,6 +511,104 @@
                 }
             });
             document.getElementById('chart-categorical_charts-stacked_bar_payment_status').appendChild(plot_stacked_bar_payment_status);
+            // Chart: geo_sales_by_country
+            const data_geo_sales_by_country = (() => {
+                const effectiveXType = getEffectiveType('shipping_address_country', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['total_amount']),
+                    d => d['shipping_address_country']
+                ).map(([shipping_address_country, total_amount]) => ({ shipping_address_country, total_amount }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.shipping_address_country) - new Date(b.shipping_address_country));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].shipping_address_country;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.shipping_address_country).localeCompare(String(b.shipping_address_country)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_geo_sales_by_country = Plot.plot({
+                marks: [
+                    // Geo chart with country name normalization
+                    Plot.geo(window.worldTopojson, {
+                        fill: d => {
+                            // Country name normalization map
+                            const countryNameMap = {
+                                "USA": "United States of America",
+                                "US": "United States of America",
+                                "United States": "United States of America",
+                                "UK": "United Kingdom",
+                                "Britain": "United Kingdom",
+                                "Great Britain": "United Kingdom",
+                                "Russia": "Russian Federation",
+                                "South Korea": "Korea, Republic of",
+                                "Korea": "Korea, Republic of",
+                                "North Korea": "Korea, Democratic People's Republic of",
+                                "Iran": "Iran, Islamic Republic of",
+                                "Syria": "Syrian Arab Republic",
+                                "Venezuela": "Venezuela, Bolivarian Republic of",
+                                "Bolivia": "Bolivia, Plurinational State of",
+                                "Tanzania": "Tanzania, United Republic of",
+                                "Vietnam": "Viet Nam",
+                                "Laos": "Lao People's Democratic Republic",
+                                "Czech Republic": "Czechia",
+                                "Moldova": "Moldova, Republic of",
+                                "Taiwan": "Taiwan, Province of China"
+                            };
+                            const topoName = d.properties ? d.properties.name : null;
+                            if (!topoName) return null;
+                            const countryData = data_geo_sales_by_country.find(row => {
+                                if (!row.shipping_address_country) return false;
+                                const normalizedName = countryNameMap[row.shipping_address_country] || row.shipping_address_country;
+                                return normalizedName.toLowerCase() === topoName.toLowerCase();
+                            });
+                            return countryData ? countryData.total_amount : null;
+                        },
+                        stroke: "#ccc",
+                        strokeWidth: 0.5,
+                        tip: true
+                    })
+                ],
+                projection: "equal-earth",
+                color: {
+                    type: "linear",
+                    scheme: "blues",
+                    unknown: "#f0f0f0",
+                    legend: true,
+                    label: "total_amount"
+                },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-categorical_charts-geo_sales_by_country').appendChild(plot_geo_sales_by_country);
             // Chart: line_orders_over_time
             const data_line_orders_over_time = (() => {
                 const effectiveXType = getEffectiveType('order_date', 'date');
@@ -695,6 +816,150 @@
                 }
             });
             document.getElementById('chart-distribution-histogram_order_amounts').appendChild(plot_histogram_order_amounts);
+            // Chart: box_amount_by_status
+            const data_box_amount_by_status = dashmlData;
+            const plot_box_amount_by_status = Plot.plot({
+                marks: [
+                    Plot.boxY(data_box_amount_by_status, {
+                        x: "status",
+                        y: "total_amount",
+                        fill: "#29b5e8",
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-distribution-box_amount_by_status').appendChild(plot_box_amount_by_status);
+            // Chart: bubble_region_sales
+            const data_bubble_region_sales = (() => {
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => ({ total_amount: d3.sum(v, d => d['total_amount']), order_id: d3.sum(v, d => d['order_id']), total_amount: d3.sum(v, d => d['total_amount']) }),
+                    d => d['shipping_address_state']
+                ).map(([shipping_address_state, vals]) => ({ shipping_address_state, total_amount: vals.total_amount, order_id: vals.order_id, total_amount: vals.total_amount }));
+
+                // Sort
+                result.sort((a, b) => 1 * (a.total_amount - b.total_amount));
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_bubble_region_sales = Plot.plot({
+                marks: [
+                    Plot.dot(data_bubble_region_sales, {
+                        x: "total_amount",
+                        y: "order_id",
+                        fill: "shipping_address_state",
+                        r: d => {
+                            const maxVal = d3.max(data_bubble_region_sales, d => Math.abs(d["total_amount"]));
+                            return 5 + (Math.abs(d["total_amount"]) / maxVal) * 25;
+                        },
+                        tip: true
+                    }),
+                    Plot.text(data_bubble_region_sales, {
+                        x: "total_amount",
+                        y: "order_id",
+                        text: "shipping_address_state",
+                        dy: -12,
+                        fontSize: 10
+                    }),
+                    Plot.ruleY([0])
+                ],
+                color: {
+                    domain: [...new Set(data_bubble_region_sales.map(d => d.shipping_address_state))],
+                    range: ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+                },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-distribution-bubble_region_sales').appendChild(plot_bubble_region_sales);
+            // Chart: heatmap_country_status
+            const data_heatmap_country_status = (() => {
+                const effectiveXType = getEffectiveType('shipping_address_country', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['shipping_address_country'],
+                    d => d['status']
+                ).flatMap(([shipping_address_countryVal, groupData]) =>
+                    groupData.map(([statusVal, order_idVal]) => ({
+                        shipping_address_country: shipping_address_countryVal,
+                        status: statusVal,
+                        order_id: order_idVal
+                    }))
+                );
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.shipping_address_country) - new Date(b.shipping_address_country));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].shipping_address_country;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.shipping_address_country - b.shipping_address_country);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.shipping_address_country).localeCompare(String(b.shipping_address_country)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_heatmap_country_status = Plot.plot({
+                marks: [
+                    Plot.cell(data_heatmap_country_status, {
+                        x: "shipping_address_country",
+                        y: "status",
+                        fill: "order_id",
+                        tip: true
+                    })
+                ],
+                color: {
+                    type: "linear",
+                    scheme: "blues",
+                    legend: true,
+                    label: "order_id"
+                },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#000000"
+                }
+            });
+            document.getElementById('chart-distribution-heatmap_country_status').appendChild(plot_heatmap_country_status);
         }
     </script>
 </body>

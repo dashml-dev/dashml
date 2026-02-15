@@ -72,7 +72,7 @@ pages:
 
   - id: "distribution"
     title: "Distribution & Relationships"
-    description: "Scatter plots and histograms"
+    description: "Scatter plots, histograms, box plots, bubble charts, and heatmaps"
     charts:
       - id: "scatter_amount_vs_tax"
         type: "scatter"
@@ -88,3 +88,26 @@ pages:
         y: "order_id"
         agg: "count"
         bins: 20
+
+      - id: "box_amount_by_status"
+        type: "box"
+        title: "Order Amount Distribution by Status"
+        x: "status"
+        y: "total_amount"
+
+      - id: "bubble_region_sales"
+        type: "bubble"
+        title: "Sales vs Tax by Region"
+        group: "shipping_address_state"
+        x: "total_amount"
+        y: "tax_amount"
+        size: "total_amount"
+        agg: "sum"
+
+      - id: "heatmap_country_status"
+        type: "heatmap"
+        title: "Order Count by Country and Status"
+        x: "shipping_address_country"
+        y: "order_id"
+        group: "status"
+        agg: "count"

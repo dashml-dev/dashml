@@ -77,6 +77,9 @@ class ChartSpec(TypedDict, total=False):
     - bar: Vertical bar chart
     - line: Line chart with points
     - scatter: Scatter plot
+    - bubble: Bubble chart (scatter with size encoding, requires 'size' field)
+    - heatmap: Heatmap (2D grid with color intensity, x and y are both categorical)
+    - box: Box plot (shows distribution: min, Q1, median, Q3, max)
     - pie: Pie chart (uses secondary colors)
     - area: Filled area chart
     - histogram: Distribution histogram
@@ -109,7 +112,8 @@ class ChartSpec(TypedDict, total=False):
     x: str
     y: str
     agg: str  # sum, mean, or count
-    group: str  # Field to group/stack by (required for stacked_bar and grouped_bar)
+    group: str  # Field to group/stack by (required for stacked_bar, grouped_bar, and bubble)
+    size: str   # Field for bubble size (required for bubble chart)
     x_type: str  # Optional: "date", "number", or "string" - controls sorting/formatting
     y_type: str  # Optional: "number" or "string" - cast y values before aggregation
     bins: int  # Optional: Number of bins for histogram charts (default: 20)
