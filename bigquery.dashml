@@ -1,45 +1,73 @@
 version: 0.000000001
-title: "Sales Analytics Dashboard"
+title: "Flight Punctuality Dashboard"
 style: "styles/dracula.dmls"
 
 data:
   type: bigquery
-  path: products_postresql.orders_one_week
+  path: gold.punctuality_gold
 
 pages:
   - id: "overview"
-    title: "📊 Overview"
-    description: "High-level sales metrics and KPIs"
+    title: "Overview"
+    description: "High-level flight punctuality metrics"
     charts:
-      - id: "total_sales_by_country"
+      - id: "flights_by_airline"
         type: "bar"
-        title: "Total Sales by State"
-        x: "shipping_address_state"
-        y: "total_amount"
+        title: "Top 15 Airlines by Total Flights"
+        x: "airline_name"
+        y: "total_flights"
         agg: "sum"
+        sort: "y"
+        limit: 15
 
-      - id: "country_sales_breakdown"
+      - id: "airline_share"
         type: "pie"
-        title: "Market Share by State"
-        x: "shipping_address_state"
-        y: "total_amount"
+        title: "Flight Share - Top 10 Airlines"
+        x: "airline_name"
+        y: "total_flights"
         agg: "sum"
+        sort: "y"
+        limit: 10
 
-  - id: "trends"
-    title: "📈 Trends"
-    description: "Sales trends and patterns over time"
+  - id: "delays"
+    title: "Delays"
+    description: "Delay patterns and trends"
     charts:
-      - id: "sales_over_time"
-        type: "line"
-        title: "Sales Over Time"
-        x: "order_date"
-        y: "total_amount"
-        agg: "sum"
-
-      - id: "average_sales_trend"
-        type: "line"
-        title: "Average Daily Sales"
-        x: "order_date"
-        y: "total_amount"
+      - id: "avg_delay_by_airline"
+        type: "bar"
+        title: "Average Delay (mins) - Top 15 Airlines"
+        x: "airline_name"
+        y: "average_delay_mins"
         agg: "mean"
+        sort: "y"
+        limit: 15
 
+      - id: "delay_over_time"
+        type: "line"
+        title: "Average Delay Over Time"
+        x: "reporting_month"
+        y: "average_delay_mins"
+        agg: "mean"
+        x_type: "date"
+
+  - id: "cancellations"
+    title: "Cancellations"
+    description: "Cancellation rates across airlines and destinations"
+    charts:
+      - id: "cancellation_by_airline"
+        type: "bar"
+        title: "Cancellation Rate (%) - Top 15 Airlines by Flights"
+        x: "airline_name"
+        y: "flights_cancelled_percent"
+        agg: "mean"
+        sort: "y"
+        limit: 15
+
+      - id: "cancellation_by_destination"
+        type: "bar"
+        title: "Cancellation Rate (%) - Top 15 Destination Countries"
+        x: "origin_destination_country"
+        y: "flights_cancelled_percent"
+        agg: "mean"
+        sort: "y"
+        limit: 15
