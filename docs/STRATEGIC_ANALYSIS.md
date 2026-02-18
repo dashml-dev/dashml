@@ -228,6 +228,23 @@ Claude Sonnet has seen these patterns millions of times. There is no complexity 
 
 The experiment validates the infrastructure (prompts, runner, evaluator all work) but does **not** validate the thesis. The thesis can only be tested once the DSL includes features whose raw code equivalents involve real complexity: session state, cross-chart callbacks, multi-step data pipelines, error handling for nulls/types. These are the Tier 1 DSL features listed below.
 
+### The Abstraction Thesis: Why the Advantage is Compositional
+
+The null result does not invalidate DashML's core bet. A simpler, higher-abstraction language benefits both humans and LLMs — and the advantage is **compositional**, not per-feature.
+
+DashML sits above Vega-Lite, Plotly, and Streamlit in the abstraction stack — it compiles *to* them. It has a dramatically smaller surface area: 12 chart types vs Vega-Lite's ~50 mark types, 3 aggregations vs dozens of encoding channels, flat YAML vs nested JSON with transforms/signals/parameters. Fewer concepts = fewer ways to be wrong.
+
+The key insight: **individual features are trivial, but their composition is not.** Each DashML feature maps to a 1-2 line pattern. But combining 10 features in one dashboard — the YAML stays flat and additive, while the raw code grows non-linearly:
+
+| Dashboard Complexity | DashML | Vega-Lite | Raw Plotly/Streamlit |
+|---|---|---|---|
+| 1 chart, no filters | ~10 lines YAML | ~30 lines JSON | ~20 lines code |
+| 10 charts, 3 pages, shared filters, 2 sources, derived fields | ~80 lines flat YAML | ~200+ lines nested JSON (transforms, signals, params) | ~400-600 lines (state mgmt, callbacks, caching, error handling) |
+
+This is the SQL analogy. No one argues "LLMs can write `SELECT * FROM users`, so SQL is pointless." SQL's value shows up at complex queries with joins, subqueries, and window functions — where procedural equivalents become error-prone. DashML's value shows up at compositional dashboard complexity, where raw code requires state management, cross-chart coordination, and multi-source data handling.
+
+**The goal DashML needs to meet:** the Tier 1 DSL features (dashboard-level filters, derived fields, multi-source, metric widgets) must be expressive enough to cover ~80% of real dashboard needs. If users constantly drop down to raw code because the spec can't express what they need, the abstraction advantage disappears. The spec must be both simpler *and* sufficient.
+
 ---
 
 ## Open-Source Benchmarks for Future Validation
