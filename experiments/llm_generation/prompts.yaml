@@ -1,0 +1,789 @@
+# LLM Generation Experiment - Dashboard Prompts
+# 30 prompts across 6 complexity tiers (5 each)
+# Each prompt includes: description (what the LLM sees) + expected features (for scoring)
+
+# =============================================================================
+# TIER 1: Single chart, CSV, no aggregation
+# Tests: basic spec structure, single chart, raw data charts (histogram/box)
+# =============================================================================
+
+- id: T1_01
+  tier: 1
+  description: >
+    Create a dashboard that shows a histogram of employee salaries
+    from a CSV file called "data/employees.csv". The salary column
+    is named "salary".
+  expected:
+    data_type: csv
+    data_path: data/employees.csv
+    chart_count: 1
+    charts:
+      - type: histogram
+        x: salary
+        y: salary
+
+- id: T1_02
+  tier: 1
+  description: >
+    I have a CSV file at "data/temperatures.csv" with columns "city"
+    and "temperature". Make a box plot showing the temperature
+    distribution across cities.
+  expected:
+    data_type: csv
+    data_path: data/temperatures.csv
+    chart_count: 1
+    charts:
+      - type: box
+        x: city
+        y: temperature
+
+- id: T1_03
+  tier: 1
+  description: >
+    Build a simple dashboard from "data/survey.csv" that shows a
+    histogram of response times. The column is called "response_time_ms".
+  expected:
+    data_type: csv
+    data_path: data/survey.csv
+    chart_count: 1
+    charts:
+      - type: histogram
+        x: response_time_ms
+        y: response_time_ms
+
+- id: T1_04
+  tier: 1
+  description: >
+    Create a dashboard from "data/products.csv" showing a box plot of
+    product prices by category. Columns are "category" and "price".
+  expected:
+    data_type: csv
+    data_path: data/products.csv
+    chart_count: 1
+    charts:
+      - type: box
+        x: category
+        y: price
+
+- id: T1_05
+  tier: 1
+  description: >
+    I need a dashboard from "data/test_scores.csv" with a histogram
+    of exam scores. The column name is "score".
+  expected:
+    data_type: csv
+    data_path: data/test_scores.csv
+    chart_count: 1
+    charts:
+      - type: histogram
+        x: score
+        y: score
+
+# =============================================================================
+# TIER 2: Single chart with aggregation + filter
+# Tests: agg field, filters array, filter operators
+# =============================================================================
+
+- id: T2_01
+  tier: 2
+  description: >
+    Create a dashboard from "data/sales.csv" showing a bar chart of
+    total sales by country. Only include sales greater than 100.
+    Columns: "country", "sales".
+  expected:
+    data_type: csv
+    data_path: data/sales.csv
+    chart_count: 1
+    charts:
+      - type: bar
+        x: country
+        y: sales
+        agg: sum
+        filters:
+          - field: sales
+            op: gt
+            value: 100
+
+- id: T2_02
+  tier: 2
+  description: >
+    From "data/orders.csv", make a line chart showing average order
+    value by date. Filter to only completed orders (status equals
+    "completed"). Columns: "order_date", "amount", "status".
+  expected:
+    data_type: csv
+    data_path: data/orders.csv
+    chart_count: 1
+    charts:
+      - type: line
+        x: order_date
+        y: amount
+        agg: mean
+        filters:
+          - field: status
+            op: eq
+            value: completed
+
+- id: T2_03
+  tier: 2
+  description: >
+    Build a pie chart from "data/expenses.csv" showing total spending
+    by department. Exclude the "Admin" department. Columns: "department",
+    "amount".
+  expected:
+    data_type: csv
+    data_path: data/expenses.csv
+    chart_count: 1
+    charts:
+      - type: pie
+        x: department
+        y: amount
+        agg: sum
+        filters:
+          - field: department
+            op: ne
+            value: Admin
+
+- id: T2_04
+  tier: 2
+  description: >
+    Create a scatter plot from "data/products.csv" with average price
+    by category. Only show categories where the price is at least 10.
+    Columns: "category", "price".
+  expected:
+    data_type: csv
+    data_path: data/products.csv
+    chart_count: 1
+    charts:
+      - type: scatter
+        x: category
+        y: price
+        agg: mean
+        filters:
+          - field: price
+            op: gte
+            value: 10
+
+- id: T2_05
+  tier: 2
+  description: >
+    From "data/traffic.csv", create an area chart showing total page
+    views by date. Only include data from the USA and Canada
+    (country column). Columns: "date", "page_views", "country".
+  expected:
+    data_type: csv
+    data_path: data/traffic.csv
+    chart_count: 1
+    charts:
+      - type: area
+        x: date
+        y: page_views
+        agg: sum
+        filters:
+          - field: country
+            op: in
+            value: [USA, Canada]
+
+# =============================================================================
+# TIER 3: Multi-chart single page (3-4 charts)
+# Tests: multiple charts, different chart types, shared data source
+# =============================================================================
+
+- id: T3_01
+  tier: 3
+  description: >
+    Create a sales dashboard from "data/sales.csv" with these charts:
+    1. Bar chart of total sales by country
+    2. Line chart of total sales over time (date column)
+    3. Pie chart showing sales distribution by product
+    Columns: "country", "date", "product", "sales".
+  expected:
+    data_type: csv
+    data_path: data/sales.csv
+    chart_count: 3
+    charts:
+      - type: bar
+        x: country
+        y: sales
+        agg: sum
+      - type: line
+        x: date
+        y: sales
+        agg: sum
+      - type: pie
+        x: product
+        y: sales
+        agg: sum
+
+- id: T3_02
+  tier: 3
+  description: >
+    Build an HR dashboard from "data/employees.csv" with:
+    1. Bar chart of employee count by department
+    2. Histogram of salary distribution
+    3. Box plot of salaries by department
+    4. Scatter plot of average salary by department
+    Columns: "department", "salary", "employee_id".
+  expected:
+    data_type: csv
+    data_path: data/employees.csv
+    chart_count: 4
+    charts:
+      - type: bar
+        x: department
+        y: employee_id
+        agg: count
+      - type: histogram
+        x: salary
+        y: salary
+      - type: box
+        x: department
+        y: salary
+      - type: scatter
+        x: department
+        y: salary
+        agg: mean
+
+- id: T3_03
+  tier: 3
+  description: >
+    From "data/weather.csv", create a weather dashboard:
+    1. Line chart of average temperature by date
+    2. Area chart of total rainfall by date
+    3. Bar chart of mean humidity by city
+    Columns: "date", "city", "temperature", "rainfall", "humidity".
+  expected:
+    data_type: csv
+    data_path: data/weather.csv
+    chart_count: 3
+    charts:
+      - type: line
+        x: date
+        y: temperature
+        agg: mean
+      - type: area
+        x: date
+        y: rainfall
+        agg: sum
+      - type: bar
+        x: city
+        y: humidity
+        agg: mean
+
+- id: T3_04
+  tier: 3
+  description: >
+    Create an e-commerce dashboard from "data/orders.csv" with:
+    1. Bar chart of total revenue by product category
+    2. Line chart of order count by date
+    3. Pie chart of revenue share by payment method
+    Columns: "category", "date", "amount", "order_id", "payment_method".
+  expected:
+    data_type: csv
+    data_path: data/orders.csv
+    chart_count: 3
+    charts:
+      - type: bar
+        x: category
+        y: amount
+        agg: sum
+      - type: line
+        x: date
+        y: order_id
+        agg: count
+      - type: pie
+        x: payment_method
+        y: amount
+        agg: sum
+
+- id: T3_05
+  tier: 3
+  description: >
+    Build a fitness tracker dashboard from "data/workouts.csv":
+    1. Line chart of total calories burned by date
+    2. Bar chart of average duration by exercise type
+    3. Histogram of heart rate distribution
+    Columns: "date", "exercise_type", "calories", "duration_min", "heart_rate".
+  expected:
+    data_type: csv
+    data_path: data/workouts.csv
+    chart_count: 3
+    charts:
+      - type: line
+        x: date
+        y: calories
+        agg: sum
+      - type: bar
+        x: exercise_type
+        y: duration_min
+        agg: mean
+      - type: histogram
+        x: heart_rate
+        y: heart_rate
+
+# =============================================================================
+# TIER 4: Multi-page dashboard (2-3 pages)
+# Tests: pages structure, page metadata, chart distribution across pages
+# =============================================================================
+
+- id: T4_01
+  tier: 4
+  description: >
+    Create a multi-page sales dashboard from "data/sales.csv":
+
+    Page 1 "Overview": Bar chart of total sales by country, pie chart
+    of sales by product.
+
+    Page 2 "Trends": Line chart of sales over time, area chart of
+    cumulative sales over time.
+
+    Columns: "country", "product", "date", "sales".
+  expected:
+    data_type: csv
+    data_path: data/sales.csv
+    page_count: 2
+    pages:
+      - title: Overview
+        chart_count: 2
+        charts:
+          - type: bar
+            x: country
+            y: sales
+            agg: sum
+          - type: pie
+            x: product
+            y: sales
+            agg: sum
+      - title: Trends
+        chart_count: 2
+        charts:
+          - type: line
+            x: date
+            y: sales
+            agg: sum
+          - type: area
+            x: date
+            y: sales
+            agg: sum
+
+- id: T4_02
+  tier: 4
+  description: >
+    Build a multi-page HR analytics dashboard from "data/employees.csv":
+
+    Page 1 "Headcount": Bar chart of employee count by department,
+    pie chart of employees by office location.
+
+    Page 2 "Compensation": Histogram of salary distribution, box plot
+    of salaries by department, scatter plot of average salary by
+    department.
+
+    Columns: "department", "office", "salary", "employee_id".
+  expected:
+    data_type: csv
+    data_path: data/employees.csv
+    page_count: 2
+    pages:
+      - title: Headcount
+        chart_count: 2
+        charts:
+          - type: bar
+            x: department
+            y: employee_id
+            agg: count
+          - type: pie
+            x: office
+            y: employee_id
+            agg: count
+      - title: Compensation
+        chart_count: 3
+        charts:
+          - type: histogram
+            x: salary
+            y: salary
+          - type: box
+            x: department
+            y: salary
+          - type: scatter
+            x: department
+            y: salary
+            agg: mean
+
+- id: T4_03
+  tier: 4
+  description: >
+    Create a 3-page e-commerce dashboard from "data/orders.csv":
+
+    Page 1 "Revenue": Bar chart of total revenue by category, line
+    chart of revenue over time.
+
+    Page 2 "Orders": Bar chart of order count by status, pie chart
+    of orders by payment method.
+
+    Page 3 "Analysis": Stacked bar of revenue by category and status,
+    heatmap of revenue by category and payment method.
+
+    Columns: "category", "date", "amount", "order_id", "status",
+    "payment_method".
+  expected:
+    data_type: csv
+    data_path: data/orders.csv
+    page_count: 3
+    pages:
+      - title: Revenue
+        chart_count: 2
+        charts:
+          - type: bar
+            x: category
+            y: amount
+            agg: sum
+          - type: line
+            x: date
+            y: amount
+            agg: sum
+      - title: Orders
+        chart_count: 2
+        charts:
+          - type: bar
+            x: status
+            y: order_id
+            agg: count
+          - type: pie
+            x: payment_method
+            y: order_id
+            agg: count
+      - title: Analysis
+        chart_count: 2
+        charts:
+          - type: stacked_bar
+            x: category
+            y: amount
+            agg: sum
+            group: status
+          - type: heatmap
+            x: category
+            y: amount
+            agg: sum
+            group: payment_method
+
+- id: T4_04
+  tier: 4
+  description: >
+    Build a multi-page website analytics dashboard from "data/traffic.csv":
+
+    Page 1 "Traffic": Line chart of total page views by date, bar chart
+    of total sessions by source.
+
+    Page 2 "Engagement": Scatter plot of average time on page by source,
+    area chart of total bounce rate by date.
+
+    Columns: "date", "source", "page_views", "sessions", "time_on_page",
+    "bounce_rate".
+  expected:
+    data_type: csv
+    data_path: data/traffic.csv
+    page_count: 2
+    pages:
+      - title: Traffic
+        chart_count: 2
+        charts:
+          - type: line
+            x: date
+            y: page_views
+            agg: sum
+          - type: bar
+            x: source
+            y: sessions
+            agg: sum
+      - title: Engagement
+        chart_count: 2
+        charts:
+          - type: scatter
+            x: source
+            y: time_on_page
+            agg: mean
+          - type: area
+            x: date
+            y: bounce_rate
+            agg: sum
+
+- id: T4_05
+  tier: 4
+  description: >
+    Create a multi-page inventory dashboard from "data/inventory.csv":
+
+    Page 1 "Stock Levels": Bar chart of total quantity by warehouse,
+    pie chart of quantity by product category.
+
+    Page 2 "Valuation": Grouped bar of total value by warehouse grouped
+    by category, line chart of total value by restock date.
+
+    Columns: "warehouse", "category", "product", "quantity", "unit_price",
+    "value", "restock_date".
+  expected:
+    data_type: csv
+    data_path: data/inventory.csv
+    page_count: 2
+    pages:
+      - title: Stock Levels
+        chart_count: 2
+        charts:
+          - type: bar
+            x: warehouse
+            y: quantity
+            agg: sum
+          - type: pie
+            x: category
+            y: quantity
+            agg: sum
+      - title: Valuation
+        chart_count: 2
+        charts:
+          - type: grouped_bar
+            x: warehouse
+            y: value
+            agg: sum
+            group: category
+          - type: line
+            x: restock_date
+            y: value
+            agg: sum
+
+# =============================================================================
+# TIER 5: Advanced features (sort, limit, type hints, multiple filters)
+# Tests: sort/sort_order, limit, x_type/y_type, multiple filters, group/size
+# =============================================================================
+
+- id: T5_01
+  tier: 5
+  description: >
+    From "data/sales.csv", create a bar chart of total sales by product,
+    sorted by sales descending, limited to the top 10 products.
+    Columns: "product", "sales".
+  expected:
+    data_type: csv
+    data_path: data/sales.csv
+    chart_count: 1
+    charts:
+      - type: bar
+        x: product
+        y: sales
+        agg: sum
+        sort: "y"
+        sort_order: desc
+        limit: 10
+
+- id: T5_02
+  tier: 5
+  description: >
+    Build a dashboard from "data/orders.csv" with a line chart of total
+    revenue over time. The date column is "order_date" and should be
+    treated as a date type. The amount column is "amount" and should
+    be treated as a number. Only include completed orders where the
+    amount is greater than 50. Sort by date ascending.
+    Columns: "order_date", "amount", "status".
+  expected:
+    data_type: csv
+    data_path: data/orders.csv
+    chart_count: 1
+    charts:
+      - type: line
+        x: order_date
+        y: amount
+        agg: sum
+        x_type: date
+        y_type: number
+        sort: x
+        sort_order: asc
+        filters:
+          - field: status
+            op: eq
+            value: completed
+          - field: amount
+            op: gt
+            value: 50
+
+- id: T5_03
+  tier: 5
+  description: >
+    Create a bubble chart from "data/products.csv" showing average price
+    by category, grouped by brand, with size representing total quantity
+    sold. Only include products priced between 10 and 500 (inclusive).
+    Limit to top 20 results sorted by price descending.
+    Columns: "category", "brand", "price", "quantity_sold".
+  expected:
+    data_type: csv
+    data_path: data/products.csv
+    chart_count: 1
+    charts:
+      - type: bubble
+        x: category
+        y: price
+        agg: mean
+        group: brand
+        size: quantity_sold
+        sort: "y"
+        sort_order: desc
+        limit: 20
+        filters:
+          - field: price
+            op: gte
+            value: 10
+          - field: price
+            op: lte
+            value: 500
+
+- id: T5_04
+  tier: 5
+  description: >
+    From "data/logs.csv", build a dashboard with:
+    1. Stacked bar of total request count by endpoint grouped by status
+       code, sorted by count descending, top 15 endpoints only.
+    2. Line chart of total request count over time (timestamp column,
+       date type), filtered to only 500-series errors (status_code >= 500).
+    Columns: "endpoint", "status_code", "timestamp", "request_id".
+  expected:
+    data_type: csv
+    data_path: data/logs.csv
+    chart_count: 2
+    charts:
+      - type: stacked_bar
+        x: endpoint
+        y: request_id
+        agg: count
+        group: status_code
+        sort: "y"
+        sort_order: desc
+        limit: 15
+      - type: line
+        x: timestamp
+        y: request_id
+        agg: count
+        x_type: date
+        filters:
+          - field: status_code
+            op: gte
+            value: 500
+
+- id: T5_05
+  tier: 5
+  description: >
+    Create a multi-page dashboard from "data/sales.csv":
+
+    Page 1 "Top Performers": Bar chart of total sales by country,
+    sorted by sales descending, top 5 only. Scatter plot of average
+    sales by country with x_type string and y_type number.
+
+    Page 2 "Filtered Analysis": Heatmap of total sales by country
+    and product, only for countries in ["USA", "Germany", "Japan"].
+    Grouped bar of total sales by product grouped by country,
+    sorted by sales descending, limit 10.
+
+    Columns: "country", "product", "sales".
+  expected:
+    data_type: csv
+    data_path: data/sales.csv
+    page_count: 2
+    pages:
+      - title: Top Performers
+        chart_count: 2
+        charts:
+          - type: bar
+            x: country
+            y: sales
+            agg: sum
+            sort: "y"
+            sort_order: desc
+            limit: 5
+          - type: scatter
+            x: country
+            y: sales
+            agg: mean
+            x_type: string
+            y_type: number
+      - title: Filtered Analysis
+        chart_count: 2
+        charts:
+          - type: heatmap
+            x: country
+            y: sales
+            agg: sum
+            group: product
+            filters:
+              - field: country
+                op: in
+                value: [USA, Germany, Japan]
+          - type: grouped_bar
+            x: product
+            y: sales
+            agg: sum
+            group: country
+            sort: "y"
+            sort_order: desc
+            limit: 10
+
+# =============================================================================
+# TIER 6: Ambiguous / underspecified descriptions
+# Tests: graceful handling, reasonable defaults, inferring intent
+# =============================================================================
+
+- id: T6_01
+  tier: 6
+  description: >
+    Show me sales data from "data/sales.csv". I want to see how
+    different countries compare.
+  expected:
+    data_type: csv
+    data_path: data/sales.csv
+    chart_count: 1
+    charts:
+      - type: bar
+        x: country
+        y: sales
+        agg: sum
+
+- id: T6_02
+  tier: 6
+  description: >
+    I have employee data in "data/employees.csv" with columns for
+    name, department, salary, and hire_date. Give me a useful
+    dashboard.
+  expected:
+    data_type: csv
+    data_path: data/employees.csv
+    chart_count: 2
+    notes: "Accept any reasonable combination of charts using available columns"
+
+- id: T6_03
+  tier: 6
+  description: >
+    Make a dashboard from "data/orders.csv". Show trends and
+    breakdowns. Columns are date, category, amount, region.
+  expected:
+    data_type: csv
+    data_path: data/orders.csv
+    chart_count: 2
+    notes: "Should include at least one time-series chart and one categorical breakdown"
+
+- id: T6_04
+  tier: 6
+  description: >
+    Visualize "data/weather.csv". It has date, city, temperature,
+    and rainfall columns. I want to understand patterns.
+  expected:
+    data_type: csv
+    data_path: data/weather.csv
+    chart_count: 2
+    notes: "Accept any reasonable visualization of weather patterns"
+
+- id: T6_05
+  tier: 6
+  description: >
+    I need a dashboard. The data is in "data/metrics.csv" with
+    columns: timestamp, service, latency_ms, error_count, region.
+    Show me what matters for monitoring.
+  expected:
+    data_type: csv
+    data_path: data/metrics.csv
+    chart_count: 2
+    notes: "Should focus on latency and errors; accept any reasonable monitoring dashboard"

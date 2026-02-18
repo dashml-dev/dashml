@@ -183,6 +183,100 @@ For an open standard, the validator needs near-100% coverage. Users need to trus
 
 ---
 
+## Empirical Validation: LLM Generation Experiment
+
+### What We Tested
+
+We ran a controlled experiment (`experiments/llm_generation/`) to test DashML's core thesis: "LLMs produce valid dashboard specs at a higher rate when targeting `.dashml` than when generating raw framework code."
+
+- **30 natural language dashboard descriptions** across 6 complexity tiers (single chart → multi-page → ambiguous prompts)
+- **Two comparisons**: DashML vs Streamlit (Python), DashML vs Plotly.js (HTML)
+- **Model**: Claude Sonnet 4, temperature 0.3, 1 run per prompt
+- **Automated scoring**: parse, validate, compile, completeness
+
+### Results
+
+| Metric | DashML | Streamlit | Plotly.js |
+|--------|--------|-----------|-----------|
+| Parse Rate | 100% | 100% | 100% |
+| Validation Rate | 100% | 100% | 100% |
+| Compile Rate | 100% | 100% | 100% |
+| Avg Completeness | 99.5% | 100% | 96.6% |
+
+**No measurable advantage for DashML at current complexity.**
+
+### Why There's No Difference
+
+The current `.dashml` spec surface area is too small. Every feature maps to a 1-2 line boilerplate pattern:
+
+| DashML Feature | Raw Code Equivalent |
+|---------------|---------------------|
+| `type: bar, x: col, y: col, agg: sum` | `df.groupby("col")["col"].sum()` + one chart call |
+| `filters: [{op: gt, value: 100}]` | `df[df["col"] > 100]` |
+| `pages:` array | `st.tabs()` / `<div>` toggle |
+| `sort: y, sort_order: desc, limit: 10` | `.sort_values().head(10)` |
+
+Claude Sonnet has seen these patterns millions of times. There is no complexity threshold that would cause failures. The experiment effectively tested "can an LLM write 5-15 lines of boilerplate correctly?" — which is trivially yes for frontier models.
+
+### What DashML Does Win On
+
+- **Token efficiency**: DashML outputs are 3-5x shorter (26 lines YAML vs 89 lines HTML+JS for the same dashboard)
+- **Generation speed**: DashML generations took 2-4s vs 5-40s for Plotly.js (less tokens = faster)
+- **Multi-backend**: One `.dashml` spec compiles to 4 targets; one Streamlit file does not
+
+### Honest Conclusion
+
+The experiment validates the infrastructure (prompts, runner, evaluator all work) but does **not** validate the thesis. The thesis can only be tested once the DSL includes features whose raw code equivalents involve real complexity: session state, cross-chart callbacks, multi-step data pipelines, error handling for nulls/types. These are the Tier 1 DSL features listed below.
+
+---
+
+## Open-Source Benchmarks for Future Validation
+
+Once DashML's spec grows beyond simple chart declarations, these existing benchmarks can be adopted to properly measure the DashML vs raw code gap.
+
+### Directly Usable
+
+**[nvBench 2.0](https://github.com/HKUSTDial/nvBench-2.0)** (NeurIPS 2025) — The most relevant benchmark. 7,878 NL→visualization queries across 153 domains and 780 tables. Outputs are Vega-Lite specs (declarative, like DashML). Crucially handles **ambiguous queries** where one description maps to multiple valid visualizations.
+- [Paper](https://arxiv.org/abs/2503.12880) | [GitHub](https://github.com/HKUSTDial/nvBench-2.0)
+- **Adoption path**: Convert nvBench's Vega-Lite ground truths to `.dashml` format, then benchmark LLM generation of `.dashml` vs raw code for each query.
+
+**[VisEval](https://github.com/microsoft/VisEval)** (Microsoft, 2024) — 2,524 NL queries across 146 databases. Evaluates on three dimensions: **validity** (does it run?), **legality** (correct data mapping?), **readability** (good visual design?). Pip-installable automated scoring pipeline.
+- [Paper](https://arxiv.org/abs/2407.00981) | [GitHub](https://github.com/microsoft/VisEval)
+- **Adoption path**: Reuse the validity/legality/readability scoring framework for DashML evaluation.
+
+**[PandasPlotBench](https://github.com/JetBrains-Research/PandasPlotBench)** (JetBrains, Dec 2024) — 175 tasks across Matplotlib, Seaborn, and Plotly. Found that **~22% of LLM-generated Plotly code fails to compile**. Synthetic data prevents leakage.
+- [Paper](https://arxiv.org/abs/2412.02764) | [HuggingFace](https://huggingface.co/datasets/JetBrains-Research/PandasPlotBench) | [GitHub](https://github.com/JetBrains-Research/PandasPlotBench)
+- **Why it matters**: Already proves the thesis for Plotly specifically. DashML compiles to working Plotly without the 22% failure rate.
+
+### Useful for Higher Complexity
+
+**[DSBench / DSCodeBench](https://github.com/LiqiangJing/DSBench)** (ICLR 2025) — Full data science agent pipelines, not just plotting. Average solution is 22.5 lines (vs DS-1000's 3.6). Relevant once DashML adds computed columns and multi-step data transformations.
+- [Paper](https://arxiv.org/abs/2505.15621) | [GitHub](https://github.com/LiqiangJing/DSBench)
+
+**[MatPlotBench](https://github.com/thunlp/MatPlotAgent)** (2024) — 100 human-verified scientific visualization tasks. Uses **GPT-4V for automated visual evaluation** — scores whether the chart *looks* correct, not just whether the code runs. Adaptable evaluation methodology.
+- [Paper](https://arxiv.org/abs/2402.11453) | [GitHub](https://github.com/thunlp/MatPlotAgent)
+
+**[DS-1000](https://github.com/xlang-ai/DS-1000)** — 1,000 data science problems across 7 Python libraries. **Pandas-specific pass rate: 26.5%** (Codex-002). Proves LLMs struggle with data manipulation code beyond trivial patterns.
+- [Paper](https://arxiv.org/abs/2211.11501) | [GitHub](https://github.com/xlang-ai/DS-1000)
+
+### External Evidence
+
+The broader code generation benchmarks confirm the problem is real at higher complexity:
+- **SWE-bench Verified**: 50-65% for frontier models on real GitHub issues
+- **LiveCodeBench**: ~39% for Claude Sonnet on real code changes
+- **DS-1000 (Pandas)**: 26.5% pass rate — not for dashboards, just single data manipulation steps
+
+The failure modes that DashML would prevent (import errors, API misuse, state management bugs, type coercion) are exactly what these benchmarks measure. The current DashML spec simply doesn't exercise them.
+
+### Recommended Adoption Path
+
+1. **Now**: Use PandasPlotBench (175 tasks, Plotly angle) as a lightweight smoke test
+2. **After Tier 1 features**: Convert nvBench 2.0 queries to `.dashml` and run the full comparison
+3. **After computed columns**: Adopt DSBench tasks to test multi-step pipeline generation
+4. **For visual correctness**: Adapt MatPlotBench's GPT-4V evaluation methodology
+
+---
+
 ## Prioritized Recommendations
 
 ### Tier 0: Architecture (do before anything else)
@@ -300,16 +394,17 @@ It's the gatekeeper; untested gatekeeper = unreliable standard.
 5. **Add dashboard-level `filters`** — cross-chart filtering is table-stakes
 6. **Add `derived_fields`** — calculated columns unlock 80% of real analytics
 7. **Add `text`/`markdown` widget type** — dashboards need narrative
+8. **Adopt nvBench 2.0 as validation benchmark** — once these features land, re-run the LLM generation experiment using nvBench's 7,878 queries to properly measure the DashML vs raw code gap
 
 ### Tier 2: Contract & Data Model
-8. **Fix Superset transformer** — separate `plan` from `apply`
-9. **Support multiple data sources** — `data.sources[]` with per-chart binding
-10. **Spec versioning strategy** — define what version numbers mean, add migration tooling
+9. **Fix Superset transformer** — separate `plan` from `apply`
+10. **Support multiple data sources** — `data.sources[]` with per-chart binding
+11. **Spec versioning strategy** — define what version numbers mean, add migration tooling
 
 ### Tier 3: Open Standard Readiness
-11. **Contributor docs** — how to build a transformer, how to extend the DSL
-12. **JSON Schema kept in sync** — currently it doesn't enforce conditional requirements (bubble needs size, etc.)
-13. **CI/CD pipeline** — tests, linting, type checking on every PR
+12. **Contributor docs** — how to build a transformer, how to extend the DSL
+13. **JSON Schema kept in sync** — currently it doesn't enforce conditional requirements (bubble needs size, etc.)
+14. **CI/CD pipeline** — tests, linting, type checking on every PR
 
 ---
 
