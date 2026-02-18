@@ -290,7 +290,6 @@ import altair as alt"""
         query = """
             SELECT *
             FROM `{project}.{dataset}.{table_name}`
-            LIMIT 10000
         """
         df = client.query(query).to_dataframe()
 
@@ -326,7 +325,7 @@ import altair as alt"""
         bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
         filters = chart.get("filters", [])  # Optional: filter conditions
         sort_field = chart.get("sort")  # Optional: "x" or "y"
-        sort_order = chart.get("sort_order", "asc")  # Optional: "asc" or "desc"
+        sort_order = chart.get("sort_order", "desc" if sort_field == "y" else "asc")  # Default desc for y-sort
         limit = chart.get("limit")  # Optional: max rows after aggregation
 
         # Extract colors using constants
