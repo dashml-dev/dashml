@@ -141,15 +141,133 @@ class PlotlyTransformer(Transformer):
 
         return json.dumps(multi_file_output)
 
+    def _sql_value(self, value) -> str:
+        """Convert a Python value to a SQL literal"""
+        if isinstance(value, str):
+            return "'" + value.replace("'", "''") + "'"
+        if isinstance(value, (list, tuple)):
+            return "(" + ", ".join(self._sql_value(v) for v in value) + ")"
+        if value is None:
+            return "NULL"
+        return str(value)
+
+    def _build_where_clause(self, filters: list) -> str:
+        """Convert DashML filter specs to a SQL WHERE clause"""
+        if not filters:
+            return ""
+        op_map = {
+            "eq": "=", "ne": "!=", "gt": ">", "lt": "<",
+            "gte": ">=", "lte": "<=",
+        }
+        parts = []
+        for f in filters:
+            field = f["field"]
+            op = f["op"]
+            val = f["value"]
+            if op in op_map:
+                parts.append(f"{field} {op_map[op]} {self._sql_value(val)}")
+            elif op == "in":
+                parts.append(f"{field} IN {self._sql_value(val)}")
+            elif op == "contains":
+                parts.append(f"{field} LIKE '%{val}%'")
+        return " WHERE " + " AND ".join(parts) if parts else ""
+
+    def _build_chart_query(self, chart: Dict[str, Any], table_ref: str) -> str:
+        """Build a per-chart SQL query that does server-side aggregation.
+
+        Returns a SQL string with the minimal data needed for each chart type.
+        """
+        chart_type = chart["type"]
+        x = chart["x"]
+        y = chart["y"]
+        agg = chart.get("agg", "sum")
+        group = chart.get("group")
+        size_field = chart.get("size")
+        filters = chart.get("filters", [])
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
+        limit = chart.get("limit")
+
+        where = self._build_where_clause(filters)
+        agg_map = {"sum": "SUM", "mean": "AVG", "count": "COUNT"}
+        sql_agg = agg_map.get(agg, "SUM")
+
+        # Determine ORDER BY
+        order = ""
+        if sort_field == "y":
+            order = f" ORDER BY y {'ASC' if sort_order == 'asc' else 'DESC'}"
+        elif sort_field == "x":
+            order = f" ORDER BY x {'ASC' if sort_order == 'asc' else 'DESC'}"
+
+        limit_clause = f" LIMIT {limit}" if limit else ""
+
+        # Default ORDER BY x for charts that need sequential ordering
+        if not order and chart_type in ("line", "area"):
+            order = " ORDER BY x ASC"
+
+        if chart_type in ("bar", "line", "area", "pie", "geo"):
+            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
+
+        elif chart_type in ("stacked_bar", "grouped_bar"):
+            return f"SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}, {group}{order}{limit_clause}"
+
+        elif chart_type == "heatmap":
+            heatmap_y = group if group else y
+            hm_where = where if where else " WHERE 1=1"
+            hm_where += f" AND {x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
+            hm_where += f" AND {heatmap_y} IN (SELECT {heatmap_y} FROM {table_ref} GROUP BY {heatmap_y} ORDER BY COUNT(*) DESC LIMIT 20)"
+            return f"SELECT {x} AS x, {heatmap_y} AS heatmap_y, {sql_agg}({y}) AS y FROM {table_ref}{hm_where} GROUP BY {x}, {heatmap_y}{order}{limit_clause}"
+
+        elif chart_type == "scatter":
+            null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
+            sc_where = (where + " AND " + null_filter) if where else (" WHERE " + null_filter)
+            return f"SELECT {x} AS x, {y} AS y FROM {table_ref}{sc_where} ORDER BY RAND() LIMIT 5000"
+
+        elif chart_type == "bubble":
+            size_ref = size_field or y
+            return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {table_ref}{where} GROUP BY {group}{order}{limit_clause}"
+
+        elif chart_type == "histogram":
+            null_filter = f"{x} IS NOT NULL"
+            hist_where = (where + " AND " + null_filter) if where else (" WHERE " + null_filter)
+            return f"SELECT {x} AS x FROM {table_ref}{hist_where} ORDER BY RAND() LIMIT 50000"
+
+        elif chart_type == "box":
+            box_where = where if where else ""
+            top_n = f"{x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
+            null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
+            box_where = (box_where + " AND " + top_n + " AND " + null_filter) if box_where else (" WHERE " + top_n + " AND " + null_filter)
+            return f"SELECT {x} AS x, {y} AS y FROM {table_ref}{box_where} ORDER BY RAND() LIMIT 50000"
+
+        else:
+            # Default: treat like bar
+            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
+
     def _generate_flask_app_bigquery(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to BigQuery"""
         db_config = spec["db_config"]
         project = db_config["project"]
         credentials_path = db_config.get("credentials_path")
 
-        # Use pre-parsed path components from normalizer
         dataset = data_spec["bq_dataset"]
         table_name = data_spec["bq_table"]
+
+        # Build table reference for BigQuery
+        table_ref = f"`{project}.{dataset}.{table_name}`"
+
+        # Build per-chart queries
+        all_charts = []
+        for page in spec["pages"]:
+            all_charts.extend(page.get("charts", []))
+
+        chart_queries_dict = {}
+        for chart in all_charts:
+            chart_queries_dict[chart["id"]] = self._build_chart_query(chart, table_ref)
+
+        chart_queries_code = "CHART_QUERIES = {\n"
+        for cid, query in chart_queries_dict.items():
+            chart_queries_code += f'    "{cid}": """{query}""",\n'
+        chart_queries_code += "}"
 
         # Build credentials loading code
         if credentials_path:
@@ -168,9 +286,11 @@ client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
 client = bigquery.Client(project=PROJECT_ID)
 '''
 
-        # Generate Flask app code
         return f'''from flask import Flask, jsonify, send_from_directory
 from google.cloud import bigquery
+import json
+from datetime import date, datetime
+from decimal import Decimal
 import os
 
 app = Flask(__name__)
@@ -180,6 +300,9 @@ PROJECT_ID = "{project}"
 DATASET = "{dataset}"
 TABLE_NAME = "{table_name}"
 {credentials_code}
+
+# Per-chart SQL queries (generated at compile time)
+{chart_queries_code}
 
 # Cache for column types (fetched once from INFORMATION_SCHEMA)
 _column_types_cache = None
@@ -199,20 +322,16 @@ def get_column_types():
         query_job = client.query(query)
         results = query_job.result()
 
-        # Map BigQuery types to simple types: date, number, string
         type_mapping = {{}}
         for row in results:
             col_name = row.column_name
             data_type = row.data_type.upper()
 
-            # Date types
             if data_type in ('DATE', 'DATETIME', 'TIMESTAMP', 'TIME'):
                 type_mapping[col_name] = 'date'
-            # Numeric types
             elif data_type in ('INT64', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC', 'INT', 'INTEGER',
                              'SMALLINT', 'BIGINT', 'FLOAT', 'DECIMAL', 'REAL', 'DOUBLE'):
                 type_mapping[col_name] = 'number'
-            # Everything else is string
             else:
                 type_mapping[col_name] = 'string'
 
@@ -221,6 +340,13 @@ def get_column_types():
     except Exception as e:
         print(f"Warning: Could not fetch column types: {{e}}")
         return {{}}
+
+def serialize(obj):
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Type {{type(obj)}} not serializable")
 
 @app.route('/')
 def index():
@@ -236,33 +362,16 @@ def get_schema():
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
 
-@app.route('/api/data')
-def get_data():
-    """Fetch data from BigQuery and return as JSON"""
+@app.route('/api/chart/<chart_id>')
+def get_chart_data(chart_id):
+    """Fetch pre-aggregated data for a specific chart"""
+    query = CHART_QUERIES.get(chart_id)
+    if not query:
+        return jsonify({{"error": "Unknown chart"}}), 404
     try:
-        query = f"""
-            SELECT *
-            FROM `{{PROJECT_ID}}.{{DATASET}}.{{TABLE_NAME}}`
-            LIMIT 10000
-        """
         query_job = client.query(query)
         results = query_job.result()
-
-        # Convert to list of dicts
         data = [dict(row) for row in results]
-
-        # Handle date/datetime/Decimal serialization
-        import json
-        from datetime import date, datetime
-        from decimal import Decimal
-
-        def serialize(obj):
-            if isinstance(obj, (date, datetime)):
-                return obj.isoformat()
-            if isinstance(obj, Decimal):
-                return float(obj)
-            raise TypeError(f"Type {{type(obj)}} not serializable")
-
         return app.response_class(
             response=json.dumps(data, default=serialize),
             mimetype='application/json'
@@ -384,6 +493,23 @@ if __name__ == '__main__':
     .chart-container {{
       margin: 20px 0;
       min-height: 400px;
+    }}
+    .chart-spinner {{
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 300px; gap: 12px;
+      color: {text}; opacity: 0.6;
+    }}
+    .chart-spinner .spinner {{
+      width: 40px; height: 40px;
+      border: 3px solid {text}20;
+      border-top-color: {primary};
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    .chart-error {{
+      display: flex; align-items: center; justify-content: center;
+      min-height: 300px; color: #e74c3c;
     }}
   </style>
 </head>'''
@@ -1535,7 +1661,8 @@ if __name__ == '__main__':
             if (values.length !== headers.length) return null;
             const row = {{}};
             headers.forEach((header, i) => {{
-              row[header] = values[i] ? values[i].trim() : '';
+              const val = values[i] ? values[i].trim() : '';
+              row[header] = (val !== '' && !isNaN(val)) ? parseFloat(val) : val;
             }});
             return row;
           }})
@@ -1583,8 +1710,25 @@ if __name__ == '__main__':
         else:
             conn_str = f"{db_type}://{user}:{password}@{host}:{port}/{database}"
 
+        # Build table reference for SQL
+        table_ref = f"{schema}.{table_name}"
+
+        # Build per-chart queries
+        all_charts = []
+        for page in spec["pages"]:
+            all_charts.extend(page.get("charts", []))
+
+        chart_queries_dict = {}
+        for chart in all_charts:
+            chart_queries_dict[chart["id"]] = self._build_chart_query(chart, table_ref)
+
+        chart_queries_code = "CHART_QUERIES = {\n"
+        for cid, query in chart_queries_dict.items():
+            chart_queries_code += f'    "{cid}": """{query}""",\n'
+        chart_queries_code += "}"
+
         # Generate Flask app code
-        return f'''from flask import Flask, jsonify, send_from_directory
+        return f'''from flask import Flask, jsonify, send_from_directory, Response
 from sqlalchemy import create_engine
 import pandas as pd
 
@@ -1597,6 +1741,9 @@ TABLE_NAME = "{table_name}"
 
 # Create database engine
 engine = create_engine(DATABASE_URL)
+
+# Per-chart SQL queries (generated at compile time)
+{chart_queries_code}
 
 # Cache for column types (fetched once from information_schema)
 _column_types_cache = None
@@ -1652,30 +1799,15 @@ def get_schema():
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
 
-@app.route('/api/data')
-def get_data():
-    """Fetch data from SQL database and return as JSON with proper type casting"""
+@app.route('/api/chart/<chart_id>')
+def get_chart_data(chart_id):
+    """Fetch pre-aggregated data for a specific chart"""
+    query = CHART_QUERIES.get(chart_id)
+    if not query:
+        return jsonify({{"error": "Unknown chart"}}), 404
     try:
-        # Fetch data
-        query = f"SELECT * FROM {{SCHEMA}}.{{TABLE_NAME}}"
         df = pd.read_sql(query, engine)
-
-        # Get column types and cast accordingly
-        column_types = get_column_types()
-        for col_name, col_type in column_types.items():
-            if col_name in df.columns:
-                if col_type == 'date':
-                    # Cast to datetime - pandas handles various date formats
-                    df[col_name] = pd.to_datetime(df[col_name])
-                elif col_type == 'number':
-                    # Cast to numeric
-                    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
-
-        # Convert to JSON with ISO 8601 date format
         json_str = df.to_json(orient='records', date_format='iso')
-
-        # Return pre-serialized JSON
-        from flask import Response
         return Response(json_str, mimetype='application/json')
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
@@ -1733,16 +1865,17 @@ if __name__ == '__main__':
       .then(([schema, data]) => {
         columnTypes = schema;
 
-        // Parse ISO 8601 date strings to Date objects
-        // Server already cast types, we just need to parse ISO dates
+        // Ensure correct types: numbers as numbers, dates as ISO strings
+        // Plotly.js handles ISO date strings natively on date axes
         window.dashmlData = data.map(row => {
           const parsedRow = {};
           for (const [column, value] of Object.entries(row)) {
-            if (columnTypes[column] === 'date' && value !== null) {
-              // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
-              parsedRow[column] = new Date(value);
+            if (value === null) {
+              parsedRow[column] = null;
+            } else if (columnTypes[column] === 'number') {
+              parsedRow[column] = parseFloat(value) || 0;
             } else {
-              // Numbers are already parsed by JSON, strings stay as strings
+              // Keep date ISO strings and other strings as-is
               parsedRow[column] = value;
             }
           }
@@ -1768,59 +1901,32 @@ if __name__ == '__main__':
         return "\n".join(js_parts)
 
     def _generate_javascript_pages_sql(self, pages: list, colors: Dict[str, str]) -> str:
-        """Generate JavaScript for multi-page dashboard (SQL version)"""
+        """Generate JavaScript for multi-page dashboard with per-chart async loading"""
         theme_json = json.dumps(colors)
 
-        # Collect all charts
         all_charts = []
         for page in pages:
             all_charts.extend(page.get("charts", []))
 
-        # Generate chart rendering functions
         chart_functions = []
         for chart in all_charts:
             chart_id = chart["id"]
             chart_type = chart["type"]
+            title = chart.get("title", chart_id)
             x = chart["x"]
             y = chart["y"]
-            agg = chart.get("agg", "sum")
             group = chart.get("group")
-            title = chart.get("title", chart_id)
-            x_type = chart.get("x_type")  # Optional: "date", "number", "string"
-            y_type = chart.get("y_type")  # Optional: "number", "string"
-            bins = chart.get("bins", 20)  # Number of bins for histogram
-            filters = chart.get("filters", [])  # Optional: filter conditions
-            sort_field = chart.get("sort")  # Optional: "x" or "y"
-            sort_order = chart.get("sort_order", "asc")  # Optional: "asc" or "desc"
-            limit = chart.get("limit")  # Optional: max rows after aggregation
-            size_field = chart.get("size")  # Optional: size field for bubble charts
+            size_field = chart.get("size")
+            bins = chart.get("bins", 20)
 
-            # Build options object for aggregation
-            options_obj = {
-                "xType": x_type,
-                "yType": y_type,
-                "filters": filters,
-                "sort": sort_field,
-                "sortOrder": sort_order,
-                "limit": limit
-            }
-            if size_field:
-                options_obj["sizeField"] = size_field
-            options_js = json.dumps(options_obj)
-
-            # Check if this is stacked/grouped bar
             if chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
-      // Stacked/grouped bars need multiple traces
-      const options = {options_js};
-      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', options);
-      const groupValues = [...new Set(aggregated.map(d => d.group))];
-
+      const groupValues = [...new Set(data.map(d => d.grp))];
       const traces = [];
       groupValues.forEach((groupVal, idx) => {{
-        const filtered = aggregated.filter(d => d.group === groupVal);
+        const filtered = data.filter(d => d.grp === groupVal);
         traces.push({{
           x: filtered.map(d => d.x),
           y: filtered.map(d => d.y),
@@ -1829,7 +1935,6 @@ if __name__ == '__main__':
           marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
         }});
       }});
-
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
         xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
@@ -1839,34 +1944,28 @@ if __name__ == '__main__':
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
       }};
-
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
             elif chart_type == "bubble" and group:
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
-      // Bubble chart: 4D visualization (group, x, y, size)
-      const options = {options_js};
-      const bubbleData = aggregateBubbleData(data, '{group}', '{x}', '{y}', '{size_field or y}', '{agg}', options);
-      const bubbleSizeVals = bubbleData.map(d => Math.abs(d.size));
+      const bubbleSizeVals = data.map(d => Math.abs(d.size));
       const maxSize = Math.max(...bubbleSizeVals);
       const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
-
       const trace = {{
-        x: bubbleData.map(d => d.x),
-        y: bubbleData.map(d => d.y),
-        text: bubbleData.map(d => d.group),
+        x: data.map(d => d.x),
+        y: data.map(d => d.y),
+        text: data.map(d => d.grp),
         type: 'scatter',
         mode: 'markers+text',
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: theme.secondary ? theme.secondary.slice(0, bubbleData.length) : theme.primary,
+          color: theme.secondary ? theme.secondary.slice(0, data.length) : theme.primary,
           sizemode: 'diameter'
         }},
-        hovertemplate: bubbleData.map(d => d.group + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>{size_field or y}: ' + d.size + '<extra></extra>')
+        hovertemplate: data.map(d => d.grp + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>size: ' + d.size + '<extra></extra>')
       }};
-
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
         xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
@@ -1875,62 +1974,36 @@ if __name__ == '__main__':
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
       }};
-
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
             elif chart_type == "heatmap":
-                heatmap_y = group if group else y
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
-      // Heatmap: 2D grid with color intensity
-      const options = {options_js};
-      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{heatmap_y}', '{agg}', options);
-      const heatmapX = [...new Set(aggregated.map(d => d.x))];
-      const heatmapY = [...new Set(aggregated.map(d => d.group))];
+      const heatmapX = [...new Set(data.map(d => d.x))];
+      const heatmapY = [...new Set(data.map(d => d.heatmap_y))];
       const heatmapZ = heatmapY.map(yVal =>
         heatmapX.map(xVal => {{
-          const found = aggregated.find(d => d.x === xVal && d.group === yVal);
+          const found = data.find(d => d.x === xVal && d.heatmap_y === yVal);
           return found ? found.y : 0;
         }})
       );
-
       const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
-
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
         xaxis: {{ title: '{x}', color: theme.text }},
-        yaxis: {{ title: '{heatmap_y}', color: theme.text }},
+        yaxis: {{ title: '{chart.get("group", y)}', color: theme.text }},
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
       }};
-
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
             else:
-                # Standard single-trace charts
-                if chart_type in CHARTS_USE_RAW_DATA:
-                    # Raw data charts still need filter support
-                    filters_js = json.dumps(filters)
-                    data_prep = f'''
-      // Use raw data for {chart_type} (with filters)
-      const filters = {filters_js};
-      const filteredData = applyFilters(data, filters);
-      const xValues = filteredData.map(d => d['{x}'] || d.{x});
-      const yValues = filteredData.map(d => d['{y}'] || d.{y});'''
-                else:
-                    size_values_code = ""
-                    if size_field:
-                        size_values_code = f"\n      const sizeValues = grouped.map(d => d.size);"
-                    data_prep = f'''
-      const options = {options_js};
-      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', options);
-      const xValues = grouped.map(d => d.x);
-      const yValues = grouped.map(d => d.y);{size_values_code}'''
-
+                # Standard single-trace charts - data arrives pre-aggregated with x/y columns
                 chart_functions.append(f'''
-    function render_{chart_id}(data) {{{data_prep}
-
+    function render_{chart_id}(data) {{
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
       let trace;
       let traces = [];
       switch ('{chart_type}') {{
@@ -1950,11 +2023,10 @@ if __name__ == '__main__':
           trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
           break;
         case 'box':
-          // Box plot: shows distribution (min, Q1, median, Q3, max)
-          const boxGroups_{chart_id.replace('-', '_')} = [...new Set(data.map(d => d['{x}']))];
-          boxGroups_{chart_id.replace('-', '_')}.forEach(group => {{
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {{
             traces.push({{
-              y: data.filter(d => d['{x}'] === group).map(d => parseFloat(d['{y}'])),
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
               name: group,
               type: 'box',
               marker: {{ color: theme.primary }}
@@ -1974,9 +2046,7 @@ if __name__ == '__main__':
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
       }}
-
       if (trace) traces.push(trace);
-
       let layout;
       if ('{chart_type}' === 'geo') {{
         layout = {{
@@ -2000,311 +2070,54 @@ if __name__ == '__main__':
           plot_bgcolor: 'rgba(0,0,0,0)'
         }};
       }}
-
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
 
-        # Generate page show function
-        page_show_function = f'''
-    function showPage(pageId, clickedButton) {{
-      document.querySelectorAll('.page-container').forEach(page => {{
+        # Generate load calls
+        load_calls = []
+        for chart in all_charts:
+            load_calls.append(f"    loadChart('{chart['id']}', render_{chart['id']})")
+        load_calls_str = ",\n".join(load_calls)
+
+        page_show_function = '''
+    function showPage(pageId, clickedButton) {
+      document.querySelectorAll('.page-container').forEach(page => {
         page.style.display = 'none';
-      }});
-      document.querySelectorAll('.tab-button').forEach(tab => {{
+      });
+      document.querySelectorAll('.tab-button').forEach(tab => {
         tab.classList.remove('active');
-      }});
+      });
       document.getElementById('page-' + pageId).style.display = 'block';
-      if (clickedButton) {{
+      if (clickedButton) {
         clickedButton.classList.add('active');
-      }}
-    }}'''
+      }
+    }'''
 
-        render_pages = []
-        for page in pages:
-            for chart in page.get("charts", []):
-                render_pages.append(f"      render_{chart['id']}(data);")
-
-        render_all = f'''
-    function renderAllPages(data) {{
-{chr(10).join(render_pages)}
-    }}'''
-
-        # Use the same full-featured aggregation functions with schema support
         return f'''  <script>
     const theme = {theme_json};
-    // Column types from INFORMATION_SCHEMA (auto-detected)
-    let columnTypes = {{}};
 
-    // Get effective x_type: explicit > schema-detected > undefined
-    function getEffectiveXType(xColumn, explicitXType) {{
-      if (explicitXType) return explicitXType;
-      return columnTypes[xColumn] || undefined;
-    }}
-
-    // Apply filters to data
-    function applyFilters(data, filters) {{
-      if (!filters || filters.length === 0) return data;
-      return data.filter(row => {{
-        return filters.every(f => {{
-          const val = row[f.field];
-          switch (f.op) {{
-            case 'eq': return val === f.value;
-            case 'ne': return val !== f.value;
-            case 'gt': return val > f.value;
-            case 'lt': return val < f.value;
-            case 'gte': return val >= f.value;
-            case 'lte': return val <= f.value;
-            case 'in': return Array.isArray(f.value) && f.value.includes(val);
-            case 'contains': return String(val).includes(f.value);
-            default: return true;
-          }}
-        }});
-      }});
-    }}
-
-    // Cast y values based on y_type
-    function castYValues(data, y, yType) {{
-      if (!yType) return data;
-      return data.map(row => {{
-        const newRow = {{...row}};
-        if (yType === 'number') {{
-          newRow[y] = parseFloat(row[y]) || 0;
-        }} else if (yType === 'string') {{
-          newRow[y] = String(row[y]);
-        }}
-        return newRow;
-      }});
-    }}
-
-    // Sort aggregated data
-    function sortData(data, sortField, sortOrder, xType) {{
-      const result = [...data];
-      const ascending = sortOrder !== 'desc';
-
-      if (sortField === 'y') {{
-        result.sort((a, b) => ascending ? a.y - b.y : b.y - a.y);
-      }} else if (sortField === 'x') {{
-        if (xType === 'date') {{
-          result.sort((a, b) => {{
-            const diff = new Date(a.x) - new Date(b.x);
-            return ascending ? diff : -diff;
-          }});
-        }} else if (xType === 'number') {{
-          result.sort((a, b) => ascending ? a.x - b.x : b.x - a.x);
-        }} else {{
-          result.sort((a, b) => {{
-            const cmp = String(a.x).localeCompare(String(b.x));
-            return ascending ? cmp : -cmp;
-          }});
-        }}
-      }} else if (xType === 'date') {{
-        // Default: sort by date if x_type is date
-        result.sort((a, b) => new Date(a.x) - new Date(b.x));
-      }} else if (xType === 'number') {{
-        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
-      }} else {{
-        // Default: sort strings alphabetically for consistency across transformers
-        result.sort((a, b) => String(a.x).localeCompare(String(b.x)));
+    async function loadChart(chartId, renderFn) {{
+      const container = document.getElementById('chart-' + chartId);
+      if (!container) return;
+      container.innerHTML = '<div class="chart-spinner"><div class="spinner"></div><span>Loading...</span></div>';
+      try {{
+        const resp = await fetch('/api/chart/' + chartId);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        container.innerHTML = '';
+        renderFn(data);
+      }} catch (err) {{
+        container.innerHTML = '<div class="chart-error">Error loading chart: ' + err.message + '</div>';
+        console.error('Chart ' + chartId + ' failed:', err);
       }}
-      return result;
-    }}
-
-    function aggregateData(data, x, y, agg, options) {{
-      options = options || {{}};
-      const xType = options.xType || getEffectiveXType(x, options.xType);
-      const yType = options.yType;
-      const filters = options.filters || [];
-      const sortField = options.sort;
-      const sortOrder = options.sortOrder || 'asc';
-      const limit = options.limit;
-      const sizeField = options.sizeField;
-
-      // Apply filters first
-      let filtered = applyFilters(data, filters);
-
-      // Cast y values
-      filtered = castYValues(filtered, y, yType);
-
-      const grouped = {{}};
-      filtered.forEach(row => {{
-        const key = row[x];
-        if (!grouped[key]) grouped[key] = {{ values: [], count: 0, sizeValues: [] }};
-        grouped[key].values.push(row[y]);
-        grouped[key].count++;
-        if (sizeField) grouped[key].sizeValues.push(parseFloat(row[sizeField]) || 0);
-      }});
-
-      let result = [];
-      Object.keys(grouped).forEach(key => {{
-        const values = grouped[key].values;
-        let aggregated;
-        switch (agg) {{
-          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
-          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
-          case 'count': aggregated = grouped[key].count; break;
-          default: aggregated = values.reduce((a, b) => a + b, 0);
-        }}
-        const entry = {{ x: key, y: aggregated }};
-        if (sizeField) {{
-          const sizeVals = grouped[key].sizeValues;
-          switch (agg) {{
-            case 'sum': entry.size = sizeVals.reduce((a, b) => a + b, 0); break;
-            case 'mean': entry.size = sizeVals.reduce((a, b) => a + b, 0) / sizeVals.length; break;
-            case 'count': entry.size = grouped[key].count; break;
-            default: entry.size = sizeVals.reduce((a, b) => a + b, 0);
-          }}
-        }}
-        result.push(entry);
-      }});
-
-      // Sort
-      result = sortData(result, sortField, sortOrder, xType);
-
-      // Limit
-      if (limit && limit > 0) {{
-        result = result.slice(0, limit);
-      }}
-
-      return result;
-    }}
-
-    function aggregateDataWithGroup(data, x, y, groupField, agg, options) {{
-      options = options || {{}};
-      const xType = options.xType || getEffectiveXType(x, options.xType);
-      const yType = options.yType;
-      const filters = options.filters || [];
-      const sortField = options.sort;
-      const sortOrder = options.sortOrder || 'asc';
-      const limit = options.limit;
-
-      // Apply filters first
-      let filtered = applyFilters(data, filters);
-
-      // Cast y values
-      filtered = castYValues(filtered, y, yType);
-
-      const grouped = {{}};
-      filtered.forEach(row => {{
-        const xKey = row[x];
-        const groupKey = row[groupField];
-        const compositeKey = xKey + '|||' + groupKey;
-        if (!grouped[compositeKey]) grouped[compositeKey] = {{ x: xKey, group: groupKey, values: [], count: 0 }};
-        grouped[compositeKey].values.push(row[y]);
-        grouped[compositeKey].count++;
-      }});
-
-      let result = [];
-      Object.keys(grouped).forEach(key => {{
-        const entry = grouped[key];
-        const values = entry.values;
-        let aggregated;
-        switch (agg) {{
-          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
-          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
-          case 'count': aggregated = entry.count; break;
-          default: aggregated = values.reduce((a, b) => a + b, 0);
-        }}
-        result.push({{ x: entry.x, group: entry.group, y: aggregated }});
-      }});
-
-      // Sort based on sortField or default x_type
-      result = sortData(result, sortField, sortOrder, xType);
-
-      // Limit
-      if (limit && limit > 0) {{
-        result = result.slice(0, limit);
-      }}
-
-      return result;
-    }}
-
-    // Aggregate data for bubble charts: group by groupField, aggregate x, y, size independently
-    function aggregateBubbleData(data, groupField, xMetric, yMetric, sizeMetric, agg, options) {{
-      options = options || {{}};
-      const filters = options.filters || [];
-      const sortField = options.sort;
-      const sortOrder = options.sortOrder || 'asc';
-      const limit = options.limit;
-
-      let filtered = applyFilters(data, filters);
-
-      const grouped = {{}};
-      filtered.forEach(row => {{
-        const key = row[groupField];
-        if (!grouped[key]) grouped[key] = {{ xValues: [], yValues: [], sizeValues: [], count: 0 }};
-        grouped[key].xValues.push(parseFloat(row[xMetric]) || 0);
-        grouped[key].yValues.push(parseFloat(row[yMetric]) || 0);
-        grouped[key].sizeValues.push(parseFloat(row[sizeMetric]) || 0);
-        grouped[key].count++;
-      }});
-
-      function aggArray(values, count) {{
-        switch (agg) {{
-          case 'sum': return values.reduce((a, b) => a + b, 0);
-          case 'mean': return values.reduce((a, b) => a + b, 0) / values.length;
-          case 'count': return count;
-          default: return values.reduce((a, b) => a + b, 0);
-        }}
-      }}
-
-      let result = [];
-      Object.keys(grouped).forEach(key => {{
-        const g = grouped[key];
-        result.push({{
-          group: key,
-          x: aggArray(g.xValues, g.count),
-          y: aggArray(g.yValues, g.count),
-          size: aggArray(g.sizeValues, g.count)
-        }});
-      }});
-
-      if (sortField === 'y') {{
-        const asc = sortOrder !== 'desc';
-        result.sort((a, b) => asc ? a.y - b.y : b.y - a.y);
-      }} else {{
-        const asc = sortOrder !== 'desc';
-        result.sort((a, b) => asc ? a.x - b.x : b.x - a.x);
-      }}
-
-      if (limit && limit > 0) {{
-        result = result.slice(0, limit);
-      }}
-
-      return result;
     }}
 
 {''.join(chart_functions)}
 
 {page_show_function}
 
-{render_all}
-
-    // Fetch schema first, then data
-    Promise.all([
-      fetch('/api/schema').then(r => r.json()),
-      fetch('/api/data').then(r => r.json())
-    ])
-      .then(([schema, data]) => {{
-        columnTypes = schema;
-
-        // Parse ISO 8601 date strings to Date objects
-        // Server already cast types, we just need to parse ISO dates
-        const parsedData = data.map(row => {{
-          const parsedRow = {{}};
-          for (const [column, value] of Object.entries(row)) {{
-            if (columnTypes[column] === 'date' && value !== null) {{
-              // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
-              parsedRow[column] = new Date(value);
-            }} else {{
-              // Numbers are already parsed by JSON, strings stay as strings
-              parsedRow[column] = value;
-            }}
-          }}
-          return parsedRow;
-        }});
-
-        console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
-        renderAllPages(parsedData);
-      }})
-      .catch(error => console.error('Error loading data:', error));
+    // Load all charts independently (async per-chart)
+    Promise.allSettled([
+{load_calls_str}
+    ]);
   </script>'''

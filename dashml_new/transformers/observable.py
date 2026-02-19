@@ -98,6 +98,96 @@ class ObservablePlotTransformer(Transformer):
 
         return json.dumps(multi_file_output)
 
+    def _sql_value(self, value) -> str:
+        """Convert a Python value to a SQL literal"""
+        if isinstance(value, str):
+            return "'" + value.replace("'", "''") + "'"
+        if isinstance(value, (list, tuple)):
+            return "(" + ", ".join(self._sql_value(v) for v in value) + ")"
+        if value is None:
+            return "NULL"
+        return str(value)
+
+    def _build_where_clause(self, filters: list) -> str:
+        """Convert DashML filter specs to a SQL WHERE clause"""
+        if not filters:
+            return ""
+        op_map = {
+            "eq": "=", "ne": "!=", "gt": ">", "lt": "<",
+            "gte": ">=", "lte": "<=",
+        }
+        parts = []
+        for f in filters:
+            field = f["field"]
+            op = f["op"]
+            val = f["value"]
+            if op in op_map:
+                parts.append(f"{field} {op_map[op]} {self._sql_value(val)}")
+            elif op == "in":
+                parts.append(f"{field} IN {self._sql_value(val)}")
+            elif op == "contains":
+                parts.append(f"{field} LIKE '%{val}%'")
+        return " WHERE " + " AND ".join(parts) if parts else ""
+
+    def _build_chart_query(self, chart: Dict[str, Any], table_ref: str) -> str:
+        """Build a per-chart SQL query that does server-side aggregation."""
+        chart_type = chart["type"]
+        x = chart["x"]
+        y = chart["y"]
+        agg = chart.get("agg", "sum")
+        group = chart.get("group")
+        size_field = chart.get("size")
+        filters = chart.get("filters", [])
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
+        limit = chart.get("limit")
+
+        where = self._build_where_clause(filters)
+        agg_map = {"sum": "SUM", "mean": "AVG", "count": "COUNT"}
+        sql_agg = agg_map.get(agg, "SUM")
+
+        order = ""
+        if sort_field == "y":
+            order = f" ORDER BY y {'ASC' if sort_order == 'asc' else 'DESC'}"
+        elif sort_field == "x":
+            order = f" ORDER BY x {'ASC' if sort_order == 'asc' else 'DESC'}"
+
+        limit_clause = f" LIMIT {limit}" if limit else ""
+
+        # Default ORDER BY x for charts that need sequential ordering
+        if not order and chart_type in ("line", "area"):
+            order = " ORDER BY x ASC"
+
+        if chart_type in ("bar", "line", "area", "pie", "geo"):
+            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
+        elif chart_type in ("stacked_bar", "grouped_bar"):
+            return f"SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}, {group}{order}{limit_clause}"
+        elif chart_type == "heatmap":
+            heatmap_y = group if group else y
+            hm_where = where if where else " WHERE 1=1"
+            hm_where += f" AND {x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
+            hm_where += f" AND {heatmap_y} IN (SELECT {heatmap_y} FROM {table_ref} GROUP BY {heatmap_y} ORDER BY COUNT(*) DESC LIMIT 20)"
+            return f"SELECT {x} AS x, {heatmap_y} AS heatmap_y, {sql_agg}({y}) AS y FROM {table_ref}{hm_where} GROUP BY {x}, {heatmap_y}{order}{limit_clause}"
+        elif chart_type == "scatter":
+            null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
+            sc_where = (where + " AND " + null_filter) if where else (" WHERE " + null_filter)
+            return f"SELECT {x} AS x, {y} AS y FROM {table_ref}{sc_where} ORDER BY RAND() LIMIT 5000"
+        elif chart_type == "bubble":
+            size_ref = size_field or y
+            return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {table_ref}{where} GROUP BY {group}{order}{limit_clause}"
+        elif chart_type == "histogram":
+            null_filter = f"{x} IS NOT NULL"
+            hist_where = (where + " AND " + null_filter) if where else (" WHERE " + null_filter)
+            return f"SELECT {x} AS x FROM {table_ref}{hist_where} ORDER BY RAND() LIMIT 50000"
+        elif chart_type == "box":
+            box_where = where if where else ""
+            top_n = f"{x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
+            null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
+            box_where = (box_where + " AND " + top_n + " AND " + null_filter) if box_where else (" WHERE " + top_n + " AND " + null_filter)
+            return f"SELECT {x} AS x, {y} AS y FROM {table_ref}{box_where} ORDER BY RAND() LIMIT 50000"
+        else:
+            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
+
     def _build_sql_version(self, spec: "NormalizedSpec") -> str:
         """Generate multi-file output with Flask backend for SQL datasources"""
 
@@ -219,6 +309,24 @@ class ObservablePlotTransformer(Transformer):
         svg {{
             background: transparent;
         }}
+
+        .chart-spinner {{
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; min-height: 300px; gap: 12px;
+            color: {text_color}; opacity: 0.6;
+        }}
+        .chart-spinner .spinner {{
+            width: 40px; height: 40px;
+            border: 3px solid {text_color}20;
+            border-top-color: {primary_color};
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }}
+        @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+        .chart-error {{
+            display: flex; align-items: center; justify-content: center;
+            min-height: 300px; color: #e74c3c;
+        }}
     </style>
 </head>"""
 
@@ -283,11 +391,8 @@ class ObservablePlotTransformer(Transformer):
                     if (!isNaN(value) && value !== '') {{
                         row[header] = parseFloat(value);
                     }}
-                    // Check if it looks like a date (YYYY-MM-DD or similar)
-                    else if (/^\\d{{4}}-\\d{{2}}-\\d{{2}}/.test(value)) {{
-                        row[header] = new Date(value);
-                    }}
-                    // Keep as string
+                    // Keep dates as ISO strings and other strings as-is
+                    // Observable Plot handles ISO date strings natively with type: "utc"
                     else {{
                         row[header] = value;
                     }}
@@ -482,12 +587,16 @@ class ObservablePlotTransformer(Transformer):
             scale_config = f"""x: {{ type: "utc" }},
                 """
 
+        # Determine if chart has categorical x-axis (needs more bottom margin for rotated labels)
+        categorical_types = {"bar", "grouped_bar", "stacked_bar", "heatmap"}
+        margin_bottom = 100 if chart_type in categorical_types else 40
+
         return f"""            // Chart: {chart_id}
             const data_{safe_var_name} = {data_code};
             const plot_{safe_var_name} = Plot.plot({{
                 {mark_code},
                 {scale_config}marginLeft: 60,
-                marginBottom: 40,
+                marginBottom: {margin_bottom},
                 grid: true,
                 style: {{
                     background: "transparent",
@@ -907,10 +1016,15 @@ class ObservablePlotTransformer(Transformer):
                         x: "{x}",
                         y: "{y}",
                         fill: "{color}",
+                        sort: null,
                         tip: true
                     }}),
                     Plot.ruleY([0])
-                ]"""
+                ],
+                x: {{
+                    domain: data_{data_var}.map(d => d.{x}),
+                    tickRotate: -45
+                }}"""
 
         elif chart_type == "line":
             return f"""marks: [
@@ -1168,11 +1282,9 @@ class ObservablePlotTransformer(Transformer):
         user = db_config["user"]
         password = db_config["password"]
 
-        # Use pre-parsed path components from normalizer
         schema = data_spec["sql_schema"]
         table_name = data_spec["sql_table"]
 
-        # Build connection string based on database type
         if db_type == "postgresql":
             conn_str = f"postgresql://{user}:{password}@{host}:{port}/{database}"
         elif db_type == "mysql":
@@ -1182,30 +1294,42 @@ class ObservablePlotTransformer(Transformer):
         else:
             conn_str = f"{db_type}://{user}:{password}@{host}:{port}/{database}"
 
-        # Generate Flask app code
-        return f'''from flask import Flask, jsonify, send_from_directory
+        # Build per-chart queries
+        table_ref = f"{schema}.{table_name}"
+        all_charts = []
+        for page in spec["pages"]:
+            all_charts.extend(page.get("charts", []))
+
+        chart_queries_dict = {}
+        for chart in all_charts:
+            chart_queries_dict[chart["id"]] = self._build_chart_query(chart, table_ref)
+
+        chart_queries_code = "CHART_QUERIES = {\n"
+        for cid, query in chart_queries_dict.items():
+            chart_queries_code += f'    "{cid}": """{query}""",\n'
+        chart_queries_code += "}"
+
+        return f'''from flask import Flask, jsonify, send_from_directory, Response
 from sqlalchemy import create_engine
 import pandas as pd
 
 app = Flask(__name__)
 
-# Database configuration
 DATABASE_URL = "{conn_str}"
 SCHEMA = "{schema}"
 TABLE_NAME = "{table_name}"
 
-# Create database engine
 engine = create_engine(DATABASE_URL)
 
-# Cache for column types (fetched once from information_schema)
+# Per-chart SQL queries (generated at compile time)
+{chart_queries_code}
+
 _column_types_cache = None
 
 def get_column_types():
-    """Fetch column types from information_schema and map to simple types"""
     global _column_types_cache
     if _column_types_cache is not None:
         return _column_types_cache
-
     try:
         query = f"""
             SELECT column_name, data_type
@@ -1213,24 +1337,17 @@ def get_column_types():
             WHERE table_schema = '{{SCHEMA}}' AND table_name = '{{TABLE_NAME}}'
         """
         df = pd.read_sql(query, engine)
-
-        # Map SQL types to simple types: date, number, string
         type_mapping = {{}}
         for _, row in df.iterrows():
             col_name = row['column_name']
             data_type = str(row['data_type']).upper()
-
-            # Date types (PostgreSQL, MySQL, etc.)
             if any(dt in data_type for dt in ['DATE', 'TIME', 'TIMESTAMP', 'INTERVAL']):
                 type_mapping[col_name] = 'date'
-            # Numeric types
             elif any(dt in data_type for dt in ['INT', 'FLOAT', 'NUMERIC', 'DECIMAL',
                                                   'REAL', 'DOUBLE', 'SERIAL', 'MONEY']):
                 type_mapping[col_name] = 'number'
-            # Everything else is string
             else:
                 type_mapping[col_name] = 'string'
-
         _column_types_cache = type_mapping
         return type_mapping
     except Exception as e:
@@ -1239,42 +1356,24 @@ def get_column_types():
 
 @app.route('/')
 def index():
-    """Serve the HTML frontend"""
     return send_from_directory('.', 'index.html')
 
 @app.route('/api/schema')
 def get_schema():
-    """Return column types from information_schema"""
     try:
         column_types = get_column_types()
         return jsonify(column_types)
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
 
-@app.route('/api/data')
-def get_data():
-    """Fetch data from SQL database and return as JSON with proper type casting"""
+@app.route('/api/chart/<chart_id>')
+def get_chart_data(chart_id):
+    query = CHART_QUERIES.get(chart_id)
+    if not query:
+        return jsonify({{"error": "Unknown chart"}}), 404
     try:
-        # Fetch data
-        query = f"SELECT * FROM {{SCHEMA}}.{{TABLE_NAME}}"
         df = pd.read_sql(query, engine)
-
-        # Get column types and cast accordingly
-        column_types = get_column_types()
-        for col_name, col_type in column_types.items():
-            if col_name in df.columns:
-                if col_type == 'date':
-                    # Cast to datetime - pandas handles various date formats
-                    df[col_name] = pd.to_datetime(df[col_name])
-                elif col_type == 'number':
-                    # Cast to numeric
-                    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
-
-        # Convert to JSON with ISO 8601 date format
         json_str = df.to_json(orient='records', date_format='iso')
-
-        # Return pre-serialized JSON
-        from flask import Response
         return Response(json_str, mimetype='application/json')
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
@@ -1291,14 +1390,26 @@ if __name__ == '__main__':
         project = db_config["project"]
         credentials_path = db_config.get("credentials_path")
 
-        # Use pre-parsed path components from normalizer
         dataset = data_spec["bq_dataset"]
         table_name = data_spec["bq_table"]
 
-        # Build credentials loading code
+        table_ref = f"`{project}.{dataset}.{table_name}`"
+
+        all_charts = []
+        for page in spec["pages"]:
+            all_charts.extend(page.get("charts", []))
+
+        chart_queries_dict = {}
+        for chart in all_charts:
+            chart_queries_dict[chart["id"]] = self._build_chart_query(chart, table_ref)
+
+        chart_queries_code = "CHART_QUERIES = {\n"
+        for cid, query in chart_queries_dict.items():
+            chart_queries_code += f'    "{cid}": """{query}""",\n'
+        chart_queries_code += "}"
+
         if credentials_path:
             credentials_code = f'''
-# Load credentials from service account file
 from google.oauth2 import service_account
 credentials = service_account.Credentials.from_service_account_file(
     "{credentials_path}",
@@ -1308,32 +1419,32 @@ client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
 '''
         else:
             credentials_code = '''
-# Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
 client = bigquery.Client(project=PROJECT_ID)
 '''
 
-        # Generate Flask app code
         return f'''from flask import Flask, jsonify, send_from_directory
 from google.cloud import bigquery
+import json
+from datetime import date, datetime
+from decimal import Decimal
 import os
 
 app = Flask(__name__)
 
-# BigQuery configuration
 PROJECT_ID = "{project}"
 DATASET = "{dataset}"
 TABLE_NAME = "{table_name}"
 {credentials_code}
 
-# Cache for column types (fetched once from INFORMATION_SCHEMA)
+# Per-chart SQL queries (generated at compile time)
+{chart_queries_code}
+
 _column_types_cache = None
 
 def get_column_types():
-    """Fetch column types from INFORMATION_SCHEMA and map to simple types"""
     global _column_types_cache
     if _column_types_cache is not None:
         return _column_types_cache
-
     try:
         query = f"""
             SELECT column_name, data_type
@@ -1342,71 +1453,51 @@ def get_column_types():
         """
         query_job = client.query(query)
         results = query_job.result()
-
-        # Map BigQuery types to simple types: date, number, string
         type_mapping = {{}}
         for row in results:
             col_name = row.column_name
             data_type = row.data_type.upper()
-
-            # Date types
             if data_type in ('DATE', 'DATETIME', 'TIMESTAMP', 'TIME'):
                 type_mapping[col_name] = 'date'
-            # Numeric types
             elif data_type in ('INT64', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC', 'INT', 'INTEGER',
                              'SMALLINT', 'BIGINT', 'FLOAT', 'DECIMAL', 'REAL', 'DOUBLE'):
                 type_mapping[col_name] = 'number'
-            # Everything else is string
             else:
                 type_mapping[col_name] = 'string'
-
         _column_types_cache = type_mapping
         return type_mapping
     except Exception as e:
         print(f"Warning: Could not fetch column types: {{e}}")
         return {{}}
 
+def serialize(obj):
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Type {{type(obj)}} not serializable")
+
 @app.route('/')
 def index():
-    """Serve the HTML frontend"""
     return send_from_directory('.', 'index.html')
 
 @app.route('/api/schema')
 def get_schema():
-    """Return column types from INFORMATION_SCHEMA"""
     try:
         column_types = get_column_types()
         return jsonify(column_types)
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
 
-@app.route('/api/data')
-def get_data():
-    """Fetch data from BigQuery and return as JSON"""
+@app.route('/api/chart/<chart_id>')
+def get_chart_data(chart_id):
+    query = CHART_QUERIES.get(chart_id)
+    if not query:
+        return jsonify({{"error": "Unknown chart"}}), 404
     try:
-        query = f"""
-            SELECT *
-            FROM `{{PROJECT_ID}}.{{DATASET}}.{{TABLE_NAME}}`
-            LIMIT 10000
-        """
         query_job = client.query(query)
         results = query_job.result()
-
-        # Convert to list of dicts
         data = [dict(row) for row in results]
-
-        # Handle date/datetime/Decimal serialization
-        import json
-        from datetime import date, datetime
-        from decimal import Decimal
-
-        def serialize(obj):
-            if isinstance(obj, (date, datetime)):
-                return obj.isoformat()
-            if isinstance(obj, Decimal):
-                return float(obj)
-            raise TypeError(f"Type {{type(obj)}} not serializable")
-
         return app.response_class(
             response=json.dumps(data, default=serialize),
             mimetype='application/json'
@@ -1436,64 +1527,473 @@ if __name__ == '__main__':
         html_parts.append(self._generate_sql_data_loader())
 
         # Always use pages (normalizer guarantees pages[] exists)
-        html_parts.append(self._generate_pages_structure(spec["pages"], colors))
+        html_parts.append(self._generate_sql_pages_structure(spec["pages"], colors))
 
         html_parts.append(self._generate_html_footer())
 
         return "\n".join(html_parts)
 
     def _generate_sql_data_loader(self) -> str:
-        """Generate JavaScript to load data from Flask API"""
+        """Generate JavaScript to set up async per-chart loading"""
         return """
     <script>
-        // Column types from INFORMATION_SCHEMA (auto-detected)
-        let columnTypes = {};
-        // Load data from Flask API
-        let dashmlData = [];
         // World topojson for geo charts
         window.worldTopojson = null;
 
-        // Get effective type: explicit > schema-detected > undefined
-        function getEffectiveType(column, explicitType) {
-            if (explicitType) return explicitType;
-            return columnTypes[column] || undefined;
-        }
-
-        // Fetch schema, data, and world topojson in parallel
-        Promise.all([
-            fetch('/api/schema').then(r => r.json()),
-            fetch('/api/data').then(r => r.json()),
-            fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(r => r.json())
-        ])
-            .then(([schema, data, worldData]) => {
-                columnTypes = schema;
-
-                // Convert topojson to geojson for Observable Plot
+        // Load world topojson once
+        fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+            .then(r => r.json())
+            .then(worldData => {
                 window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
-
-                // Parse ISO 8601 date strings to Date objects
-                // Server already cast types, we just need to parse ISO dates
-                dashmlData = data.map(row => {
-                    const parsedRow = {};
-                    for (const [column, value] of Object.entries(row)) {
-                        if (columnTypes[column] === 'date' && value !== null) {
-                            // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
-                            parsedRow[column] = new Date(value);
-                        } else {
-                            // Numbers are already parsed by JSON, strings stay as strings
-                            parsedRow[column] = value;
-                        }
-                    }
-                    return parsedRow;
-                });
-
-                console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
-                console.log('Parsed data (first row):', dashmlData[0]);
-                renderAllCharts();
             })
-            .catch(error => {
-                console.error('Error loading data:', error);
-                document.body.innerHTML += '<p style="color: red;">Error loading data from database</p>';
-            });
+            .catch(err => console.warn('Could not load world topojson:', err));
+
+        async function loadChart(containerId, chartId, renderFn) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '<div class="chart-spinner"><div class="spinner"></div><span>Loading...</span></div>';
+            try {
+                const resp = await fetch('/api/chart/' + chartId);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                container.innerHTML = '';
+                renderFn(data);
+            } catch (err) {
+                container.innerHTML = '<div class="chart-error">Error loading chart: ' + err.message + '</div>';
+                console.error('Chart ' + chartId + ' failed:', err);
+            }
+        }
     </script>"""
+
+    def _generate_sql_pages_structure(self, pages: list, colors: Dict[str, str]) -> str:
+        """Generate multi-page structure with async per-chart loading for SQL/BQ mode"""
+        primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
+        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
+        text_color = colors.get("text", "#000000")
+
+        tabs = []
+        page_contents = []
+        load_calls = []
+
+        for i, page in enumerate(pages):
+            page_id = page["id"]
+            title = page.get("title", page_id)
+            description = page.get("description", "")
+            charts = page.get("charts", [])
+
+            active_class = " active" if i == 0 else ""
+            tabs.append(f'        <button class="tab-button{active_class}" onclick="showPage(\'{page_id}\', this)">{title}</button>')
+
+            page_html = [f'    <div id="page-{page_id}" class="page-content{active_class}">']
+            if description:
+                page_html.append(f'        <p class="page-description">{description}</p>')
+
+            for chart in charts:
+                chart_id = chart["id"]
+                chart_title = chart.get("title", chart_id)
+                container_id = f"chart-{page_id}-{chart_id}"
+                page_html.append(f"""        <div class="card">
+            <h2>{chart_title}</h2>
+            <div id="{container_id}"></div>
+        </div>""")
+
+                # Generate the render function for this chart
+                render_fn = self._generate_sql_chart_render_fn(chart, colors, container_id)
+                load_calls.append(f"        loadChart('{container_id}', '{chart_id}', {render_fn})")
+
+            page_html.append('    </div>')
+            page_contents.append("\n".join(page_html))
+
+        tabs_html = f"""    <div class="page-tabs">
+{chr(10).join(tabs)}
+    </div>"""
+
+        load_calls_str = ",\n".join(load_calls)
+
+        script = f"""
+    <script>
+        function showPage(pageId, buttonElement) {{
+            document.querySelectorAll('.page-content').forEach(page => {{
+                page.classList.remove('active');
+            }});
+            document.querySelectorAll('.tab-button').forEach(btn => {{
+                btn.classList.remove('active');
+            }});
+            document.getElementById('page-' + pageId).classList.add('active');
+            buttonElement.classList.add('active');
+        }}
+
+        // Load all charts independently
+        Promise.allSettled([
+{load_calls_str}
+        ]);
+    </script>"""
+
+        return tabs_html + "\n" + "\n".join(page_contents) + script
+
+    def _is_dark_theme(self, bg_color: str) -> bool:
+        """Check if a hex background color is dark (luminance < 0.5)."""
+        c = bg_color.lstrip("#")
+        if len(c) == 3:
+            c = c[0]*2 + c[1]*2 + c[2]*2
+        r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+        return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5
+
+    def _generate_sql_chart_render_fn(self, chart: Dict[str, Any], colors: Dict[str, str], container_id: str) -> str:
+        """Generate a JS function(data) for rendering a chart with pre-aggregated data"""
+        chart_id = chart["id"]
+        chart_type = chart["type"]
+        x = chart["x"]
+        y = chart["y"]
+        group = chart.get("group")
+        size_field = chart.get("size")
+        bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
+
+        primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
+        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
+        text_color = colors.get("text", "#000000")
+
+        safe_var = chart_id.replace('-', '_')
+
+        # Determine bottom margin
+        categorical_types = {"bar", "grouped_bar", "stacked_bar", "heatmap"}
+        margin_bottom = 100 if chart_type in categorical_types else 40
+        preprocess = ""
+        margin_left = 60
+
+        if chart_type == "pie":
+            color_scale_json = str(secondary_colors).replace("'", '"')
+            return f"""function(data) {{
+            const pieWidth = 400;
+            const pieHeight = 400;
+            const legendWidth = 150;
+            const totalWidth = pieWidth + legendWidth;
+            const radius = Math.min(pieWidth, pieHeight) / 2 - 10;
+            const pie = d3.pie().value(d => d.y);
+            const arc = d3.arc().innerRadius(0).outerRadius(radius);
+            const themeColors = {color_scale_json};
+            const color = d3.scaleOrdinal()
+                .domain(data.map(d => d.x))
+                .range(themeColors);
+            const svg = d3.create("svg")
+                .attr("width", totalWidth)
+                .attr("height", pieHeight)
+                .attr("viewBox", [0, 0, totalWidth, pieHeight])
+                .attr("style", "max-width: 100%; height: auto;");
+            const pieGroup = svg.append("g")
+                .attr("transform", `translate(${{pieWidth / 2}}, ${{pieHeight / 2}})`);
+            pieGroup.selectAll("path")
+                .data(pie(data))
+                .join("path")
+                .attr("fill", d => color(d.data.x))
+                .attr("d", arc)
+                .attr("stroke", "white")
+                .attr("stroke-width", 2)
+                .append("title")
+                .text(d => `${{d.data.x}}: ${{d.data.y}}`);
+            const legend = svg.append("g")
+                .attr("transform", `translate(${{pieWidth + 10}}, 20)`);
+            data.forEach((d, i) => {{
+                const legendRow = legend.append("g")
+                    .attr("transform", `translate(0, ${{i * 25}})`);
+                legendRow.append("rect")
+                    .attr("width", 15)
+                    .attr("height", 15)
+                    .attr("fill", color(d.x))
+                    .attr("rx", 2);
+                legendRow.append("text")
+                    .attr("x", 22)
+                    .attr("y", 12)
+                    .attr("fill", "{text_color}")
+                    .style("font-size", "13px")
+                    .text(d.x);
+            }});
+            document.getElementById('{container_id}').appendChild(svg.node());
+        }}"""
+
+        if chart_type == "geo":
+            bg_color = colors.get("background", "#ffffff")
+            # Determine a subtle unknown color based on theme brightness
+            sphere_color = "#1a1a2e" if self._is_dark_theme(bg_color) else "#f8f8f8"
+            unknown_color = "#2a2a3e" if self._is_dark_theme(bg_color) else "#e0e0e0"
+            border_color = "#555570" if self._is_dark_theme(bg_color) else "#ccc"
+            return f"""function(data) {{
+            const plot = Plot.plot({{
+                width: 928,
+                marks: [
+                    Plot.sphere({{fill: "{sphere_color}", stroke: "{border_color}"}}),
+                    Plot.graticule({{stroke: "{border_color}40", strokeWidth: 0.5}}),
+                    Plot.geo(window.worldTopojson, {{
+                        fill: d => {{
+                            const countryNameMap = {{
+                                "USA": "United States of America",
+                                "US": "United States of America",
+                                "United States": "United States of America",
+                                "UK": "United Kingdom",
+                                "UNITED KINGDOM": "United Kingdom",
+                                "Russia": "Russian Federation",
+                                "South Korea": "Korea, Republic of",
+                                "Iran": "Iran, Islamic Republic of",
+                                "Czech Republic": "Czechia",
+                                "SPAIN(CANARY IS)": "Spain",
+                                "SPAIN (CANARY IS)": "Spain"
+                            }};
+                            const topoName = d.properties ? d.properties.name : null;
+                            if (!topoName) return null;
+                            const countryData = data.find(row => {{
+                                if (!row.x) return false;
+                                const normalizedName = countryNameMap[row.x] || row.x;
+                                return normalizedName.toLowerCase() === topoName.toLowerCase();
+                            }});
+                            return countryData ? countryData.y : null;
+                        }},
+                        stroke: "{border_color}",
+                        strokeWidth: 0.5,
+                        tip: true
+                    }})
+                ],
+                projection: "equal-earth",
+                color: {{
+                    type: "linear",
+                    scheme: "YlGnBu",
+                    unknown: "{unknown_color}",
+                    legend: true,
+                    label: "{y}"
+                }},
+                margin: 2,
+                style: {{
+                    background: "transparent",
+                    color: "{text_color}"
+                }}
+            }});
+            document.getElementById('{container_id}').appendChild(plot);
+        }}"""
+
+        # For all other chart types, build Observable Plot
+        if chart_type == "bar":
+            mark_code = f"""marks: [
+                    Plot.barY(data, {{
+                        x: "x",
+                        y: "y",
+                        fill: "{primary_color}",
+                        sort: null,
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{
+                    domain: data.map(d => d.x),
+                    tickRotate: -45,
+                    label: "{x}"
+                }},
+                y: {{ label: "{y}" }}"""
+        elif chart_type == "line":
+            preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+            margin_bottom = 100
+            mark_code = f"""marks: [
+                    Plot.line(data, {{
+                        x: "x",
+                        y: "y",
+                        stroke: "{primary_color}",
+                        strokeWidth: 2,
+                        tip: true
+                    }}),
+                    Plot.dot(data, {{
+                        x: "x",
+                        y: "y",
+                        fill: "{primary_color}",
+                        r: 4
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{ type: "utc", tickRotate: -45, label: "{x}" }},
+                y: {{ label: "{y}" }}"""
+        elif chart_type == "scatter":
+            preprocess = "data = data.filter(d => d.x != null && d.y != null);"
+            mark_code = f"""marks: [
+                    Plot.dot(data, {{
+                        x: "x",
+                        y: "y",
+                        fill: "{primary_color}",
+                        r: 3,
+                        opacity: 0.3,
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{ label: "{x}" }},
+                y: {{ label: "{y}" }}"""
+        elif chart_type == "area":
+            preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+            margin_bottom = 100
+            mark_code = f"""marks: [
+                    Plot.areaY(data, {{
+                        x: "x",
+                        y: "y",
+                        fill: "{primary_color}",
+                        fillOpacity: 0.7,
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{ type: "utc", tickRotate: -45, label: "{x}" }},
+                y: {{ label: "{y}" }}"""
+        elif chart_type == "histogram":
+            preprocess = "data = data.filter(d => d.x != null).map(d => ({...d, x: +d.x}));"
+            mark_code = f"""marks: [
+                    Plot.rectY(data, Plot.binX({{y: "count", thresholds: {bins}}}, {{
+                        x: "x",
+                        fill: "{primary_color}",
+                        tip: true
+                    }})),
+                    Plot.ruleY([0])
+                ],
+                x: {{ label: "{x}" }}"""
+        elif chart_type == "box":
+            preprocess = "data = data.filter(d => d.x != null && d.y != null);"
+            margin_bottom = 100
+            mark_code = f"""marks: [
+                    Plot.boxY(data, {{
+                        x: "x",
+                        y: "y",
+                        fill: "{primary_color}",
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{ tickRotate: -45, label: "{x}" }},
+                y: {{ label: "{y}" }}"""
+        elif chart_type in ("stacked_bar", "grouped_bar"):
+            color_scale_json = str(secondary_colors).replace("'", '"')
+            if chart_type == "stacked_bar":
+                mark_code = f"""marks: [
+                    Plot.barY(data, {{
+                        x: "x",
+                        y: "y",
+                        fill: "grp",
+                        sort: null,
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{
+                    domain: [...new Set(data.map(d => d.x))],
+                    tickRotate: -45,
+                    label: "{x}"
+                }},
+                y: {{ label: "{y}" }},
+                color: {{
+                    domain: [...new Set(data.map(d => d.grp))],
+                    range: {color_scale_json}
+                }}"""
+            else:  # grouped_bar
+                mark_code = f"""marks: [
+                    Plot.barY(data, {{
+                        fx: "x",
+                        x: "grp",
+                        y: "y",
+                        fill: "grp",
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{
+                    paddingInner: 0.1,
+                    axis: null
+                }},
+                fx: {{
+                    padding: 0.2,
+                    tickRotate: -45,
+                    label: "{x}"
+                }},
+                y: {{ label: "{y}" }},
+                color: {{
+                    domain: [...new Set(data.map(d => d.grp))],
+                    range: {color_scale_json}
+                }}"""
+        elif chart_type == "heatmap":
+            heatmap_y_label = group if group else y
+            margin_left = 200
+            preprocess = "data = data.filter(d => d.x != null && d.heatmap_y != null);"
+            mark_code = f"""marks: [
+                    Plot.cell(data, {{
+                        x: "x",
+                        y: "heatmap_y",
+                        fill: "y",
+                        tip: true
+                    }})
+                ],
+                height: Math.max(400, [...new Set(data.map(d => d.heatmap_y))].length * 20),
+                x: {{
+                    tickRotate: -45,
+                    label: "{x}"
+                }},
+                y: {{ label: "{heatmap_y_label}" }},
+                color: {{
+                    type: "linear",
+                    scheme: "blues",
+                    legend: true,
+                    label: "{y}"
+                }}"""
+        elif chart_type == "bubble" and group:
+            color_scale_json = str(secondary_colors).replace("'", '"')
+            mark_code = f"""marks: [
+                    Plot.dot(data, {{
+                        x: "x",
+                        y: "y",
+                        fill: "grp",
+                        r: d => {{
+                            const maxVal = d3.max(data, dd => Math.abs(dd.size));
+                            return 5 + (Math.abs(d.size) / maxVal) * 25;
+                        }},
+                        tip: true
+                    }}),
+                    Plot.text(data, {{
+                        x: "x",
+                        y: "y",
+                        text: "grp",
+                        dy: -12,
+                        fontSize: 10
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{ label: "{x}" }},
+                y: {{ label: "{y}" }},
+                color: {{
+                    domain: [...new Set(data.map(d => d.grp))],
+                    range: {color_scale_json}
+                }}"""
+        else:
+            # Default: bar
+            mark_code = f"""marks: [
+                    Plot.barY(data, {{
+                        x: "x",
+                        y: "y",
+                        fill: "{primary_color}",
+                        sort: null,
+                        tip: true
+                    }}),
+                    Plot.ruleY([0])
+                ],
+                x: {{
+                    domain: data.map(d => d.x),
+                    tickRotate: -45,
+                    label: "{x}"
+                }},
+                y: {{ label: "{y}" }}"""
+
+        return f"""function(data) {{
+            {preprocess}
+            const plot = Plot.plot({{
+                {mark_code},
+                marginLeft: {margin_left},
+                marginBottom: {margin_bottom},
+                grid: true,
+                style: {{
+                    background: "transparent",
+                    color: "{text_color}"
+                }}
+            }});
+            document.getElementById('{container_id}').appendChild(plot);
+        }}"""
 
