@@ -8,12 +8,12 @@ import subprocess
 import threading
 import json
 from pathlib import Path
-from core import DashMLEngine, ValidationError, DashMLWatcher
-from transformers import TransformerRegistry
-from transformers.streamlit import StreamlitTransformer
-from transformers.plotly import PlotlyTransformer
-from transformers.observable import ObservablePlotTransformer
-from transformers.superset import SupersetTransformer
+from dashml_new.core import DashMLEngine, ValidationError, DashMLWatcher
+from dashml_new.transformers import TransformerRegistry
+from dashml_new.transformers.streamlit import StreamlitTransformer
+from dashml_new.transformers.plotly import PlotlyTransformer
+from dashml_new.transformers.observable import ObservablePlotTransformer
+from dashml_new.transformers.superset import SupersetTransformer
 
 
 def register_builtin_transformers():
@@ -109,7 +109,7 @@ def build_command(args):
     # Step 4: Get transformer
     try:
         if target == "superset":
-            from transformers.superset import SupersetTransformer
+            from dashml_new.transformers.superset import SupersetTransformer
             transformer = SupersetTransformer(
                 superset_url=args.superset_url,
                 username=args.superset_user,
