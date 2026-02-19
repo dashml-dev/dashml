@@ -2,8 +2,6 @@
 Streamlit Transformer - Generates Streamlit Python code from DashML specs
 """
 from typing import TYPE_CHECKING, Dict, Any, List
-from pathlib import Path
-import yaml
 from .base import Transformer, TransformerError
 from .constants import (
     CHARTS_NEED_AGGREGATION,
@@ -15,7 +13,7 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
-    from ..core.types import DashMLSpec, ChartSpec
+    from ..core.types import NormalizedSpec, ChartSpec
 
 
 class StreamlitTransformer(Transformer):
@@ -23,14 +21,6 @@ class StreamlitTransformer(Transformer):
     Generates standalone Streamlit applications from DashML specifications.
     Output: Python code that can be run with `streamlit run app.py`
     """
-
-    def __init__(self):
-        super().__init__()
-        self.db_config = None
-
-    def set_db_config(self, config: Dict[str, Any]) -> None:
-        """Store database configuration for SQL datasources"""
-        self.db_config = config
 
     @property
     def name(self) -> str:
@@ -40,20 +30,12 @@ class StreamlitTransformer(Transformer):
     def description(self) -> str:
         return "Generates Streamlit Python applications"
 
-    def build(self, spec: "DashMLSpec") -> str:
-        """
-        Generate Streamlit code from DashML spec.
-
-        TODO: [SRP] This method does too much - handles imports, config, CSS, data loading, charts.
-        Consider splitting into smaller methods like _assemble_code()
-        """
+    def build(self, spec: "NormalizedSpec") -> str:
+        """Generate Streamlit code from a NormalizedSpec."""
         try:
-            self.clear_warnings()  # Clear warnings from previous builds
+            self.clear_warnings()
 
-            # Load style config first to get colors
-            style_config = self._load_style_config(spec.get("style"))
-            colors = style_config.get("colors", {})
-            primary_color = colors.get("primary", "#29b5e8") # Default Streamlit blue-ish
+            colors = spec["style"]
 
             # Warn about unsupported color fields
             if colors.get("card"):
@@ -63,7 +45,6 @@ class StreamlitTransformer(Transformer):
 
             code_parts = []
 
-            # Get data type
             data_type = spec["data"].get("type", "csv")
 
             # Imports
@@ -73,32 +54,23 @@ class StreamlitTransformer(Transformer):
             # Main function
             code_parts.append("def main():")
 
-            # Page config
-            title = spec.get("title", "DashML Dashboard")
+            title = spec["title"]
             code_parts.append(self._generate_page_config(title))
 
-            # Apply CSS Styling
-            if "style" in spec:
-                code_parts.append(self._generate_css_injection(style_config))
+            # Apply CSS Styling (if style has non-default colors)
+            style_config = {"colors": colors}
+            code_parts.append(self._generate_css_injection(style_config))
 
             # Title
             code_parts.append(f'    st.title("{title}")')
             code_parts.append("")
 
             # Data loading
-            code_parts.append(self._generate_data_loading(spec["data"]))
+            code_parts.append(self._generate_data_loading(spec["data"], spec.get("db_config")))
             code_parts.append("")
 
-            # Charts or Pages
-            if "pages" in spec:
-                code_parts.append(self._generate_pages(spec["pages"], colors))
-            else:
-                charts = spec.get("charts", [])
-                for i, chart in enumerate(charts):
-                    code_parts.append(self._generate_chart(chart, colors))
-                    if i < len(charts) - 1:
-                        code_parts.append('    st.divider()')
-                    code_parts.append("")
+            # Always pages (normalizer guarantees this)
+            code_parts.append(self._generate_pages(spec["pages"], colors))
 
             # Entry point
             code_parts.append("")
@@ -111,8 +83,6 @@ class StreamlitTransformer(Transformer):
             raise TransformerError(f"Missing required field in spec: {e}")
         except Exception as e:
             raise TransformerError(f"Failed to generate Streamlit code: {e}")
-
-    # _load_style_config is now inherited from base class
 
     def _generate_imports(self, data_type: str = "csv") -> str:
         imports = """import streamlit as st
@@ -132,8 +102,6 @@ import altair as alt"""
         page_icon="📊",
         layout="wide"
     )'''
-
-    # _parse_sql_path is now inherited from base class
 
     def _generate_css_injection(self, style_config: Dict) -> str:
         """Generate CSS to override Streamlit defaults"""
@@ -158,8 +126,9 @@ import altair as alt"""
         </style>
     """, unsafe_allow_html=True)'''
 
-    def _generate_data_loading(self, data_spec: Dict[str, Any]) -> str:
+    def _generate_data_loading(self, data_spec: Dict[str, Any], db_config: Dict[str, Any] = None) -> str:
         data_type = data_spec.get("type", "csv")
+        db_config = db_config or {}
 
         if data_type == "csv":
             path = data_spec["path"]
@@ -193,24 +162,21 @@ import altair as alt"""
         return'''
 
         elif data_type == "sql":
-            if not self.db_config:
+            if not db_config:
                 return '''    st.error("Database configuration not provided")
     return'''
 
             # Extract database config
-            db_type = self.db_config["type"]
-            host = self.db_config["host"]
-            port = self.db_config["port"]
-            database = self.db_config["database"]
-            user = self.db_config["user"]
-            password = self.db_config["password"]
+            db_type = db_config["type"]
+            host = db_config["host"]
+            port = db_config["port"]
+            database = db_config["database"]
+            user = db_config["user"]
+            password = db_config["password"]
 
-            # Extract SQL spec fields (support both new path format and legacy format)
-            if "path" in data_spec:
-                schema, table_name = self._parse_sql_path(data_spec["path"])
-            else:
-                schema = data_spec["schema"]
-                table_name = data_spec["table_name"]
+            # Use pre-parsed path components from normalizer
+            schema = data_spec["sql_schema"]
+            table_name = data_spec["sql_table"]
 
             # Build connection string based on database type
             if db_type == "postgresql":
@@ -253,22 +219,17 @@ import altair as alt"""
         return'''
 
         elif data_type == "bigquery":
-            if not self.db_config:
+            if not db_config:
                 return '''    st.error("BigQuery configuration not provided")
     return'''
 
             # Extract BigQuery config
-            project = self.db_config["project"]
-            credentials_path = self.db_config.get("credentials_path")
+            project = db_config["project"]
+            credentials_path = db_config.get("credentials_path")
 
-            # Parse dataset.table from path
-            path = data_spec["path"]
-            parts = path.split(".")
-            if len(parts) == 2:
-                dataset, table_name = parts
-            else:
-                return f'''    st.error("Invalid BigQuery path format: {path}. Expected: dataset.table")
-    return'''
+            # Use pre-parsed path components from normalizer
+            dataset = data_spec["bq_dataset"]
+            table_name = data_spec["bq_table"]
 
             # Build credentials loading code
             if credentials_path:
@@ -315,18 +276,18 @@ import altair as alt"""
         """Generate Altair chart code with explicit colors"""
         chart_id = chart["id"]
         chart_type = chart["type"]
-        title = chart.get("title", chart_id)
+        title = chart["title"]
         x = chart["x"]
         y = chart["y"]
         agg = chart.get("agg", "sum")
-        group = chart.get("group")  # Optional grouping field for stacked/grouped bars
-        x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
-        y_type = chart.get("y_type")  # Optional: "number", "string" for casting
+        group = chart.get("group")
+        x_type = chart.get("x_type")
+        y_type = chart.get("y_type")
         bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
-        filters = chart.get("filters", [])  # Optional: filter conditions
-        sort_field = chart.get("sort")  # Optional: "x" or "y"
-        sort_order = chart.get("sort_order", "desc" if sort_field == "y" else "asc")  # Default desc for y-sort
-        limit = chart.get("limit")  # Optional: max rows after aggregation
+        filters = chart.get("filters", [])
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "desc" if sort_field == "y" else "asc")
+        limit = chart.get("limit")
 
         # Extract colors using constants
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
@@ -376,7 +337,7 @@ import altair as alt"""
         code_parts.append(f'    effective_x_type = "{x_type}" if "{x_type}" != "None" else column_types.get("{x}")')
 
         # Aggregation (only for chart types that need it)
-        if chart_type in CHARTS_NEED_AGGREGATION:
+        if chart.get("needs_aggregation", chart_type in CHARTS_NEED_AGGREGATION):
             # Use AGG_METHODS constant
             agg_method = AGG_METHODS.get(agg, "sum")
 

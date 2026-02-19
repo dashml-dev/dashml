@@ -24,29 +24,62 @@ def register_builtin_transformers():
     TransformerRegistry.register(SupersetTransformer)
 
 
-def build_command(args):
-    """Handle the build command
+def _build_db_config(args, data_type: str):
+    """Build database config from CLI args based on data type.
 
-    TODO: [SRP] This function does too much - file validation, loading, transformation, writing, AND running
-    Consider splitting into: load_and_validate_spec(), generate_code(), write_output(), run_dashboard()
+    Returns:
+        dict: Database config, or None for CSV.
+        Returns False if required args are missing (error already printed).
     """
+    if data_type == "sql":
+        required_db_args = ["db_type", "db_host", "db_port", "db_name", "db_user", "db_password"]
+        missing_args = [arg for arg in required_db_args if not getattr(args, arg, None)]
+
+        if missing_args:
+            print(f"Error: SQL datasource requires database configuration arguments:", file=sys.stderr)
+            for arg in missing_args:
+                print(f"  --{arg.replace('_', '-')}", file=sys.stderr)
+            return False
+
+        return {
+            "type": args.db_type,
+            "host": args.db_host,
+            "port": args.db_port,
+            "database": args.db_name,
+            "user": args.db_user,
+            "password": args.db_password,
+        }
+
+    elif data_type == "bigquery":
+        if not getattr(args, "bq_project", None):
+            print(f"Error: BigQuery datasource requires --bq-project argument", file=sys.stderr)
+            return False
+
+        return {
+            "type": "bigquery",
+            "project": args.bq_project,
+            "credentials_path": getattr(args, "bq_credentials", None),
+        }
+
+    return None
+
+
+def build_command(args):
+    """Handle the build command"""
     dashml_path = args.input
     target = args.target
     output_path = args.output
 
-    # Check if input file exists
-    # TODO: [Pythonic] Use pathlib consistently - Path.exists() over os.path.exists()
-    # This is good! But also consider Path(dashml_path).is_file() for clarity
     if not Path(dashml_path).exists():
         print(f"Error: DashML file not found: {dashml_path}", file=sys.stderr)
         return 1
 
-    # Load and validate spec
     print(f"Loading {dashml_path}...")
     engine = DashMLEngine()
 
+    # Step 1: Parse and validate (no normalization yet)
     try:
-        spec = engine.load(dashml_path)
+        spec_raw = engine.parse_and_validate(dashml_path)
     except ValidationError as e:
         print(f"Validation Error: {e}", file=sys.stderr)
         return 1
@@ -56,9 +89,25 @@ def build_command(args):
 
     print(f"✓ DashML spec validated successfully")
 
-    # Get transformer
+    # Step 2: Build db_config from CLI args based on data type
+    data_type = spec_raw.get("data", {}).get("type", "csv")
+    db_config = _build_db_config(args, data_type)
+    if db_config is False:
+        return 1
+
+    # Step 3: Normalize (produces NormalizedSpec with db_config baked in)
     try:
-        # Special handling for Superset transformer - pass credentials
+        spec = engine.normalize(spec_raw, dashml_path, db_config)
+    except Exception as e:
+        print(f"Error normalizing spec: {e}", file=sys.stderr)
+        return 1
+
+    if db_config:
+        config_label = "BigQuery" if data_type == "bigquery" else "Database"
+        print(f"✓ {config_label} configuration set")
+
+    # Step 4: Get transformer
+    try:
         if target == "superset":
             from transformers.superset import SupersetTransformer
             transformer = SupersetTransformer(
@@ -74,53 +123,7 @@ def build_command(args):
 
     print(f"Using transformer: {transformer.description}")
 
-    # Handle database configuration for SQL datasources
-    if spec["data"]["type"] == "sql":
-        # Validate database arguments are provided
-        required_db_args = ["db_type", "db_host", "db_port", "db_name", "db_user", "db_password"]
-        missing_args = [arg for arg in required_db_args if not getattr(args, arg, None)]
-
-        if missing_args:
-            print(f"Error: SQL datasource requires database configuration arguments:", file=sys.stderr)
-            for arg in missing_args:
-                print(f"  --{arg.replace('_', '-')}", file=sys.stderr)
-            return 1
-
-        # Create database config
-        db_config = {
-            "type": args.db_type,
-            "host": args.db_host,
-            "port": args.db_port,
-            "database": args.db_name,
-            "user": args.db_user,
-            "password": args.db_password
-        }
-
-        # Pass to transformer (if it has set_db_config method)
-        if hasattr(transformer, "set_db_config"):
-            transformer.set_db_config(db_config)
-            print(f"✓ Database configuration set")
-
-    # Handle BigQuery configuration
-    elif spec["data"]["type"] == "bigquery":
-        # Validate BigQuery arguments are provided
-        if not getattr(args, "bq_project", None):
-            print(f"Error: BigQuery datasource requires --bq-project argument", file=sys.stderr)
-            return 1
-
-        # Create BigQuery config
-        bq_config = {
-            "type": "bigquery",
-            "project": args.bq_project,
-            "credentials_path": getattr(args, "bq_credentials", None)
-        }
-
-        # Pass to transformer (if it has set_db_config method)
-        if hasattr(transformer, "set_db_config"):
-            transformer.set_db_config(bq_config)
-            print(f"✓ BigQuery configuration set (project: {args.bq_project})")
-
-    # Generate code
+    # Step 5: Generate code
     try:
         code = transformer.build(spec)
     except Exception as e:
@@ -248,16 +251,12 @@ def watch_command(args):
         print(f"🚀 Run: {transformer.get_run_command(output_path)}")
     print()
 
-    # Define rebuild function
-    # TODO: [Code Organization] Nested function - extract to module-level
-    # This makes testing harder and duplicates logic from build_command
-    # Fix: Extract common logic into _build_and_write(engine, transformer, dashml_path, output_path)
     def rebuild():
         """Rebuild the output file"""
         engine = DashMLEngine()
 
         try:
-            # Load and validate
+            # Load, validate, and normalize (db_config=None for watch/CSV mode)
             spec = engine.load(dashml_path)
             print(f"✓ Spec validated")
 

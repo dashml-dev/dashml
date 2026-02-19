@@ -3,7 +3,6 @@ Plotly Transformer - Generates Plotly HTML/JavaScript from DashML specs
 """
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
-import yaml
 import json
 from .base import Transformer, TransformerError
 from .constants import (
@@ -16,7 +15,7 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
-    from ..core.types import DashMLSpec
+    from ..core.types import NormalizedSpec
 
 
 class PlotlyTransformer(Transformer):
@@ -26,14 +25,6 @@ class PlotlyTransformer(Transformer):
     For SQL datasources: Generates Flask backend + HTML frontend (multi-file)
     """
 
-    def __init__(self):
-        super().__init__()
-        self.db_config = None
-
-    def set_db_config(self, config: Dict[str, Any]) -> None:
-        """Store database configuration for SQL datasources"""
-        self.db_config = config
-
     @property
     def name(self) -> str:
         return "plotly"
@@ -42,53 +33,41 @@ class PlotlyTransformer(Transformer):
     def description(self) -> str:
         return "Generates Plotly.js HTML dashboards"
 
-    def build(self, spec: "DashMLSpec") -> str:
+    def build(self, spec: "NormalizedSpec") -> str:
         """
-        Generate Plotly HTML from DashML spec.
+        Generate Plotly HTML from NormalizedSpec.
         For CSV: Returns single HTML file
         For SQL: Returns JSON-encoded multi-file structure with Flask backend
         """
         try:
-            self.clear_warnings()  # Clear warnings from previous builds
+            self.clear_warnings()
 
-            title = spec.get("title", "DashML Dashboard")
+            title = spec["title"]
             data_spec = spec["data"]
             data_type = data_spec.get("type", "csv")
+            colors = spec["style"]
 
-            # --- NEW: Load Styles ---
-            colors = self._load_colors(spec.get("style"))
-            # ------------------------
-
-            # Branch based on data type
             if data_type == "sql":
-                # Generate multi-file output with Flask backend
                 return self._build_sql_version(spec, title, data_spec, colors)
             elif data_type == "bigquery":
-                # Generate multi-file output with Flask + BigQuery backend
                 return self._build_bigquery_version(spec, title, data_spec, colors)
             else:
-                # Generate single HTML file for CSV
                 return self._build_csv_version(spec, title, data_spec, colors)
-
 
         except KeyError as e:
             raise TransformerError(f"Missing required field in spec: {e}")
         except Exception as e:
             raise TransformerError(f"Failed to generate Plotly code: {e}")
 
-    def _build_csv_version(self, spec: "DashMLSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
+    def _build_csv_version(self, spec: "NormalizedSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate single HTML file for CSV datasources"""
-        # Warn about unsupported color fields
         if colors.get("buttons"):
             self.warn("'buttons' color is not currently used by Plotly transformer")
 
         # Check for unsupported chart types
         all_charts = []
-        if "pages" in spec:
-            for page in spec["pages"]:
-                all_charts.extend(page.get("charts", []))
-        else:
-            all_charts = spec.get("charts", [])
+        for page in spec["pages"]:
+            all_charts.extend(page.get("charts", []))
 
         for chart in all_charts:
             chart_type = chart.get("type")
@@ -105,30 +84,12 @@ class PlotlyTransformer(Transformer):
         html_parts.append(f'  <div class="container">')
         html_parts.append(f'    <h1>{title}</h1>')
 
-        # Check if using pages or legacy charts
-        if "pages" in spec:
-            # Multi-page dashboard with tabs
-            pages = spec["pages"]
-            html_parts.append(self._generate_page_tabs(pages, colors))
-            html_parts.append(self._generate_page_containers(pages, colors))
-            html_parts.append('  </div>')
-            html_parts.append(self._generate_javascript_pages(data_spec, pages, colors))
-        else:
-            # Legacy: single page with chart selector
-            charts = spec.get("charts", [])
-            html_parts.append('    <div class="card">')
-
-            # Chart selector
-            if len(charts) > 1:
-                html_parts.append(self._generate_chart_selector(charts))
-
-            # Chart container
-            html_parts.append('      <div id="chart"></div>')
-            html_parts.append('    </div>')
-            html_parts.append('  </div>')
-
-            # JavaScript
-            html_parts.append(self._generate_javascript(data_spec, charts, colors))
+        # Always use pages (normalizer guarantees pages[] exists)
+        pages = spec["pages"]
+        html_parts.append(self._generate_page_tabs(pages, colors))
+        html_parts.append(self._generate_page_containers(pages, colors))
+        html_parts.append('  </div>')
+        html_parts.append(self._generate_javascript_pages(data_spec, pages, colors))
 
         # Body end
         html_parts.append("</body>")
@@ -136,13 +97,13 @@ class PlotlyTransformer(Transformer):
 
         return "\n".join(html_parts)
 
-    def _build_sql_version(self, spec: "DashMLSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
+    def _build_sql_version(self, spec: "NormalizedSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate multi-file output with Flask backend for SQL datasources"""
-        if not self.db_config:
+        if not spec.get("db_config"):
             raise TransformerError("Database configuration not provided for SQL datasource")
 
         # Generate Flask backend
-        flask_app = self._generate_flask_app(data_spec, colors)
+        flask_app = self._generate_flask_app(spec, data_spec, colors)
 
         # Generate HTML frontend (fetches from Flask API instead of CSV)
         html_frontend = self._generate_sql_frontend(spec, title, colors)
@@ -158,13 +119,13 @@ class PlotlyTransformer(Transformer):
 
         return json.dumps(multi_file_output)
 
-    def _build_bigquery_version(self, spec: "DashMLSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
+    def _build_bigquery_version(self, spec: "NormalizedSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate multi-file output with Flask + BigQuery backend"""
-        if not self.db_config:
+        if not spec.get("db_config"):
             raise TransformerError("BigQuery configuration not provided")
 
         # Generate Flask backend with BigQuery
-        flask_app = self._generate_flask_app_bigquery(data_spec, colors)
+        flask_app = self._generate_flask_app_bigquery(spec, data_spec, colors)
 
         # Generate HTML frontend (fetches from Flask API - same as SQL version)
         html_frontend = self._generate_sql_frontend(spec, title, colors)
@@ -180,19 +141,15 @@ class PlotlyTransformer(Transformer):
 
         return json.dumps(multi_file_output)
 
-    def _generate_flask_app_bigquery(self, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
+    def _generate_flask_app_bigquery(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to BigQuery"""
-        # Extract BigQuery config
-        project = self.db_config["project"]
-        credentials_path = self.db_config.get("credentials_path")
+        db_config = spec["db_config"]
+        project = db_config["project"]
+        credentials_path = db_config.get("credentials_path")
 
-        # Parse dataset.table from path
-        path = data_spec["path"]
-        parts = path.split(".")
-        if len(parts) == 2:
-            dataset, table_name = parts
-        else:
-            raise TransformerError(f"Invalid BigQuery path format: {path}. Expected: dataset.table")
+        # Use pre-parsed path components from normalizer
+        dataset = data_spec["bq_dataset"]
+        table_name = data_spec["bq_table"]
 
         # Build credentials loading code
         if credentials_path:
@@ -321,35 +278,6 @@ if __name__ == '__main__':
     print(f"Dashboard available at: http://localhost:5000")
     app.run(debug=True, port=5000)
 '''
-
-    def _load_colors(self, style_path: str) -> Dict[str, str]:
-        """Load colors from style file or return defaults"""
-        defaults = {
-            "background": "#f5f5f5",  # Page background
-            "card": "#ffffff",        # Card background
-            "text": "#333333",        # Main text
-            "primary": "#1f77b4",     # Primary color (active tabs)
-            "secondary": DEFAULT_SECONDARY_COLORS
-        }
-
-        if not style_path:
-            return defaults
-
-        # Use base class method
-        style_config = self._load_style_config(style_path)
-        if not style_config:
-            return defaults
-
-        loaded = style_config.get("colors", {})
-
-        # Merge with defaults
-        return {
-            "background": loaded.get("background", defaults["background"]),
-            "card": loaded.get("card", loaded.get("background", defaults["card"])),
-            "text": loaded.get("text", defaults["text"]),
-            "primary": loaded.get("primary", defaults["primary"]),
-            "secondary": loaded.get("secondary", DEFAULT_SECONDARY_COLORS)
-        }
 
     def _generate_html_header(self, title: str, colors: Dict[str, str]) -> str:
         """Generate HTML header with dynamic CSS based on theme"""
@@ -1631,24 +1559,19 @@ if __name__ == '__main__':
         output_dir = output_path_obj.parent.resolve()
         return f"cd {output_dir} && python -m http.server 8000"
 
-    # _parse_sql_path is now inherited from base class
-
-    def _generate_flask_app(self, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
+    def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to SQL database"""
-        # Extract database config
-        db_type = self.db_config["type"]
-        host = self.db_config["host"]
-        port = self.db_config["port"]
-        database = self.db_config["database"]
-        user = self.db_config["user"]
-        password = self.db_config["password"]
+        db_config = spec["db_config"]
+        db_type = db_config["type"]
+        host = db_config["host"]
+        port = db_config["port"]
+        database = db_config["database"]
+        user = db_config["user"]
+        password = db_config["password"]
 
-        # Extract SQL spec fields (support both new path format and legacy format)
-        if "path" in data_spec:
-            schema, table_name = self._parse_sql_path(data_spec["path"])
-        else:
-            schema = data_spec["schema"]
-            table_name = data_spec["table_name"]
+        # Use pre-parsed path components from normalizer
+        schema = data_spec["sql_schema"]
+        table_name = data_spec["sql_table"]
 
         # Build connection string based on database type
         if db_type == "postgresql":
@@ -1763,42 +1686,22 @@ if __name__ == '__main__':
     app.run(debug=True, port=5000)
 '''
 
-    def _generate_sql_frontend(self, spec: "DashMLSpec", title: str, colors: Dict[str, str]) -> str:
+    def _generate_sql_frontend(self, spec: "NormalizedSpec", title: str, colors: Dict[str, str]) -> str:
         """Generate HTML frontend that fetches from Flask API"""
         html_parts = []
 
-        # HTML header (CSS injection)
         html_parts.append(self._generate_html_header(title, colors))
 
-        # Body start
         html_parts.append("<body>")
         html_parts.append(f'  <div class="container">')
         html_parts.append(f'    <h1>{title}</h1>')
 
-        # Check if using pages or legacy charts
-        if "pages" in spec:
-            # Multi-page dashboard with tabs
-            pages = spec["pages"]
-            html_parts.append(self._generate_page_tabs(pages, colors))
-            html_parts.append(self._generate_page_containers(pages, colors))
-            html_parts.append('  </div>')
-            html_parts.append(self._generate_javascript_pages_sql(pages, colors))
-        else:
-            # Legacy: single page with chart selector
-            charts = spec.get("charts", [])
-            html_parts.append('    <div class="card">')
-
-            # Chart selector
-            if len(charts) > 1:
-                html_parts.append(self._generate_chart_selector(charts))
-
-            # Chart container
-            html_parts.append('      <div id="chart"></div>')
-            html_parts.append('    </div>')
-            html_parts.append('  </div>')
-
-            # JavaScript (modified to fetch from API)
-            html_parts.append(self._generate_javascript_sql(charts, colors))
+        # Always use pages (normalizer guarantees pages[] exists)
+        pages = spec["pages"]
+        html_parts.append(self._generate_page_tabs(pages, colors))
+        html_parts.append(self._generate_page_containers(pages, colors))
+        html_parts.append('  </div>')
+        html_parts.append(self._generate_javascript_pages_sql(pages, colors))
 
         # Body end
         html_parts.append("</body>")

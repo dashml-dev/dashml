@@ -47,6 +47,12 @@ class DataSpec(TypedDict, total=False):
     # Legacy SQL fields (deprecated - use path instead)
     schema: str            # DEPRECATED: Use path="schema.table" instead
     table_name: str        # DEPRECATED: Use path="schema.table" instead
+    # Normalizer-resolved fields (populated by normalizer, not by user):
+    csv_path: str       # for CSV: resolved absolute file path
+    sql_schema: str     # for SQL: parsed schema from path
+    sql_table: str      # for SQL: parsed table from path
+    bq_dataset: str     # for BigQuery: parsed dataset from path
+    bq_table: str       # for BigQuery: parsed table from path
 
 
 class FilterSpec(TypedDict, total=False):
@@ -122,6 +128,9 @@ class ChartSpec(TypedDict, total=False):
     sort: str                  # Optional: Field to sort by ("x" or "y") after aggregation
     sort_order: str            # Optional: "asc" or "desc" (default: "asc")
     limit: int                 # Optional: Max rows after aggregation
+    # Normalizer-resolved fields:
+    needs_aggregation: bool   # True if chart type in CHARTS_NEED_AGGREGATION
+    uses_raw_data: bool       # True if chart type in CHARTS_USE_RAW_DATA
 
 
 class PageSpec(TypedDict, total=False):
@@ -138,9 +147,11 @@ class PageSpec(TypedDict, total=False):
 
 class DashMLSpec(TypedDict, total=False):
     """
-    Complete DashML specification.
+    Complete DashML specification — describes the .dashml file format.
 
-    This is the canonical format that all transformers receive.
+    This is a documentation type for what users write in .dashml files.
+    The pipeline output that transformers consume is NormalizedSpec.
+
     Version can be string, int, or float (YAML parses 0.000000001 as float).
 
     Supports two formats:
@@ -153,3 +164,34 @@ class DashMLSpec(TypedDict, total=False):
     data: DataSpec
     charts: List[ChartSpec]   # Legacy format (backward compatible)
     pages: List[PageSpec]     # New format (multi-page)
+
+
+class ResolvedStyle(TypedDict, total=False):
+    """Fully resolved style colors — loaded from .dmls and merged with defaults."""
+    background: str
+    card: str
+    primary: str
+    text: str
+    buttons: str
+    secondary: List[str]
+
+
+class NormalizedSpec(TypedDict, total=False):
+    """
+    Normalized DashML spec — the pipeline output that transformers consume.
+
+    Guarantees:
+    - pages[] always exists (single-page specs are wrapped)
+    - style is fully resolved (colors dict, not a filename)
+    - data has pre-parsed path components (sql_schema, bq_dataset, etc.)
+    - charts have needs_aggregation/uses_raw_data annotations
+    - version is coerced to string
+    - db_config is attached (not stored on transformer instance)
+    """
+    version: str                 # coerced to string
+    title: str
+    data: DataSpec               # same DataSpec, with parsed fields filled
+    pages: List[PageSpec]        # ALWAYS pages (single-page wrapped)
+    style: ResolvedStyle         # resolved colors, not a filename
+    db_config: Dict[str, Any]    # from CLI args (SQL/BigQuery config)
+    source_file: str             # absolute path to the .dashml file
