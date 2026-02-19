@@ -36,21 +36,14 @@ All the real work — path parsing, type inference, legacy field resolution, agg
 
 The consequence: adding a new data source means changing all 4 transformers. Adding a new chart type means changing all 4 transformers. This is the root cause of the ~300+ lines of duplication across backends, and it will get worse with every new feature.
 
-**What's missing is a normalizer/IR layer between validation and code generation:**
+**What's missing is a normalizer that replaces the current do-nothing pipeline step.** Today `engine.load()` validates a raw dict and labels it `DashMLSpec` — no actual transformation happens. The normalizer replaces that labeling step with real work. The pipeline stays 3 stages:
 
 ```
-.dashml YAML
-  -> Parser (YAML -> raw dict)                    # exists, fine
-  -> Validator (structural checks)                # exists, fine
-  -> Normalizer (NEW: resolve legacy fields,      # MISSING
-                 parse paths, infer types,
-                 resolve chart requirements
-                 -> normalized IR)
-  -> Backend (receives clean IR, only does        # currently overloaded
-             platform-specific output)
+Before:  parse → validate → label-as-DashMLSpec(no-op) → transformer
+After:   parse → validate → normalize                   → transformer
 ```
 
-The normalizer would resolve legacy `schema`+`table_name` -> `path` once, parse SQL paths once, normalize chart requirements (bubble needs size, stacked needs group) into explicit fields once, and hand backends a fully-resolved spec. Backends would shrink dramatically and only contain platform-specific code generation.
+The normalizer resolves legacy `schema`+`table_name` -> `path` once, parses SQL paths once, wraps single-page specs into `pages[]` once, loads and resolves styles once, and annotates charts with `needs_aggregation`/`uses_raw_data` flags. Backends receive a clean `NormalizedSpec` and only contain platform-specific code generation.
 
 This also means data source adapters (CSV, SQL, BigQuery) and rendering adapters (Streamlit, Plotly, Observable) become **separate concerns** instead of being multiplied together inside each transformer.
 
@@ -67,6 +60,7 @@ This also means data source adapters (CSV, SQL, BigQuery) and rendering adapters
 Without these, DashML can only produce chart galleries, not dashboards. This is the #1 thing keeping it from being a serious BI standard.
 
 **Proposed DSL evolution:**
+
 ```yaml
 # KPI cards as a widget type alongside charts
 widgets:
@@ -100,6 +94,7 @@ layout:
 The `build()` method's contract is: take a spec, return generated code as a string. Three transformers follow this. Superset breaks it — it makes live API calls during `build()`, creating databases, datasets, and charts directly.
 
 This means:
+
 - Superset `build()` has **side effects** — it's not a pure transformation
 - It can't be dry-run, tested, or previewed
 - Partial failures leave Superset in an inconsistent state
@@ -116,6 +111,7 @@ This gets solved naturally by the normalizer/IR layer — data source handling m
 ### 5. Data Source Model is Too Simple for Real BI
 
 Currently: one `data` block -> one table. Real dashboards need:
+
 - **Multiple data sources** — sales table + customer table
 - **Joins** — at minimum, reference relationships between tables
 - **Per-chart data overrides** — most charts use the same source, but some need a different one
@@ -123,6 +119,7 @@ Currently: one `data` block -> one table. Real dashboards need:
 This doesn't mean DashML should become a query engine. But the spec needs to express *which data goes where*, even if the generated code handles the actual loading.
 
 **Proposed evolution:**
+
 ```yaml
 data:
   sources:
@@ -147,6 +144,7 @@ charts:
 There's no `pyproject.toml` or `setup.py`. DashML can't be `pip install`-ed, can't be imported as a library, and the CLI only works when run from the project root directory. For an open standard, this is a hard blocker.
 
 **What's needed:**
+
 - `pyproject.toml` with metadata, entry points, and optional dependency groups (`[sql]`, `[bigquery]`, `[dev]`)
 - Entry point: `dashml = dashml_new.cli:main` so users get a `dashml` command
 - Optional deps: core only needs `pyyaml`; backends pull in their own deps
@@ -154,12 +152,14 @@ There's no `pyproject.toml` or `setup.py`. DashML can't be `pip install`-ed, can
 ### 7. Test Coverage is Minimal
 
 `test_new_architecture.py` (215 lines, 5 test functions) only tests:
+
 - Basic IR generation
 - Streamlit output structure
 - Plotly output structure
 - Core isolation principle
 
 **Not tested at all:**
+
 - Validator (337 lines, zero tests) — the most critical component
 - CLI argument parsing and error paths
 - Filter/sort/limit in generated code
@@ -173,6 +173,7 @@ For an open standard, the validator needs near-100% coverage. Users need to trus
 ### 8. Version Strategy is Missing
 
 `version: 0.000000001` signals "not ready" but there's no plan for what version numbers mean. An open standard needs:
+
 - Semantic versioning for the spec format (separate from the tool version)
 - A deprecation policy (how long do old spec versions remain supported?)
 - A migration path (can you auto-upgrade a v1 spec to v2?)
@@ -196,12 +197,14 @@ We ran a controlled experiment (`experiments/llm_generation/`) to test DashML's 
 
 ### Results
 
-| Metric | DashML | Streamlit | Plotly.js |
-|--------|--------|-----------|-----------|
-| Parse Rate | 100% | 100% | 100% |
-| Validation Rate | 100% | 100% | 100% |
-| Compile Rate | 100% | 100% | 100% |
-| Avg Completeness | 99.5% | 100% | 96.6% |
+
+| Metric           | DashML | Streamlit | Plotly.js |
+| ---------------- | ------ | --------- | --------- |
+| Parse Rate       | 100%   | 100%      | 100%      |
+| Validation Rate  | 100%   | 100%      | 100%      |
+| Compile Rate     | 100%   | 100%      | 100%      |
+| Avg Completeness | 99.5%  | 100%      | 96.6%     |
+
 
 **No measurable advantage for DashML at current complexity.**
 
@@ -209,12 +212,14 @@ We ran a controlled experiment (`experiments/llm_generation/`) to test DashML's 
 
 The current `.dashml` spec surface area is too small. Every feature maps to a 1-2 line boilerplate pattern:
 
-| DashML Feature | Raw Code Equivalent |
-|---------------|---------------------|
-| `type: bar, x: col, y: col, agg: sum` | `df.groupby("col")["col"].sum()` + one chart call |
-| `filters: [{op: gt, value: 100}]` | `df[df["col"] > 100]` |
-| `pages:` array | `st.tabs()` / `<div>` toggle |
-| `sort: y, sort_order: desc, limit: 10` | `.sort_values().head(10)` |
+
+| DashML Feature                         | Raw Code Equivalent                               |
+| -------------------------------------- | ------------------------------------------------- |
+| `type: bar, x: col, y: col, agg: sum`  | `df.groupby("col")["col"].sum()` + one chart call |
+| `filters: [{op: gt, value: 100}]`      | `df[df["col"] > 100]`                             |
+| `pages:` array                         | `st.tabs()` / `<div>` toggle                      |
+| `sort: y, sort_order: desc, limit: 10` | `.sort_values().head(10)`                         |
+
 
 Claude Sonnet has seen these patterns millions of times. There is no complexity threshold that would cause failures. The experiment effectively tested "can an LLM write 5-15 lines of boilerplate correctly?" — which is trivially yes for frontier models.
 
@@ -236,10 +241,12 @@ DashML sits above Vega-Lite, Plotly, and Streamlit in the abstraction stack — 
 
 The key insight: **individual features are trivial, but their composition is not.** Each DashML feature maps to a 1-2 line pattern. But combining 10 features in one dashboard — the YAML stays flat and additive, while the raw code grows non-linearly:
 
-| Dashboard Complexity | DashML | Vega-Lite | Raw Plotly/Streamlit |
-|---|---|---|---|
-| 1 chart, no filters | ~10 lines YAML | ~30 lines JSON | ~20 lines code |
+
+| Dashboard Complexity                                          | DashML              | Vega-Lite                                             | Raw Plotly/Streamlit                                            |
+| ------------------------------------------------------------- | ------------------- | ----------------------------------------------------- | --------------------------------------------------------------- |
+| 1 chart, no filters                                           | ~10 lines YAML      | ~30 lines JSON                                        | ~20 lines code                                                  |
 | 10 charts, 3 pages, shared filters, 2 sources, derived fields | ~80 lines flat YAML | ~200+ lines nested JSON (transforms, signals, params) | ~400-600 lines (state mgmt, callbacks, caching, error handling) |
+
 
 This is the SQL analogy. No one argues "LLMs can write `SELECT * FROM users`, so SQL is pointless." SQL's value shows up at complex queries with joins, subqueries, and window functions — where procedural equivalents become error-prone. DashML's value shows up at compositional dashboard complexity, where raw code requires state management, cross-chart coordination, and multi-source data handling.
 
@@ -254,31 +261,38 @@ Once DashML's spec grows beyond simple chart declarations, these existing benchm
 ### Directly Usable
 
 **[nvBench 2.0](https://github.com/HKUSTDial/nvBench-2.0)** (NeurIPS 2025) — The most relevant benchmark. 7,878 NL→visualization queries across 153 domains and 780 tables. Outputs are Vega-Lite specs (declarative, like DashML). Crucially handles **ambiguous queries** where one description maps to multiple valid visualizations.
+
 - [Paper](https://arxiv.org/abs/2503.12880) | [GitHub](https://github.com/HKUSTDial/nvBench-2.0)
 - **Adoption path**: Convert nvBench's Vega-Lite ground truths to `.dashml` format, then benchmark LLM generation of `.dashml` vs raw code for each query.
 
 **[VisEval](https://github.com/microsoft/VisEval)** (Microsoft, 2024) — 2,524 NL queries across 146 databases. Evaluates on three dimensions: **validity** (does it run?), **legality** (correct data mapping?), **readability** (good visual design?). Pip-installable automated scoring pipeline.
+
 - [Paper](https://arxiv.org/abs/2407.00981) | [GitHub](https://github.com/microsoft/VisEval)
 - **Adoption path**: Reuse the validity/legality/readability scoring framework for DashML evaluation.
 
 **[PandasPlotBench](https://github.com/JetBrains-Research/PandasPlotBench)** (JetBrains, Dec 2024) — 175 tasks across Matplotlib, Seaborn, and Plotly. Found that **~22% of LLM-generated Plotly code fails to compile**. Synthetic data prevents leakage.
+
 - [Paper](https://arxiv.org/abs/2412.02764) | [HuggingFace](https://huggingface.co/datasets/JetBrains-Research/PandasPlotBench) | [GitHub](https://github.com/JetBrains-Research/PandasPlotBench)
 - **Why it matters**: Already proves the thesis for Plotly specifically. DashML compiles to working Plotly without the 22% failure rate.
 
 ### Useful for Higher Complexity
 
 **[DSBench / DSCodeBench](https://github.com/LiqiangJing/DSBench)** (ICLR 2025) — Full data science agent pipelines, not just plotting. Average solution is 22.5 lines (vs DS-1000's 3.6). Relevant once DashML adds computed columns and multi-step data transformations.
+
 - [Paper](https://arxiv.org/abs/2505.15621) | [GitHub](https://github.com/LiqiangJing/DSBench)
 
 **[MatPlotBench](https://github.com/thunlp/MatPlotAgent)** (2024) — 100 human-verified scientific visualization tasks. Uses **GPT-4V for automated visual evaluation** — scores whether the chart *looks* correct, not just whether the code runs. Adaptable evaluation methodology.
+
 - [Paper](https://arxiv.org/abs/2402.11453) | [GitHub](https://github.com/thunlp/MatPlotAgent)
 
 **[DS-1000](https://github.com/xlang-ai/DS-1000)** — 1,000 data science problems across 7 Python libraries. **Pandas-specific pass rate: 26.5%** (Codex-002). Proves LLMs struggle with data manipulation code beyond trivial patterns.
+
 - [Paper](https://arxiv.org/abs/2211.11501) | [GitHub](https://github.com/xlang-ai/DS-1000)
 
 ### External Evidence
 
 The broader code generation benchmarks confirm the problem is real at higher complexity:
+
 - **SWE-bench Verified**: 50-65% for frontier models on real GitHub issues
 - **LiveCodeBench**: ~39% for Claude Sonnet on real code changes
 - **DS-1000 (Pandas)**: 26.5% pass rate — not for dashboards, just single data manipulation steps
@@ -300,71 +314,57 @@ The failure modes that DashML would prevent (import errors, API misuse, state ma
 
 #### 1. Build the normalizer/IR layer
 
-This is the root cause of transformer bloat and duplication. Add a pipeline step between validator and backends that produces a fully-resolved intermediate representation. Transformers currently receive the raw YAML dict and each independently does the same normalization work. After this change, they receive a clean IR and only do platform-specific code generation.
+This is the root cause of transformer bloat and duplication. Replace the current do-nothing pipeline step (where `engine.load()` labels a raw dict as `DashMLSpec`) with a normalizer that produces a fully-resolved `NormalizedSpec`. The pipeline stays 3 stages — the normalizer doesn't add complexity, it makes the existing step do real work. Transformers currently receive the raw YAML dict and each independently does the same normalization work. After this change, they receive a clean IR and only do platform-specific code generation.
 
 **New file: `dashml_new/core/normalizer.py`**
 
-**New pipeline:**
+**Pipeline (same number of stages — normalizer replaces the current no-op labeling step):**
+
 ```
 engine.load(path)
-  -> parser.parse(path)       -> raw dict
-  -> validator.validate(dict)  -> validated dict (unchanged)
-  -> normalizer.normalize(dict, source_file) -> NormalizedSpec  <- NEW
+  -> parser.parse(path)                          -> raw dict
+  -> validator.validate(dict)                     -> validated dict (unchanged)
+  -> normalizer.normalize(dict, source_file)      -> NormalizedSpec (replaces DashMLSpec labeling)
   -> returned to CLI, passed to transformer.build(NormalizedSpec)
 ```
 
+`DashMLSpec` remains as a documentation type (describes the `.dashml` file format) but is no longer a pipeline type.
+
 **What the normalizer does (each item is logic currently duplicated across 3-4 transformers):**
 
-| Responsibility | Currently lives in | Move to normalizer |
-|---|---|---|
-| Parse SQL `schema.table` or `[schema].[table]` paths | `base.py:133-160`, called from streamlit:209, plotly:1647, observable:1210, superset:402 (superset has its own copy) | `normalizer.py` resolves once, stores `sql_schema` + `sql_table` in IR |
-| Parse BigQuery `dataset.table` paths | streamlit:264, plotly:189, observable:1336, superset:247 (each does `path.split(".")`) | `normalizer.py` resolves once, stores `bq_dataset` + `bq_table` in IR |
-| Resolve legacy `schema`+`table_name` -> `path` | streamlit:208-213, plotly:1646-1651, observable:1209-1214, superset:211-218 (identical 4x) | `normalizer.py` resolves once; IR always has `path` |
-| Wrap single-page `charts` into `pages` | streamlit:93-96, plotly:87+109, observable:85+103, superset:270+295 (checked 6+ times) | `normalizer.py` always produces `pages[]`; backends never check |
-| Load style config + merge defaults | `base.py:108-131`, plotly:325-352 has custom `_load_colors()`, each transformer defines different defaults | `normalizer.py` loads `.dmls`, resolves path relative to source file, merges with standard defaults, stores resolved `StyleColors` in IR |
-| Classify chart type (needs aggregation vs raw data) | constants.py defines `CHARTS_NEED_AGGREGATION`/`CHARTS_USE_RAW_DATA`, each transformer checks at render time | `normalizer.py` annotates each chart with `needs_aggregation: bool`, `uses_raw_data: bool` |
-| Store db_config | `set_db_config()` is identical in streamlit:28-33, plotly:29-35, observable:29-35, superset:123-136 | `db_config` becomes part of the IR context passed to `build()`, not stored on transformer instance |
 
-**New types in `core/types.py`:**
+| Responsibility                                       | Currently lives in                                                                                                   | Move to normalizer                                                                                                                       |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Parse SQL `schema.table` or `[schema].[table]` paths | `base.py:133-160`, called from streamlit:209, plotly:1647, observable:1210, superset:402 (superset has its own copy) | `normalizer.py` resolves once, stores `sql_schema` + `sql_table` in IR                                                                   |
+| Parse BigQuery `dataset.table` paths                 | streamlit:264, plotly:189, observable:1336, superset:247 (each does `path.split(".")`)                               | `normalizer.py` resolves once, stores `bq_dataset` + `bq_table` in IR                                                                    |
+| Resolve legacy `schema`+`table_name` -> `path`       | streamlit:208-213, plotly:1646-1651, observable:1209-1214, superset:211-218 (identical 4x)                           | `normalizer.py` resolves once; IR always has `path`                                                                                      |
+| Wrap single-page `charts` into `pages`               | streamlit:93-96, plotly:87+109, observable:85+103, superset:270+295 (checked 6+ times)                               | `normalizer.py` always produces `pages[]`; backends never check                                                                          |
+| Load style config + merge defaults                   | `base.py:108-131`, plotly:325-352 has custom `_load_colors()`, each transformer defines different defaults           | `normalizer.py` loads `.dmls`, resolves path relative to source file, merges with standard defaults, stores resolved `ResolvedStyle` in IR |
+| Classify chart type (needs aggregation vs raw data)  | constants.py defines `CHARTS_NEED_AGGREGATION`/`CHARTS_USE_RAW_DATA`, each transformer checks at render time         | `normalizer.py` annotates each chart with `needs_aggregation: bool`, `uses_raw_data: bool`                                               |
+| Store db_config                                      | `set_db_config()` is identical in streamlit:28-33, plotly:29-35, observable:29-35, superset:123-136                  | `db_config` becomes part of the IR context passed to `build()`, not stored on transformer instance                                       |
+
+
+**Type changes in `core/types.py` (extend existing types, no parallel hierarchy):**
+
+Add normalizer annotation fields to existing TypedDicts:
 
 ```python
-class NormalizedDataSource(TypedDict):
-    type: str                    # "csv" | "sql" | "bigquery"
-    path: str                    # original path string
-    # Pre-parsed components (always populated by normalizer):
-    csv_path: str                # for CSV: resolved file path
-    sql_schema: str              # for SQL: parsed schema name
-    sql_table: str               # for SQL: parsed table name
-    bq_dataset: str              # for BigQuery: parsed dataset
-    bq_table: str                # for BigQuery: parsed table
+# Add to DataSpec (normalizer fills these in):
+    csv_path: str       # for CSV: resolved file path
+    sql_schema: str     # for SQL: parsed schema
+    sql_table: str      # for SQL: parsed table
+    bq_dataset: str     # for BigQuery: parsed dataset
+    bq_table: str       # for BigQuery: parsed table
 
-class NormalizedChart(TypedDict, total=False):
-    id: str
-    type: str
-    title: str
-    x: str
-    y: str
-    agg: str
-    group: str
-    size: str
-    x_type: str
-    y_type: str
-    bins: int
-    filters: List[FilterSpec]
-    sort: str
-    sort_order: str              # default "asc" resolved
-    limit: int
-    # Normalizer-added fields:
-    needs_aggregation: bool      # from CHARTS_NEED_AGGREGATION
-    uses_raw_data: bool          # from CHARTS_USE_RAW_DATA
+# Add to ChartSpec (normalizer fills these in):
+    needs_aggregation: bool   # from CHARTS_NEED_AGGREGATION
+    uses_raw_data: bool       # from CHARTS_USE_RAW_DATA
+```
 
-class NormalizedPage(TypedDict):
-    id: str
-    title: str
-    description: str
-    charts: List[NormalizedChart]
+Add two new types for pipeline output:
 
-class ResolvedStyle(TypedDict):
+```python
+class ResolvedStyle(TypedDict, total=False):
     background: str
     card: str
     primary: str
@@ -372,11 +372,11 @@ class ResolvedStyle(TypedDict):
     buttons: str
     secondary: List[str]
 
-class NormalizedSpec(TypedDict):
+class NormalizedSpec(TypedDict, total=False):
     version: str                 # always coerced to string
     title: str
-    data: NormalizedDataSource
-    pages: List[NormalizedPage]  # always pages, even for single-page
+    data: DataSpec               # same DataSpec, with parsed fields filled
+    pages: List[PageSpec]        # always pages, even for single-page
     style: ResolvedStyle         # loaded and merged, not a file path
     db_config: Dict[str, Any]    # database config (from CLI args)
     source_file: str             # path to the .dashml file
@@ -401,27 +401,32 @@ class NormalizedSpec(TypedDict):
 - Date type inference from actual data (stays in generated code — needs runtime data)
 
 #### 2. Add `pyproject.toml`
+
 Make it installable, define `dashml` CLI entry point.
 
 #### 3. Test the validator
+
 It's the gatekeeper; untested gatekeeper = unreliable standard.
 
 ### Tier 1: DSL Evolution (the real differentiators)
-4. **Add `metric` widget type** — KPI cards are the single most-requested BI element
-5. **Add dashboard-level `filters`** — cross-chart filtering is table-stakes
-6. **Add `derived_fields`** — calculated columns unlock 80% of real analytics
-7. **Add `text`/`markdown` widget type** — dashboards need narrative
-8. **Adopt nvBench 2.0 as validation benchmark** — once these features land, re-run the LLM generation experiment using nvBench's 7,878 queries to properly measure the DashML vs raw code gap
+
+1. **Add `metric` widget type** — KPI cards are the single most-requested BI element
+2. **Add dashboard-level `filters`** — cross-chart filtering is table-stakes
+3. **Add `derived_fields`** — calculated columns unlock 80% of real analytics
+4. **Add `text`/`markdown` widget type** — dashboards need narrative
+5. **Adopt nvBench 2.0 as validation benchmark** — once these features land, re-run the LLM generation experiment using nvBench's 7,878 queries to properly measure the DashML vs raw code gap
 
 ### Tier 2: Contract & Data Model
-9. **Fix Superset transformer** — separate `plan` from `apply`
-10. **Support multiple data sources** — `data.sources[]` with per-chart binding
-11. **Spec versioning strategy** — define what version numbers mean, add migration tooling
+
+1. **Fix Superset transformer** — separate `plan` from `apply`
+2. **Support multiple data sources** — `data.sources[]` with per-chart binding
+3. **Spec versioning strategy** — define what version numbers mean, add migration tooling
 
 ### Tier 3: Open Standard Readiness
-12. **Contributor docs** — how to build a transformer, how to extend the DSL
-13. **JSON Schema kept in sync** — currently it doesn't enforce conditional requirements (bubble needs size, etc.)
-14. **CI/CD pipeline** — tests, linting, type checking on every PR
+
+1. **Contributor docs** — how to build a transformer, how to extend the DSL
+2. **JSON Schema kept in sync** — currently it doesn't enforce conditional requirements (bubble needs size, etc.)
+3. **CI/CD pipeline** — tests, linting, type checking on every PR
 
 ---
 
@@ -443,7 +448,7 @@ The CLAUDE.md defines 7 principles. Here's how the codebase tracks against each,
 
 **"Typeless at the Core"** — This principle says the core validates structure only; type inference is deferred to generated code. The codebase follows this literally. But it's protecting a design limitation, not expressing an architectural insight. Because the core doesn't normalize types, every transformer independently does type inference, date detection, and column type mapping. "Typeless at the core" sounds principled, but in practice it means "every backend reinvents type handling."
 
-**Suggested revision:** "**Normalize Once, Generate Many**" — the core normalizes the spec into a clean IR (resolving paths, legacy fields, chart requirements); backends only handle platform-specific output. Type *inference from actual data* still belongs in generated code, but spec-level normalization belongs in the core.
+**Suggested revision:** "**Normalize Once, Generate Many**" — the core normalizes the spec into a clean IR (resolving paths, legacy fields, chart requirements); backends only handle platform-specific output. Crucially, this doesn't add a pipeline layer — it replaces the current do-nothing step (where `engine.load()` just labels a raw dict as `DashMLSpec`) with real work. The normalizer makes the existing pipeline step earn its keep. Type *inference from actual data* still belongs in generated code, but spec-level normalization belongs in the core.
 
 **"Extensible and Backend-Neutral"** — Aspirational, not true today. Adding a new backend means writing 1,500-2,400 lines that handle all 12 chart types, all 3 data sources, Flask backend generation, theming, and type inference from scratch. The registry pattern exists, but the transformer interface is too broad for an external contributor to implement without studying all existing backends.
 
@@ -464,3 +469,4 @@ The CLAUDE.md defines 7 principles. Here's how the codebase tracks against each,
 - **TypedDict approach** — right tradeoff for a compiler
 - **YAML as the DSL format** — LLM-friendly, human-readable, right choice
 - **The 4-backend strategy** — proves universality, keep them all
+
