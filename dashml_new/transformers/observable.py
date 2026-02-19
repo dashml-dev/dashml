@@ -3,7 +3,6 @@ Observable Plot Transformer - Generates Observable Plot HTML from DashML specs
 """
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
-import yaml
 import json
 from .base import Transformer, TransformerError
 from .constants import (
@@ -17,7 +16,7 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
-    from ..core.types import DashMLSpec, ChartSpec
+    from ..core.types import NormalizedSpec, ChartSpec
 
 
 class ObservablePlotTransformer(Transformer):
@@ -25,14 +24,6 @@ class ObservablePlotTransformer(Transformer):
     Generates standalone Observable Plot HTML dashboards from DashML specifications.
     Output: Single HTML file for CSV, multi-file with Flask backend for SQL
     """
-
-    def __init__(self):
-        super().__init__()
-        self.db_config = None
-
-    def set_db_config(self, config: Dict[str, Any]) -> None:
-        """Store database configuration for SQL datasources"""
-        self.db_config = config
 
     @property
     def name(self) -> str:
@@ -42,27 +33,18 @@ class ObservablePlotTransformer(Transformer):
     def description(self) -> str:
         return "Generates Observable Plot HTML dashboards"
 
-    def build(self, spec: "DashMLSpec") -> str:
-        """
-        Generate Observable Plot HTML from DashML spec.
-        For CSV: Returns single HTML file
-        For SQL: Returns JSON-encoded multi-file structure with Flask backend
-        For BigQuery: Returns JSON-encoded multi-file structure with Flask + BigQuery backend
-        """
+    def build(self, spec: "NormalizedSpec") -> str:
+        """Generate Observable Plot HTML from NormalizedSpec."""
         try:
-            self.clear_warnings()  # Clear warnings from previous builds
+            self.clear_warnings()
 
-            # Check data type
             data_type = spec["data"].get("type", "csv")
 
             if data_type == "sql":
-                # Generate multi-file output with Flask backend
                 return self._build_sql_version(spec)
             elif data_type == "bigquery":
-                # Generate multi-file output with Flask + BigQuery backend
                 return self._build_bigquery_version(spec)
             else:
-                # Generate single HTML file for CSV
                 return self._build_csv_version(spec)
 
         except KeyError as e:
@@ -70,53 +52,37 @@ class ObservablePlotTransformer(Transformer):
         except Exception as e:
             raise TransformerError(f"Failed to generate Observable Plot HTML: {e}")
 
-    def _build_csv_version(self, spec: "DashMLSpec") -> str:
+    def _build_csv_version(self, spec: "NormalizedSpec") -> str:
         """Generate single HTML file for CSV datasources"""
-        # Load style config
-        style_config = self._load_style_config(spec.get("style"))
-        colors = style_config.get("colors", {})
+        colors = spec["style"]
 
-        # Warn about unsupported color fields
         if colors.get("buttons"):
             self.warn("'buttons' color is not currently used by Observable transformer")
 
-        # Check for unsupported chart types
-        all_charts = []
-        if "pages" in spec:
-            for page in spec["pages"]:
-                all_charts.extend(page.get("charts", []))
-        else:
-            all_charts = spec.get("charts", [])
-
-        # Warnings are now handled by validator (group field requirement)
-
-        # Build HTML structure
+        title = spec["title"]
         html_parts = []
-        html_parts.append(self._generate_html_head(spec.get("title", "DashML Dashboard"), colors))
-        html_parts.append(self._generate_body_start(spec.get("title", "DashML Dashboard"), colors))
+        html_parts.append(self._generate_html_head(title, colors))
+        html_parts.append(self._generate_body_start(title, colors))
 
         # Data loading
         data_spec = spec["data"]
         html_parts.append(self._generate_data_loader(data_spec))
 
-        # Pages or Charts
-        if "pages" in spec:
-            html_parts.append(self._generate_pages_structure(spec["pages"], colors))
-        else:
-            html_parts.append(self._generate_charts_structure(spec.get("charts", []), colors))
+        # Always use pages (normalizer guarantees pages[] exists)
+        html_parts.append(self._generate_pages_structure(spec["pages"], colors))
 
         html_parts.append(self._generate_html_footer())
 
         return "\n".join(html_parts)
 
-    def _build_bigquery_version(self, spec: "DashMLSpec") -> str:
+    def _build_bigquery_version(self, spec: "NormalizedSpec") -> str:
         """Generate multi-file output with Flask + BigQuery backend"""
-        if not self.db_config:
+        if not spec.get("db_config"):
             raise TransformerError("BigQuery configuration not provided")
 
         # Generate Flask backend with BigQuery
         data_spec = spec["data"]
-        flask_app = self._generate_flask_app_bigquery(data_spec)
+        flask_app = self._generate_flask_app_bigquery(spec, data_spec)
 
         # Generate HTML frontend (fetches from Flask API - same as SQL version)
         html_frontend = self._generate_sql_frontend(spec)
@@ -132,15 +98,15 @@ class ObservablePlotTransformer(Transformer):
 
         return json.dumps(multi_file_output)
 
-    def _build_sql_version(self, spec: "DashMLSpec") -> str:
+    def _build_sql_version(self, spec: "NormalizedSpec") -> str:
         """Generate multi-file output with Flask backend for SQL datasources"""
 
-        if not self.db_config:
+        if not spec.get("db_config"):
             raise TransformerError("Database configuration not provided for SQL datasource")
 
         # Generate Flask backend
         data_spec = spec["data"]
-        flask_app = self._generate_flask_app(data_spec)
+        flask_app = self._generate_flask_app(spec, data_spec)
 
         # Generate HTML frontend (fetches from Flask API instead of CSV)
         html_frontend = self._generate_sql_frontend(spec)
@@ -155,8 +121,6 @@ class ObservablePlotTransformer(Transformer):
         }
 
         return json.dumps(multi_file_output)
-
-    # _load_style_config is now inherited from base class
 
     def _generate_html_head(self, title: str, colors: Dict[str, str]) -> str:
         bg_color = colors.get("background", "#ffffff")
@@ -1194,24 +1158,19 @@ class ObservablePlotTransformer(Transformer):
         output_dir = output_path_obj.parent.resolve()
         return f"cd {output_dir} && python -m http.server 8000"
 
-    # _parse_sql_path is now inherited from base class
-
-    def _generate_flask_app(self, data_spec: Dict[str, Any]) -> str:
+    def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any]) -> str:
         """Generate Flask backend that connects to SQL database"""
-        # Extract database config
-        db_type = self.db_config["type"]
-        host = self.db_config["host"]
-        port = self.db_config["port"]
-        database = self.db_config["database"]
-        user = self.db_config["user"]
-        password = self.db_config["password"]
+        db_config = spec["db_config"]
+        db_type = db_config["type"]
+        host = db_config["host"]
+        port = db_config["port"]
+        database = db_config["database"]
+        user = db_config["user"]
+        password = db_config["password"]
 
-        # Extract SQL spec fields (support both new path format and legacy format)
-        if "path" in data_spec:
-            schema, table_name = self._parse_sql_path(data_spec["path"])
-        else:
-            schema = data_spec["schema"]
-            table_name = data_spec["table_name"]
+        # Use pre-parsed path components from normalizer
+        schema = data_spec["sql_schema"]
+        table_name = data_spec["sql_table"]
 
         # Build connection string based on database type
         if db_type == "postgresql":
@@ -1326,19 +1285,15 @@ if __name__ == '__main__':
     app.run(debug=True, port=5000)
 '''
 
-    def _generate_flask_app_bigquery(self, data_spec: Dict[str, Any]) -> str:
+    def _generate_flask_app_bigquery(self, spec: "NormalizedSpec", data_spec: Dict[str, Any]) -> str:
         """Generate Flask backend that connects to BigQuery"""
-        # Extract BigQuery config
-        project = self.db_config["project"]
-        credentials_path = self.db_config.get("credentials_path")
+        db_config = spec["db_config"]
+        project = db_config["project"]
+        credentials_path = db_config.get("credentials_path")
 
-        # Parse dataset.table from path
-        path = data_spec["path"]
-        parts = path.split(".")
-        if len(parts) == 2:
-            dataset, table_name = parts
-        else:
-            raise TransformerError(f"Invalid BigQuery path format: {path}. Expected: dataset.table")
+        # Use pre-parsed path components from normalizer
+        dataset = data_spec["bq_dataset"]
+        table_name = data_spec["bq_table"]
 
         # Build credentials loading code
         if credentials_path:
@@ -1468,25 +1423,20 @@ if __name__ == '__main__':
     app.run(debug=True, port=5000)
 '''
 
-    def _generate_sql_frontend(self, spec: "DashMLSpec") -> str:
+    def _generate_sql_frontend(self, spec: "NormalizedSpec") -> str:
         """Generate HTML frontend that fetches from Flask API"""
-        # Load style config
-        style_config = self._load_style_config(spec.get("style"))
-        colors = style_config.get("colors", {})
+        colors = spec["style"]
+        title = spec["title"]
 
-        # Build HTML structure
         html_parts = []
-        html_parts.append(self._generate_html_head(spec.get("title", "DashML Dashboard"), colors))
-        html_parts.append(self._generate_body_start(spec.get("title", "DashML Dashboard"), colors))
+        html_parts.append(self._generate_html_head(title, colors))
+        html_parts.append(self._generate_body_start(title, colors))
 
         # Data loading from API
         html_parts.append(self._generate_sql_data_loader())
 
-        # Pages or Charts
-        if "pages" in spec:
-            html_parts.append(self._generate_pages_structure(spec["pages"], colors))
-        else:
-            html_parts.append(self._generate_charts_structure(spec.get("charts", []), colors))
+        # Always use pages (normalizer guarantees pages[] exists)
+        html_parts.append(self._generate_pages_structure(spec["pages"], colors))
 
         html_parts.append(self._generate_html_footer())
 

@@ -13,7 +13,7 @@ except ImportError:
 from .base import Transformer, TransformerError
 
 if TYPE_CHECKING:
-    from ..core.types import DashMLSpec, ChartSpec
+    from ..core.types import NormalizedSpec, ChartSpec
 
 # ============================================================
 # Custom Exceptions
@@ -129,11 +129,7 @@ class SupersetTransformer(Transformer):
         self.csrf_token = None
         self.dataset_id = None
         self.session = None  # Will hold requests.Session for cookie management
-        self.db_config = None  # Database credentials for auto-creating databases
-
-    def set_db_config(self, config: Dict[str, Any]) -> None:
-        """Store database configuration for auto-creating databases in Superset"""
-        self.db_config = config
+        self._db_config = None  # Set from spec during build()
 
     @property
     def name(self) -> str:
@@ -143,7 +139,7 @@ class SupersetTransformer(Transformer):
     def description(self) -> str:
         return "Creates dashboards directly in Apache Superset via REST API"
 
-    def build(self, spec: "DashMLSpec") -> str:
+    def build(self, spec: "NormalizedSpec") -> str:
         """Create dashboard in Superset and return success message"""
         try:
             import requests
@@ -172,59 +168,37 @@ class SupersetTransformer(Transformer):
             if not self._authenticate():
                 raise SupersetAuthenticationError("Authentication failed")
 
-            # Load style config (resolve path relative to .dashml file)
-            style_path = spec.get("style")
-            if style_path:
-                source_file = spec.get("_source_file")
-                if source_file:
-                    dashml_dir = Path(source_file).parent
-                    style_path = str(dashml_dir / style_path)
-            style_config = self._load_style_config(style_path)
+            # Use resolved style from normalizer
+            style_config = {"colors": spec["style"]}
+
+            # Store db_config for internal methods that need it
+            self._db_config = spec.get("db_config", {})
 
             # Extract spec components
-            title = spec.get("title", "DashML Dashboard")
+            title = spec["title"]
             data_spec = spec["data"]
             data_type = data_spec.get("type", "csv")
 
             # Create or get dataset based on data type
             if data_type == "csv":
-                # CSV datasource - resolve path and upload
-                data_path = data_spec["path"]
-
-                # Get the absolute path to the CSV file
-                # spec.get("_source_file") contains the path to the .dashml file
-                source_file = spec.get("_source_file")
-                if source_file:
-                    # Resolve data_path relative to the .dashml file location
-                    dashml_dir = Path(source_file).parent
-                    data_path = str(dashml_dir / data_path)
-
-                # Convert to absolute path
+                # CSV datasource - use pre-resolved path from normalizer
+                data_path = data_spec.get("csv_path") or data_spec["path"]
                 data_path = str(Path(data_path).resolve())
 
-                # Create or get dataset from CSV
                 if not self._create_or_get_dataset_csv(data_path):
                     raise SupersetDatasetError("Failed to create/find CSV dataset")
 
             elif data_type == "sql":
-                # SQL datasource - reference existing table
-                # Support both new format (path) and legacy format (schema + table_name)
-                if "path" in data_spec:
-                    # New format: parse path into schema.table
-                    schema, table_name = self._parse_sql_path(data_spec["path"])
-                else:
-                    # Legacy format: use explicit schema and table_name fields
-                    schema = data_spec["schema"]
-                    table_name = data_spec["table_name"]
+                # Use pre-parsed path components from normalizer
+                schema = data_spec["sql_schema"]
+                table_name = data_spec["sql_table"]
 
                 # Determine database_id: either auto-create from db_config or use from spec
-                if self.db_config:
-                    # Auto-create/find database using CLI credentials
+                if self._db_config:
                     database_id = self._create_or_get_database()
                     if not database_id:
                         raise SupersetDatasetError("Failed to create/find database in Superset")
                 elif "database_id" in data_spec:
-                    # Use pre-configured database_id from spec
                     database_id = data_spec["database_id"]
                 else:
                     raise SupersetDatasetError(
@@ -233,42 +207,31 @@ class SupersetTransformer(Transformer):
                         "  2. --db-* CLI arguments to auto-create database"
                     )
 
-                # Create or get dataset from SQL table
                 if not self._create_or_get_dataset_sql(database_id, schema, table_name):
                     raise SupersetDatasetError("Failed to create/find SQL dataset")
 
             elif data_type == "bigquery":
-                # BigQuery datasource - create database and dataset
-                if not self.db_config:
+                if not self._db_config:
                     raise SupersetDatasetError(
                         "BigQuery datasource requires --bq-project CLI argument"
                     )
 
-                # Parse dataset.table from path
-                path = data_spec["path"]
-                parts = path.split(".")
-                if len(parts) != 2:
-                    raise SupersetDatasetError(
-                        f"Invalid BigQuery path format: {path}. Expected: 'dataset.table'"
-                    )
-                bq_dataset, table_name = parts
+                # Use pre-parsed path components from normalizer
+                bq_dataset = data_spec["bq_dataset"]
+                table_name = data_spec["bq_table"]
 
-                # Create or get BigQuery database connection
                 database_id = self._create_or_get_bigquery_database()
                 if not database_id:
                     raise SupersetDatasetError("Failed to create/find BigQuery database in Superset")
 
-                # Create or get dataset from BigQuery table
-                # For BigQuery, schema is the dataset name
                 if not self._create_or_get_dataset_sql(database_id, bq_dataset, table_name):
                     raise SupersetDatasetError("Failed to create/find BigQuery dataset")
 
             else:
                 raise SupersetDatasetError(f"Unsupported data type: {data_type}")
 
-            # Get charts or pages
-            charts = spec.get("charts", [])
-            pages = spec.get("pages", [])
+            # Always use pages (normalizer guarantees pages[] exists)
+            pages = spec["pages"]
 
             # Get existing charts from dashboard if updating
             existing_chart_map = {}  # Maps chart names to IDs
@@ -292,24 +255,16 @@ class SupersetTransformer(Transformer):
             chart_ids = []
             all_label_colors = {}  # Collect all label->color mappings from all charts
 
-            if pages:
-                for page in pages:
-                    page_id = page["id"]
-                    print(f"\nProcessing page: {page.get('title', page_id)}")
-                    for chart in page.get("charts", []):
-                        chart_id, label_colors = self._create_or_update_chart(
-                            f"{page_id}_{chart['id']}",
-                            chart,
-                            style_config,
-                            existing_chart_map
-                        )
-                        if chart_id:
-                            chart_ids.append(chart_id)
-                            if label_colors:
-                                all_label_colors.update(label_colors)
-            else:
-                for chart in charts:
-                    chart_id, label_colors = self._create_or_update_chart(chart["id"], chart, style_config, existing_chart_map)
+            for page in pages:
+                page_id = page["id"]
+                print(f"\nProcessing page: {page.get('title', page_id)}")
+                for chart in page.get("charts", []):
+                    chart_id, label_colors = self._create_or_update_chart(
+                        f"{page_id}_{chart['id']}",
+                        chart,
+                        style_config,
+                        existing_chart_map
+                    )
                     if chart_id:
                         chart_ids.append(chart_id)
                         if label_colors:
@@ -398,28 +353,6 @@ class SupersetTransformer(Transformer):
         if resource_id:
             return f"{self.superset_url}{endpoint}{resource_id}"
         return f"{self.superset_url}{endpoint}"
-
-    def _parse_sql_path(self, path: str) -> tuple:
-        """
-        Parse SQL path into (schema, table_name) tuple.
-
-        Supports formats:
-        - "schema.table" -> ("schema", "table")
-        - "[schema].[table]" -> ("schema", "table")
-        - "[My Schema].[My Table]" -> ("My Schema", "My Table")
-        """
-        import re
-
-        # Pattern: [optional brackets]identifier[optional brackets].identifier
-        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
-        match = re.match(pattern, path)
-
-        if match:
-            schema = match.group(1)
-            table = match.group(2)
-            return (schema.strip(), table.strip())
-
-        raise SupersetDatasetError(f"Invalid SQL path format: {path}")
 
     def _associate_chart_with_dashboard(self, chart_id: int, dashboard_id: int) -> bool:
         """Associate a chart with a dashboard"""
@@ -705,15 +638,15 @@ class SupersetTransformer(Transformer):
 
     def _create_or_get_database(self) -> Optional[int]:
         """Create or find database connection in Superset using db_config"""
-        if not self.db_config:
+        if not self._db_config:
             return None
 
-        db_type = self.db_config["type"]
-        host = self.db_config["host"]
-        port = self.db_config["port"]
-        database = self.db_config["database"]
-        user = self.db_config["user"]
-        password = self.db_config["password"]
+        db_type = self._db_config["type"]
+        host = self._db_config["host"]
+        port = self._db_config["port"]
+        database = self._db_config["database"]
+        user = self._db_config["user"]
+        password = self._db_config["password"]
 
         # Build SQLAlchemy URI based on database type
         if db_type == "postgresql":
@@ -799,11 +732,11 @@ class SupersetTransformer(Transformer):
 
     def _create_or_get_bigquery_database(self) -> Optional[int]:
         """Create or find BigQuery database connection in Superset using db_config"""
-        if not self.db_config:
+        if not self._db_config:
             return None
 
-        project = self.db_config["project"]
-        credentials_path = self.db_config.get("credentials_path")
+        project = self._db_config["project"]
+        credentials_path = self._db_config.get("credentials_path")
 
         # Build BigQuery SQLAlchemy URI
         # Format: bigquery://project
