@@ -1,6 +1,7 @@
 """
 Observable Plot Transformer - Generates Observable Plot HTML from DashML specs
 """
+import re
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import json
@@ -67,7 +68,7 @@ class ObservablePlotTransformer(Transformer):
 
         # Data loading
         data_spec = spec["data"]
-        html_parts.append(self._generate_data_loader(data_spec))
+        html_parts.append(self._generate_data_loader(data_spec, spec.get("derived_fields", [])))
 
         # Always use pages (normalizer guarantees pages[] exists)
         html_parts.append(self._generate_pages_structure(spec["pages"], colors))
@@ -269,7 +270,19 @@ class ObservablePlotTransformer(Transformer):
         return """</body>
 </html>"""
 
-    def _generate_data_loader(self, data_spec: Dict[str, Any]) -> str:
+    @staticmethod
+    def _build_derived_js_code(derived_fields: list, var_name: str = "data", indent: str = "        ") -> str:
+        """Build a JS forEach block that computes derived columns. Empty string if no fields."""
+        if not derived_fields:
+            return ""
+        lines = [f"{indent}// Derived fields", f"{indent}{var_name}.forEach(row => {{"]
+        for f in derived_fields:
+            js_expr = re.sub(r'\{(\w+)\}', r'row["\1"]', f["expression"])
+            lines.append(f'{indent}  row["{f["name"]}"] = {js_expr};')
+        lines.append(f"{indent}}});")
+        return "\n".join(lines)
+
+    def _generate_data_loader(self, data_spec: Dict[str, Any], derived_fields: list = None) -> str:
         """Generate JavaScript to load CSV data"""
         data_type = data_spec["type"]
         path = data_spec["path"]
@@ -297,6 +310,7 @@ class ObservablePlotTransformer(Transformer):
         ])
             .then(([csvText, worldData]) => {{
                 dashmlData = parseCSV(csvText);
+{self._build_derived_js_code(derived_fields or [], var_name="dashmlData", indent="                ")}
                 // Convert topojson to geojson features for Observable Plot
                 window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
                 renderAllCharts();

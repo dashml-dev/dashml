@@ -1,6 +1,7 @@
 """
 Plotly Transformer - Generates Plotly HTML/JavaScript from DashML specs
 """
+import re
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import json
@@ -90,7 +91,7 @@ class PlotlyTransformer(Transformer):
         html_parts.append(self._generate_page_tabs(pages, colors))
         html_parts.append(self._generate_page_containers(pages, colors))
         html_parts.append('  </div>')
-        html_parts.append(self._generate_javascript_pages(data_spec, pages, colors))
+        html_parts.append(self._generate_javascript_pages(data_spec, pages, colors, spec.get("derived_fields", [])))
 
         # Body end
         html_parts.append("</body>")
@@ -1312,7 +1313,19 @@ if __name__ == '__main__':
 
         return "\n".join(containers)
 
-    def _generate_javascript_pages(self, data_spec: Dict[str, Any], pages: list, colors: Dict[str, str]) -> str:
+    @staticmethod
+    def _build_derived_js_code(derived_fields: list, var_name: str = "data", indent: str = "        ") -> str:
+        """Build a JS forEach block that computes derived columns. Empty string if no fields."""
+        if not derived_fields:
+            return ""
+        lines = [f"{indent}// Derived fields", f"{indent}{var_name}.forEach(row => {{"]
+        for f in derived_fields:
+            js_expr = re.sub(r'\{(\w+)\}', r'row["\1"]', f["expression"])
+            lines.append(f'{indent}  row["{f["name"]}"] = {js_expr};')
+        lines.append(f"{indent}}});")
+        return "\n".join(lines)
+
+    def _generate_javascript_pages(self, data_spec: Dict[str, Any], pages: list, colors: Dict[str, str], derived_fields: list = None) -> str:
         """Generate JavaScript for multi-page dashboard"""
         data_path = data_spec["path"]
         theme_json = json.dumps(colors)
@@ -1867,7 +1880,7 @@ if __name__ == '__main__':
             return row;
           }})
           .filter(row => row !== null);
-
+{self._build_derived_js_code(derived_fields or [], var_name="data", indent="        ")}
         renderAllPages(data);
       }})
       .catch(error => console.error('Error loading data:', error));
