@@ -154,7 +154,7 @@ class DashMLValidator:
 
         # Pattern: [optional brackets]identifier[optional brackets].identifier
         # Handles: schema.table, [schema].table, schema.[table], [schema].[table]
-        pattern = r'^\[?([^\]\.]+)\]?\.?\[?([^\]]+)\]?$'
+        pattern = r'^\[?([^\]\.]+)\]?\.\[?([^\]]+)\]?$'
         match = re.match(pattern, path)
 
         if match:
