@@ -1,6 +1,7 @@
 """
 DashML Validator - Validates semantic correctness of DashML specs
 """
+import re
 from typing import Dict, Any, List
 
 
@@ -30,6 +31,7 @@ class DashMLValidator:
     SUPPORTED_SORT_ORDERS = ["asc", "desc"]
     SUPPORTED_SORT_FIELDS = ["x", "y"]  # Can sort by x or y field after aggregation
     SUPPORTED_DASHBOARD_FILTER_TYPES = ["select", "multiselect"]  # Dashboard-level filter widget types
+    _IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')  # Valid derived field name pattern
 
     def validate(self, spec: Dict[str, Any]) -> None:
         """
@@ -43,6 +45,10 @@ class DashMLValidator:
         """
         self._validate_top_level(spec)
         self._validate_data(spec["data"])
+
+        # Validate derived_fields if present
+        if "derived_fields" in spec:
+            self._validate_derived_fields(spec["derived_fields"])
 
         # Validate either pages or charts (not both)
         if "pages" in spec:
@@ -151,8 +157,6 @@ class DashMLValidator:
         - "[schema].[table]" -> ("schema", "table")
         - "[My Schema].[My Table]" -> ("My Schema", "My Table")
         """
-        import re
-
         # Pattern: [optional brackets]identifier[optional brackets].identifier
         # Handles: schema.table, [schema].table, schema.[table], [schema].[table]
         pattern = r'^\[?([^\]\.]+)\]?\.\[?([^\]]+)\]?$'
@@ -333,6 +337,58 @@ class DashMLValidator:
             if "values" in f and not isinstance(f["values"], list):
                 raise ValidationError(
                     f"Page '{page_id}' filter at index {i} 'values' must be a list"
+                )
+
+    def _validate_derived_fields(self, fields: Any) -> None:
+        """Validate derived_fields array."""
+        if not isinstance(fields, list):
+            raise ValidationError(
+                f"'derived_fields' must be a list, got {type(fields)}"
+            )
+
+        seen_names: set = set()
+        for i, f in enumerate(fields):
+            if not isinstance(f, dict):
+                raise ValidationError(
+                    f"'derived_fields' entry at index {i} must be an object, got {type(f)}"
+                )
+
+            if "name" not in f:
+                raise ValidationError(
+                    f"'derived_fields' entry at index {i} missing required 'name'"
+                )
+
+            if not isinstance(f["name"], str):
+                raise ValidationError(
+                    f"'derived_fields' entry at index {i} 'name' must be a string"
+                )
+
+            if not self._IDENTIFIER_RE.match(f["name"]):
+                raise ValidationError(
+                    f"'derived_fields' entry at index {i} 'name' must be a valid identifier "
+                    f"(letters, digits, underscores; cannot start with a digit): '{f['name']}'"
+                )
+
+            if f["name"] in seen_names:
+                raise ValidationError(
+                    f"'derived_fields' has duplicate name: '{f['name']}'"
+                )
+            seen_names.add(f["name"])
+
+            if "expression" not in f:
+                raise ValidationError(
+                    f"'derived_fields' entry '{f['name']}' missing required 'expression'"
+                )
+
+            if not isinstance(f["expression"], str) or not f["expression"].strip():
+                raise ValidationError(
+                    f"'derived_fields' entry '{f['name']}' 'expression' must be a non-empty string"
+                )
+
+            if not re.search(r'\{[^}]+\}', f["expression"]):
+                raise ValidationError(
+                    f"'derived_fields' entry '{f['name']}' expression must contain at least one "
+                    f"column reference in {{col_name}} format: '{f['expression']}'"
                 )
 
     def _validate_filters(self, filters: Any, chart_id: str) -> None:

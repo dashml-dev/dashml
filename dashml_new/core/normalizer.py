@@ -74,7 +74,33 @@ class DashMLNormalizer:
         return parts
 
     @staticmethod
-    def _build_chart_sql(chart: dict) -> str:
+    def _build_derived_cte(derived_fields: list) -> str:
+        """Build the WITH __derived AS (...) CTE prefix. Empty string if no derived fields."""
+        if not derived_fields:
+            return ""
+        T = "{table_ref}"
+        exprs = []
+        for f in derived_fields:
+            # {col} → col  (SQL expression — strip curly braces)
+            sql_expr = re.sub(r'\{(\w+)\}', r'\1', f["expression"])
+            exprs.append(f"{sql_expr} AS {f['name']}")
+        cols = ", ".join(exprs)
+        return f"WITH __derived AS (SELECT *, {cols} FROM {T})"
+
+    @staticmethod
+    def _build_derived_pandas_code(derived_fields: list, indent: str = "        ") -> str:
+        """Generate pandas assignment lines for CSV mode. Empty string if no derived fields."""
+        if not derived_fields:
+            return ""
+        lines = []
+        for f in derived_fields:
+            # {col} → df["col"]  (pandas expression)
+            pd_expr = re.sub(r'\{(\w+)\}', r'df["\1"]', f["expression"])
+            lines.append(f'{indent}df["{f["name"]}"] = {pd_expr}')
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_chart_sql(chart: dict, use_derived: bool = False) -> str:
         """Build a SQL query template with {table_ref} and {filter_clause} placeholders.
 
         Uses generic x/y/grp/size aliases so Plotly, Observable, and Streamlit
@@ -86,7 +112,8 @@ class DashMLNormalizer:
         """
         # Local vars whose VALUES are the literal placeholder strings.
         # Using them in f-strings produces those literals in the output SQL.
-        T = "{table_ref}"
+        # When use_derived=True the CTE alias is used; {table_ref} lives inside the CTE.
+        T = "__derived" if use_derived else "{table_ref}"
         F = "{filter_clause}"
 
         chart_type = chart["type"]
@@ -150,6 +177,7 @@ class DashMLNormalizer:
         result["version"] = str(spec.get("version", ""))
         result["title"] = spec.get("title", "DashML Dashboard")
         result["data"] = self._normalize_data(spec.get("data", {}), source_file)
+        result["derived_fields"] = spec.get("derived_fields", [])
         result["pages"] = self._normalize_pages(spec)
         result["style"] = self._resolve_style(spec.get("style"), source_file)
         result["db_config"] = db_config or {}
@@ -196,6 +224,7 @@ class DashMLNormalizer:
     def _normalize_pages(self, spec: dict) -> List[PageSpec]:
         """Ensure pages[] always exists. Wrap single-page charts if needed."""
         data_type = spec.get("data", {}).get("type", "csv")
+        derived_fields = spec.get("derived_fields", [])
 
         if "pages" in spec:
             pages = spec["pages"]
@@ -215,7 +244,7 @@ class DashMLNormalizer:
         for page in pages:
             normalized_page = dict(page)
             normalized_page["charts"] = [
-                self._normalize_chart(chart, data_type)
+                self._normalize_chart(chart, data_type, derived_fields)
                 for chart in page.get("charts", [])
             ]
             # Default filters to empty list (mirrors chart filter defaulting)
@@ -225,7 +254,7 @@ class DashMLNormalizer:
 
         return normalized_pages  # type: ignore
 
-    def _normalize_chart(self, chart: dict, data_type: str = "csv") -> ChartSpec:
+    def _normalize_chart(self, chart: dict, data_type: str = "csv", derived_fields: list = None) -> ChartSpec:
         """Fill defaults and add annotations to a single chart."""
         result = dict(chart)  # shallow copy, don't mutate original
         chart_type = result.get("type", "")
@@ -257,8 +286,11 @@ class DashMLNormalizer:
         # SQL template (sql/bigquery only) — built once here, shared by all transformers.
         # {table_ref} is replaced at build time by each transformer.
         # {filter_clause} is replaced at runtime by the generated app.
+        # When derived_fields exist, a CTE is prepended and the main query uses __derived.
         if data_type in ("sql", "bigquery"):
-            result["sql"] = self._build_chart_sql(result)
+            cte = self._build_derived_cte(derived_fields or [])
+            chart_sql = self._build_chart_sql(result, use_derived=bool(cte))
+            result["sql"] = (cte + " " + chart_sql).strip() if cte else chart_sql
             result["static_conditions"] = self._build_static_conditions(result.get("filters", []))
 
         return result  # type: ignore

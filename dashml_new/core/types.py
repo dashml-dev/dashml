@@ -55,6 +55,24 @@ class DataSpec(TypedDict, total=False):
     bq_table: str       # for BigQuery: parsed table from path
 
 
+class DerivedFieldSpec(TypedDict, total=False):
+    """
+    Derived (calculated) column spec.
+
+    Creates a new column computed from existing columns.
+    Available to all charts as if it were a raw column in the data source.
+
+    Example:
+        derived_fields:
+          - name: "on_time_rate"
+            expression: "100 - {pct_delayed_15plus}"
+          - name: "delay_index"
+            expression: "({average_delay_mins} + {pct_delayed_15plus}) / 2"
+    """
+    name: str          # Column name to create (required, valid identifier)
+    expression: str    # Arithmetic expression with {col_ref} placeholders (required)
+
+
 class FilterSpec(TypedDict, total=False):
     """
     Filter specification for chart data.
@@ -193,6 +211,7 @@ class DashMLSpec(TypedDict, total=False):
     data: DataSpec
     charts: List[ChartSpec]   # Legacy format (backward compatible)
     pages: List[PageSpec]     # New format (multi-page)
+    derived_fields: List[DerivedFieldSpec]  # Global calculated columns (optional)
 
 
 class ResolvedStyle(TypedDict, total=False):
@@ -224,3 +243,4 @@ class NormalizedSpec(TypedDict, total=False):
     style: ResolvedStyle         # resolved colors, not a filename
     db_config: Dict[str, Any]    # from CLI args (SQL/BigQuery config)
     source_file: str             # absolute path to the .dashml file
+    derived_fields: List[DerivedFieldSpec]  # passed through from spec

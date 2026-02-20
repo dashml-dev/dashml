@@ -665,3 +665,166 @@ class TestMetricChartValidation:
             ],
         }
         v.validate(spec)
+
+
+# ---------------------------------------------------------------------------
+# Derived fields validation
+# ---------------------------------------------------------------------------
+
+def _spec_with_derived(derived_fields, **extra):
+    """Return a minimal BigQuery spec with derived_fields."""
+    spec = {
+        "version": "0.1",
+        "data": {"type": "bigquery", "path": "dataset.table"},
+        "charts": [_min_chart()],
+        "derived_fields": derived_fields,
+    }
+    spec.update(extra)
+    return spec
+
+
+class TestDerivedFieldsValidation:
+    # --- Valid cases ---
+
+    def test_single_field_valid(self, v):
+        v.validate(_spec_with_derived([
+            {"name": "on_time_rate", "expression": "100 - {pct_delayed}"}
+        ]))
+
+    def test_multiple_fields_valid(self, v):
+        v.validate(_spec_with_derived([
+            {"name": "on_time_rate", "expression": "100 - {pct_delayed}"},
+            {"name": "delay_index", "expression": "({avg_delay} + {pct_delayed}) / 2"},
+        ]))
+
+    def test_expression_with_two_refs_valid(self, v):
+        v.validate(_spec_with_derived([
+            {"name": "combined", "expression": "{col_a} + {col_b}"}
+        ]))
+
+    def test_expression_with_parens_valid(self, v):
+        v.validate(_spec_with_derived([
+            {"name": "weighted", "expression": "({a} * {b}) / ({c} + 1)"}
+        ]))
+
+    def test_empty_derived_fields_list_valid(self, v):
+        v.validate(_spec_with_derived([]))
+
+    def test_derived_fields_absent_valid(self, v):
+        """Spec without derived_fields key is valid."""
+        v.validate(_min_csv())
+
+    def test_derived_field_with_underscore_name_valid(self, v):
+        v.validate(_spec_with_derived([
+            {"name": "_my_field", "expression": "{a} - {b}"}
+        ]))
+
+    def test_derived_fields_alongside_pages(self, v):
+        spec = {
+            "version": "0.1",
+            "data": {"type": "bigquery", "path": "dataset.table"},
+            "derived_fields": [{"name": "rate", "expression": "100 - {pct}"}],
+            "pages": [{"id": "p1", "title": "Page 1", "charts": [_min_chart()]}],
+        }
+        v.validate(spec)
+
+    # --- Invalid: structure errors ---
+
+    def test_derived_fields_not_list_raises(self, v):
+        spec = _spec_with_derived("not-a-list")
+        with pytest.raises(ValidationError, match="derived_fields.*must be a list"):
+            v.validate(spec)
+
+    def test_derived_fields_entry_not_dict_raises(self, v):
+        spec = _spec_with_derived(["not-a-dict"])
+        with pytest.raises(ValidationError, match="must be an object"):
+            v.validate(spec)
+
+    def test_derived_fields_missing_name_raises(self, v):
+        spec = _spec_with_derived([{"expression": "100 - {x}"}])
+        with pytest.raises(ValidationError, match="missing required 'name'"):
+            v.validate(spec)
+
+    def test_derived_fields_missing_expression_raises(self, v):
+        spec = _spec_with_derived([{"name": "rate"}])
+        with pytest.raises(ValidationError, match="missing required 'expression'"):
+            v.validate(spec)
+
+    def test_derived_fields_empty_expression_raises(self, v):
+        spec = _spec_with_derived([{"name": "rate", "expression": "   "}])
+        with pytest.raises(ValidationError, match="non-empty string"):
+            v.validate(spec)
+
+    def test_derived_fields_expression_not_string_raises(self, v):
+        spec = _spec_with_derived([{"name": "rate", "expression": 42}])
+        with pytest.raises(ValidationError, match="non-empty string"):
+            v.validate(spec)
+
+    # --- Invalid: expression must contain {ref} ---
+
+    def test_expression_without_ref_raises(self, v):
+        spec = _spec_with_derived([{"name": "constant", "expression": "100"}])
+        with pytest.raises(ValidationError, match=r"\{col_name\}"):
+            v.validate(spec)
+
+    def test_expression_plain_arithmetic_no_ref_raises(self, v):
+        spec = _spec_with_derived([{"name": "val", "expression": "1 + 2"}])
+        with pytest.raises(ValidationError, match=r"\{col_name\}"):
+            v.validate(spec)
+
+    # --- Invalid: name must be a valid identifier ---
+
+    def test_name_starts_with_digit_raises(self, v):
+        spec = _spec_with_derived([{"name": "1bad", "expression": "{x}"}])
+        with pytest.raises(ValidationError, match="valid identifier"):
+            v.validate(spec)
+
+    def test_name_with_hyphen_raises(self, v):
+        spec = _spec_with_derived([{"name": "bad-name", "expression": "{x}"}])
+        with pytest.raises(ValidationError, match="valid identifier"):
+            v.validate(spec)
+
+    def test_name_with_space_raises(self, v):
+        spec = _spec_with_derived([{"name": "bad name", "expression": "{x}"}])
+        with pytest.raises(ValidationError, match="valid identifier"):
+            v.validate(spec)
+
+    def test_name_not_string_raises(self, v):
+        spec = _spec_with_derived([{"name": 123, "expression": "{x}"}])
+        with pytest.raises(ValidationError, match="'name' must be a string"):
+            v.validate(spec)
+
+    # --- Invalid: duplicate names ---
+
+    def test_duplicate_names_raises(self, v):
+        spec = _spec_with_derived([
+            {"name": "rate", "expression": "100 - {pct}"},
+            {"name": "rate", "expression": "{a} / {b}"},
+        ])
+        with pytest.raises(ValidationError, match="duplicate name"):
+            v.validate(spec)
+
+    # --- Coexistence with other features ---
+
+    def test_derived_fields_with_page_level_filters(self, v):
+        spec = {
+            "version": "0.1",
+            "data": {"type": "bigquery", "path": "dataset.table"},
+            "derived_fields": [{"name": "rate", "expression": "100 - {pct}"}],
+            "pages": [
+                {
+                    "id": "overview",
+                    "title": "Overview",
+                    "filters": [{"field": "country", "type": "select"}],
+                    "charts": [_min_chart()],
+                }
+            ],
+        }
+        v.validate(spec)
+
+    def test_derived_fields_with_chart_filters(self, v):
+        spec = _spec_with_derived(
+            [{"name": "rate", "expression": "100 - {pct}"}],
+            charts=[_min_chart(filters=[{"field": "region", "op": "eq", "value": "EU"}])],
+        )
+        v.validate(spec)

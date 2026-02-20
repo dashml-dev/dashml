@@ -1,6 +1,7 @@
 """
 Streamlit Transformer - Generates Streamlit Python code from DashML specs
 """
+import re
 from typing import TYPE_CHECKING, Dict, Any, List
 from .base import Transformer, TransformerError
 from .constants import (
@@ -46,6 +47,7 @@ class StreamlitTransformer(Transformer):
 
             data_type = spec["data"].get("type", "csv")
             is_sql_mode = data_type in ("bigquery", "sql")
+            derived_fields = spec.get("derived_fields", [])
 
             # Imports
             code_parts.append(self._generate_imports(data_type))
@@ -58,11 +60,11 @@ class StreamlitTransformer(Transformer):
                 dataset = spec["data"]["bq_dataset"]
                 table_name = spec["data"]["bq_table"]
                 table_ref = f"`{project}.{dataset}.{table_name}`"
-                code_parts.append(self._generate_chart_queries_dict(spec["pages"], table_ref))
+                code_parts.append(self._generate_chart_queries_dict(spec["pages"], table_ref, derived_fields))
                 code_parts.append("")
 
             # Cached data loading function (before main)
-            code_parts.append(self._generate_data_loading(spec["data"], spec.get("db_config")))
+            code_parts.append(self._generate_data_loading(spec["data"], spec.get("db_config"), derived_fields))
             code_parts.append("")
 
             # Main function
@@ -120,8 +122,8 @@ import altair as alt"""
         """Convert snake_case column names to Title Case labels"""
         return name.replace('_', ' ').replace('-', ' ').title()
 
-    def _generate_chart_queries_dict(self, pages: list, table_ref: str) -> str:
-        """Generate CHART_QUERIES, CHART_STATIC_CONDITIONS, and ALLOWED_FILTER_FIELDS."""
+    def _generate_chart_queries_dict(self, pages: list, table_ref: str, derived_fields: list = None) -> str:
+        """Generate CHART_QUERIES, CHART_STATIC_CONDITIONS, ALLOWED_FILTER_FIELDS, and DERIVED_COLUMN_TYPES."""
         queries = {}
         static_conditions = {}
         all_filter_fields: set = set()
@@ -148,6 +150,11 @@ import altair as alt"""
         lines.append("")
 
         lines.append(f"ALLOWED_FILTER_FIELDS = frozenset({repr(all_filter_fields)})")
+        lines.append("")
+
+        # Derived column types — used by get_column_types() to augment INFORMATION_SCHEMA results
+        derived_col_types = {f["name"]: "number" for f in (derived_fields or [])}
+        lines.append(f"DERIVED_COLUMN_TYPES = {repr(derived_col_types)}")
         return "\n".join(lines)
 
     def _generate_page_config(self, title: str) -> str:
@@ -199,16 +206,25 @@ import altair as alt"""
         </style>
     """, unsafe_allow_html=True)'''
 
-    def _generate_data_loading(self, data_spec: Dict[str, Any], db_config: Dict[str, Any] = None) -> str:
+    def _generate_data_loading(self, data_spec: Dict[str, Any], db_config: Dict[str, Any] = None, derived_fields: list = None) -> str:
         data_type = data_spec.get("type", "csv")
         db_config = db_config or {}
+        derived_fields = derived_fields or []
 
         if data_type == "csv":
             path = data_spec["path"]
+            # Build derived field computation lines (injected after CSV load)
+            derived_lines = ""
+            if derived_fields:
+                pandas_exprs = []
+                for f in derived_fields:
+                    pd_expr = re.sub(r'\{(\w+)\}', r'df["\1"]', f["expression"])
+                    pandas_exprs.append(f'        df["{f["name"]}"] = {pd_expr}')
+                derived_lines = "\n\n        # Derived fields\n" + "\n".join(pandas_exprs)
             return f'''@st.cache_data
 def load_data():
     try:
-        df = pd.read_csv("{path}")
+        df = pd.read_csv("{path}"){derived_lines}
 
         # Infer column types from pandas dtypes for auto type detection
         column_types = {{}}
@@ -376,6 +392,7 @@ def get_column_types():
                 type_mapping[col_name] = "number"
             else:
                 type_mapping[col_name] = "string"
+        type_mapping.update(DERIVED_COLUMN_TYPES)
         return type_mapping
     except Exception as e:
         return {{}}'''
