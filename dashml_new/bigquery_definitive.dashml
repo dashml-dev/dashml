@@ -6,6 +6,12 @@ data:
   type: bigquery
   path: "gold.punctuality_gold"
 
+derived_fields:
+  - name: "on_time_rate"
+    expression: "100 - {pct_delayed_15plus}"
+  - name: "delay_index"
+    expression: "({average_delay_mins} + {pct_delayed_15plus}) / 2"
+
 pages:
   - id: "airline_performance"
     title: "Airline Performance"
@@ -50,6 +56,16 @@ pages:
         sort: "y"
         sort_order: "desc"
         limit: 20
+
+      - id: "bar_on_time_by_airline"
+        type: "bar"
+        title: "On-Time Rate by Airline (%)"
+        x: "airline_name"
+        y: "on_time_rate"
+        agg: "mean"
+        sort: "y"
+        sort_order: "desc"
+        limit: 15
 
       - id: "pie_scheduled_charter"
         type: "pie"
