@@ -64,7 +64,7 @@ pages:
         y: "on_time_rate"
         agg: "mean"
         sort: "y"
-        sort_order: "desc"
+        sort_order: "asc"
         limit: 15
 
       - id: "pie_scheduled_charter"
