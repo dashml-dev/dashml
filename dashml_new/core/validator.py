@@ -29,6 +29,7 @@ class DashMLValidator:
     SUPPORTED_FILTER_OPS = ["eq", "ne", "gt", "lt", "gte", "lte", "in", "contains"]
     SUPPORTED_SORT_ORDERS = ["asc", "desc"]
     SUPPORTED_SORT_FIELDS = ["x", "y"]  # Can sort by x or y field after aggregation
+    SUPPORTED_DASHBOARD_FILTER_TYPES = ["select", "multiselect"]  # Dashboard-level filter widget types
 
     def validate(self, spec: Dict[str, Any]) -> None:
         """
@@ -295,6 +296,44 @@ class DashMLValidator:
         # Validate each chart in the page
         for i, chart in enumerate(page["charts"]):
             self._validate_chart(chart, i)
+
+        # Validate dashboard-level filters (optional)
+        if "filters" in page:
+            self._validate_page_filters(page["filters"], page["id"])
+
+    def _validate_page_filters(self, filters: Any, page_id: str) -> None:
+        """Validate dashboard-level filter widgets for a page"""
+        if not isinstance(filters, list):
+            raise ValidationError(
+                f"Page '{page_id}' filters must be an array, got {type(filters)}"
+            )
+
+        for i, f in enumerate(filters):
+            if not isinstance(f, dict):
+                raise ValidationError(
+                    f"Page '{page_id}' filter at index {i} must be an object, got {type(f)}"
+                )
+
+            if "field" not in f:
+                raise ValidationError(
+                    f"Page '{page_id}' filter at index {i} missing required 'field'"
+                )
+
+            if "type" not in f:
+                raise ValidationError(
+                    f"Page '{page_id}' filter at index {i} missing required 'type'"
+                )
+
+            if f["type"] not in self.SUPPORTED_DASHBOARD_FILTER_TYPES:
+                raise ValidationError(
+                    f"Page '{page_id}' filter at index {i} has unsupported type: '{f['type']}'. "
+                    f"Supported: {', '.join(self.SUPPORTED_DASHBOARD_FILTER_TYPES)}"
+                )
+
+            if "values" in f and not isinstance(f["values"], list):
+                raise ValidationError(
+                    f"Page '{page_id}' filter at index {i} 'values' must be a list"
+                )
 
     def _validate_filters(self, filters: Any, chart_id: str) -> None:
         """Validate filters array for a chart"""

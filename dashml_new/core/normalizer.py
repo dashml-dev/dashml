@@ -43,6 +43,104 @@ class NormalizerError(Exception):
 class DashMLNormalizer:
     """Transforms a validated spec dict into a NormalizedSpec."""
 
+    # ------------------------------------------------------------------ #
+    # SQL building helpers (used by _normalize_chart for sql/bigquery)    #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _sql_value(value) -> str:
+        """Convert a Python value to a SQL literal string."""
+        if isinstance(value, str):
+            return "'" + value.replace("'", "''") + "'"
+        if isinstance(value, (list, tuple)):
+            return "(" + ", ".join(DashMLNormalizer._sql_value(v) for v in value) + ")"
+        if value is None:
+            return "NULL"
+        return str(value)
+
+    @staticmethod
+    def _build_static_conditions(filters: list) -> list:
+        """Convert chart-level DashML filters to SQL condition strings."""
+        op_map = {"eq": "=", "ne": "!=", "gt": ">", "lt": "<", "gte": ">=", "lte": "<="}
+        parts = []
+        for f in filters:
+            field, op, val = f["field"], f["op"], f["value"]
+            if op in op_map:
+                parts.append(f"{field} {op_map[op]} {DashMLNormalizer._sql_value(val)}")
+            elif op == "in":
+                parts.append(f"{field} IN {DashMLNormalizer._sql_value(val)}")
+            elif op == "contains":
+                parts.append(f"{field} LIKE '%{val}%'")
+        return parts
+
+    @staticmethod
+    def _build_chart_sql(chart: dict) -> str:
+        """Build a SQL query template with {table_ref} and {filter_clause} placeholders.
+
+        Uses generic x/y/grp/size aliases so Plotly, Observable, and Streamlit
+        can share the same SQL; Streamlit renames columns back to original names
+        after run_query().
+
+        {table_ref}   — replaced at build time by each transformer
+        {filter_clause} — replaced at runtime by the generated app's build_filter_clause()
+        """
+        # Local vars whose VALUES are the literal placeholder strings.
+        # Using them in f-strings produces those literals in the output SQL.
+        T = "{table_ref}"
+        F = "{filter_clause}"
+
+        chart_type = chart["type"]
+        x = chart.get("x", "")
+        y = chart["y"]
+        agg = chart.get("agg", "sum")
+        group = chart.get("group")
+        size_field = chart.get("size")
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
+        limit = chart.get("limit")
+
+        agg_map = {"sum": "SUM", "mean": "AVG", "count": "COUNT"}
+        sql_agg = agg_map.get(agg, "SUM")
+
+        order = ""
+        if sort_field == "y":
+            order = f" ORDER BY y {'ASC' if sort_order == 'asc' else 'DESC'}"
+        elif sort_field == "x":
+            order = f" ORDER BY x {'ASC' if sort_order == 'asc' else 'DESC'}"
+        limit_clause = f" LIMIT {limit}" if limit else ""
+        if not order and chart_type in ("line", "area"):
+            order = " ORDER BY x ASC"
+
+        if chart_type in ("bar", "line", "area", "pie", "geo"):
+            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}{order}{limit_clause}"
+        elif chart_type in ("stacked_bar", "grouped_bar"):
+            return f"SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}, {group}{order}{limit_clause}"
+        elif chart_type == "heatmap":
+            hy = group if group else y
+            return (
+                f"SELECT {x} AS x, {hy} AS heatmap_y, {sql_agg}({y}) AS y FROM {T}"
+                f" WHERE {F}"
+                f" AND {x} IN (SELECT {x} FROM {T} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
+                f" AND {hy} IN (SELECT {hy} FROM {T} GROUP BY {hy} ORDER BY COUNT(*) DESC LIMIT 20)"
+                f" GROUP BY {x}, {hy}{order}{limit_clause}"
+            )
+        elif chart_type == "scatter":
+            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL ORDER BY RAND() LIMIT 5000"
+        elif chart_type == "bubble":
+            size_ref = size_field or y
+            return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {T} WHERE {F} GROUP BY {group}{order}{limit_clause}"
+        elif chart_type == "histogram":
+            return f"SELECT {x} AS x FROM {T} WHERE {F} AND {x} IS NOT NULL ORDER BY RAND() LIMIT 50000"
+        elif chart_type == "box":
+            top_n = f"{x} IN (SELECT {x} FROM {T} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
+            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {top_n} AND {x} IS NOT NULL AND {y} IS NOT NULL ORDER BY RAND() LIMIT 50000"
+        elif chart_type == "metric":
+            return f"SELECT {sql_agg}({y}) AS y FROM {T} WHERE {F}"
+        else:
+            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}{order}{limit_clause}"
+
+    # ------------------------------------------------------------------ #
+
     def normalize(
         self, spec: dict, source_file: str, db_config: Optional[Dict[str, Any]] = None
     ) -> NormalizedSpec:
@@ -97,6 +195,8 @@ class DashMLNormalizer:
 
     def _normalize_pages(self, spec: dict) -> List[PageSpec]:
         """Ensure pages[] always exists. Wrap single-page charts if needed."""
+        data_type = spec.get("data", {}).get("type", "csv")
+
         if "pages" in spec:
             pages = spec["pages"]
         elif "charts" in spec:
@@ -115,14 +215,17 @@ class DashMLNormalizer:
         for page in pages:
             normalized_page = dict(page)
             normalized_page["charts"] = [
-                self._normalize_chart(chart)
+                self._normalize_chart(chart, data_type)
                 for chart in page.get("charts", [])
             ]
+            # Default filters to empty list (mirrors chart filter defaulting)
+            if "filters" not in normalized_page:
+                normalized_page["filters"] = []
             normalized_pages.append(normalized_page)
 
         return normalized_pages  # type: ignore
 
-    def _normalize_chart(self, chart: dict) -> ChartSpec:
+    def _normalize_chart(self, chart: dict, data_type: str = "csv") -> ChartSpec:
         """Fill defaults and add annotations to a single chart."""
         result = dict(chart)  # shallow copy, don't mutate original
         chart_type = result.get("type", "")
@@ -150,6 +253,13 @@ class DashMLNormalizer:
         # Annotations
         result["needs_aggregation"] = chart_type in CHARTS_NEED_AGGREGATION
         result["uses_raw_data"] = chart_type in CHARTS_USE_RAW_DATA
+
+        # SQL template (sql/bigquery only) — built once here, shared by all transformers.
+        # {table_ref} is replaced at build time by each transformer.
+        # {filter_clause} is replaced at runtime by the generated app.
+        if data_type in ("sql", "bigquery"):
+            result["sql"] = self._build_chart_sql(result)
+            result["static_conditions"] = self._build_static_conditions(result.get("filters", []))
 
         return result  # type: ignore
 

@@ -120,104 +120,34 @@ import altair as alt"""
         """Convert snake_case column names to Title Case labels"""
         return name.replace('_', ' ').replace('-', ' ').title()
 
-    def _sql_value(self, value) -> str:
-        """Convert a Python value to a SQL literal."""
-        if isinstance(value, str):
-            return "'" + value.replace("'", "''") + "'"
-        if isinstance(value, (list, tuple)):
-            return "(" + ", ".join(self._sql_value(v) for v in value) + ")"
-        if value is None:
-            return "NULL"
-        return str(value)
-
-    def _build_where_clause(self, filters: list) -> str:
-        """Convert DashML filter specs to a SQL WHERE clause."""
-        if not filters:
-            return ""
-        op_map = {"eq": "=", "ne": "!=", "gt": ">", "lt": "<", "gte": ">=", "lte": "<="}
-        parts = []
-        for f in filters:
-            field, op, val = f["field"], f["op"], f["value"]
-            if op in op_map:
-                parts.append(f"{field} {op_map[op]} {self._sql_value(val)}")
-            elif op == "in":
-                parts.append(f"{field} IN {self._sql_value(val)}")
-            elif op == "contains":
-                parts.append(f"{field} LIKE '%{val}%'")
-        return " WHERE " + " AND ".join(parts) if parts else ""
-
-    def _build_chart_query(self, chart: dict, table_ref: str) -> str:
-        """Build a per-chart SQL query using ORIGINAL column names (not aliased)."""
-        chart_type = chart["type"]
-        x = chart.get("x", "")  # Not required for metric type
-        y = chart["y"]
-        agg = chart.get("agg", "sum")
-        group = chart.get("group")
-        size_field = chart.get("size")
-        filters = chart.get("filters", [])
-        sort_field = chart.get("sort")
-        sort_order = chart.get("sort_order", "asc")
-        limit = chart.get("limit")
-
-        where = self._build_where_clause(filters)
-        agg_map = {"sum": "SUM", "mean": "AVG", "count": "COUNT"}
-        sql_agg = agg_map.get(agg, "SUM")
-
-        order = ""
-        if sort_field == "y":
-            order = f" ORDER BY {y} {'ASC' if sort_order == 'asc' else 'DESC'}"
-        elif sort_field == "x":
-            order = f" ORDER BY {x} {'ASC' if sort_order == 'asc' else 'DESC'}"
-
-        limit_clause = f" LIMIT {limit}" if limit else ""
-
-        if not order and chart_type in ("line", "area"):
-            order = f" ORDER BY {x} ASC"
-
-        if chart_type in ("bar", "line", "area", "pie", "geo"):
-            return f"SELECT {x}, {sql_agg}({y}) AS {y} FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
-        elif chart_type in ("stacked_bar", "grouped_bar"):
-            return f"SELECT {x}, {group}, {sql_agg}({y}) AS {y} FROM {table_ref}{where} GROUP BY {x}, {group}{order}{limit_clause}"
-        elif chart_type == "heatmap":
-            heatmap_y = group if group else y
-            hm_where = where if where else " WHERE 1=1"
-            hm_where += f" AND {x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
-            hm_where += f" AND {heatmap_y} IN (SELECT {heatmap_y} FROM {table_ref} GROUP BY {heatmap_y} ORDER BY COUNT(*) DESC LIMIT 20)"
-            return f"SELECT {x}, {heatmap_y}, {sql_agg}({y}) AS {y} FROM {table_ref}{hm_where} GROUP BY {x}, {heatmap_y}{order}{limit_clause}"
-        elif chart_type == "scatter":
-            null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
-            sc_where = (where + " AND " + null_filter) if where else (" WHERE " + null_filter)
-            return f"SELECT {x}, {y} FROM {table_ref}{sc_where} ORDER BY RAND() LIMIT 5000"
-        elif chart_type == "bubble":
-            size_ref = size_field or y
-            return f"SELECT {group}, {sql_agg}({x}) AS {x}, {sql_agg}({y}) AS {y}, {sql_agg}({size_ref}) AS {size_ref} FROM {table_ref}{where} GROUP BY {group}{order}{limit_clause}"
-        elif chart_type == "histogram":
-            null_filter = f"{x} IS NOT NULL"
-            hist_where = (where + " AND " + null_filter) if where else (" WHERE " + null_filter)
-            return f"SELECT {x} FROM {table_ref}{hist_where} ORDER BY RAND() LIMIT 50000"
-        elif chart_type == "box":
-            box_where = where if where else ""
-            top_n = f"{x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
-            null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
-            box_where = (box_where + " AND " + top_n + " AND " + null_filter) if box_where else (" WHERE " + top_n + " AND " + null_filter)
-            return f"SELECT {x}, {y} FROM {table_ref}{box_where} ORDER BY RAND() LIMIT 50000"
-        elif chart_type == "metric":
-            return f"SELECT {sql_agg}({y}) AS y FROM {table_ref}{where}"
-        else:
-            return f"SELECT {x}, {sql_agg}({y}) AS {y} FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
-
     def _generate_chart_queries_dict(self, pages: list, table_ref: str) -> str:
-        """Generate CHART_QUERIES dict with per-chart SQL queries."""
+        """Generate CHART_QUERIES, CHART_STATIC_CONDITIONS, and ALLOWED_FILTER_FIELDS."""
         queries = {}
+        static_conditions = {}
+        all_filter_fields: set = set()
+
         for page in pages:
+            # Collect page-level dashboard filter fields
+            for f in page.get("filters", []):
+                all_filter_fields.add(f["field"])
             for chart in page["charts"]:
-                query = self._build_chart_query(chart, table_ref)
-                queries[chart["id"]] = query
+                # SQL template was built by normalizer; replace {table_ref} at build time
+                queries[chart["id"]] = chart["sql"].replace("{table_ref}", table_ref)
+                static_conditions[chart["id"]] = chart.get("static_conditions", [])
 
         lines = ["CHART_QUERIES = {"]
         for chart_id, query in queries.items():
             lines.append(f'    "{chart_id}": """{query}""",')
         lines.append("}")
+        lines.append("")
+
+        lines.append("CHART_STATIC_CONDITIONS = {")
+        for chart_id, conds in static_conditions.items():
+            lines.append(f"    {repr(chart_id)}: {repr(conds)},")
+        lines.append("}")
+        lines.append("")
+
+        lines.append(f"ALLOWED_FILTER_FIELDS = frozenset({repr(all_filter_fields)})")
         return "\n".join(lines)
 
     def _generate_page_config(self, title: str) -> str:
@@ -391,13 +321,40 @@ def load_data():
         client = bigquery.Client(project="{project}")'''
 
             return f'''@st.cache_data(ttl=300)
-def run_query(query_name):
+def run_query(query_name, filter_clause="1=1"):
     try:{credentials_code}
-        query = CHART_QUERIES[query_name]
+        query = CHART_QUERIES[query_name].format(filter_clause=filter_clause)
         return client.query(query).to_dataframe()
     except Exception as e:
         st.error(f"Query failed: {{e}}")
         return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def get_filter_options(field):
+    """Fetch DISTINCT values for a dashboard filter field."""
+    try:{credentials_code}
+        query = "SELECT DISTINCT `" + field + "` FROM `{project}.{dataset}.{table_name}` WHERE `" + field + "` IS NOT NULL ORDER BY 1 LIMIT 500"
+        result = client.query(query).to_dataframe()
+        return sorted(result.iloc[:, 0].dropna().astype(str).tolist())
+    except Exception as e:
+        return []
+
+def build_filter_clause(chart_id, dashboard_filters):
+    """Build SQL WHERE body from static per-chart conditions + runtime dashboard filters."""
+    conditions = ["1=1"]
+    conditions.extend(CHART_STATIC_CONDITIONS.get(chart_id, []))
+    for field, values in dashboard_filters.items():
+        if field not in ALLOWED_FILTER_FIELDS:
+            continue
+        if not values:
+            continue
+        escaped = [str(v).replace("'", "''") for v in values]
+        if len(escaped) == 1:
+            conditions.append(field + " = '" + escaped[0] + "'")
+        else:
+            in_list = ", ".join("'" + v + "'" for v in escaped)
+            conditions.append(field + " IN (" + in_list + ")")
+    return " AND ".join(conditions)
 
 @st.cache_data(ttl=3600)
 def get_column_types():
@@ -428,7 +385,7 @@ def get_column_types():
 def load_data():
     return None, None'''
 
-    def _generate_chart(self, chart: Dict[str, Any], colors: Dict[str, Any], sql_mode: bool = False) -> str:
+    def _generate_chart(self, chart: Dict[str, Any], colors: Dict[str, Any], sql_mode: bool = False, use_filtered_df: bool = False) -> str:
         """Generate Altair chart code with explicit colors"""
         chart_id = chart["id"]
         chart_type = chart["type"]
@@ -461,12 +418,13 @@ def load_data():
         # Metric type: render as KPI card using st.metric(), bypass Altair chart path
         if chart_type == "metric":
             if sql_mode:
-                code_parts.append(f'    _metric_data = run_query("{chart_id}")')
+                code_parts.append(f'    _metric_data = run_query("{chart_id}", build_filter_clause("{chart_id}", _dashboard_filters))')
                 code_parts.append(f'    _metric_val = float(_metric_data.iloc[0]["y"]) if len(_metric_data) > 0 else None')
             else:
                 # CSV mode: filter then aggregate
+                base_df = "_filtered_df" if use_filtered_df else "df"
                 if filters:
-                    code_parts.append(f'    _metric_df = df.copy()')
+                    code_parts.append(f'    _metric_df = {base_df}.copy()')
                     for f in filters:
                         field, op, value = f["field"], f["op"], f["value"]
                         op_map = {"eq": "==", "ne": "!=", "gt": ">", "lt": "<", "gte": ">=", "lte": "<="}
@@ -477,7 +435,7 @@ def load_data():
                         elif op == "contains":
                             code_parts.append(f'    _metric_df = _metric_df[_metric_df["{field}"].str.contains({repr(value)}, na=False)]')
                 else:
-                    code_parts.append(f'    _metric_df = df')
+                    code_parts.append(f'    _metric_df = {base_df}')
                 agg_method = AGG_METHODS.get(agg, "sum")
                 code_parts.append(f'    _metric_df["{y}"] = pd.to_numeric(_metric_df["{y}"], errors="coerce")')
                 if agg == "count":
@@ -498,17 +456,34 @@ def load_data():
         code_parts.append(f'    st.subheader("{title}")')
 
         if sql_mode:
-            # SQL mode: data comes from per-chart queries, already aggregated/filtered
-            code_parts.append(f'    chart_data = run_query("{chart_id}")')
+            # SQL mode: data comes from per-chart queries (generic x/y/grp/size aliases).
+            # Rename aliases back to original column names so Altair encodings work.
+            code_parts.append(f'    chart_data = run_query("{chart_id}", build_filter_clause("{chart_id}", _dashboard_filters))')
+            # Build rename dict from generic SQL aliases → original column names
+            if chart_type in ("stacked_bar", "grouped_bar"):
+                rename_dict = {"x": x, "grp": group, "y": y}
+            elif chart_type == "heatmap":
+                heatmap_y_col = chart.get("group", y)
+                rename_dict = {"x": x, "heatmap_y": heatmap_y_col, "y": y}
+            elif chart_type == "bubble":
+                size_field_col = chart.get("size", y)
+                rename_dict = {"grp": group, "x": x, "y": y, "size": size_field_col}
+            elif chart_type == "histogram":
+                rename_dict = {"x": x}
+            else:  # bar, line, area, pie, geo, scatter, box
+                rename_dict = {"x": x, "y": y}
+            if rename_dict:
+                code_parts.append(f'    chart_data = chart_data.rename(columns={repr(rename_dict)})')
             code_parts.append(f'    chart_df = chart_data')
             code_parts.append(f'    effective_x_type = "{x_type}" if "{x_type}" != "None" else column_types.get("{x}")')
             code_parts.append(f'    x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")')
         else:
             # Only copy when we need to modify the DataFrame in-place (y_type casting)
+            base_df = "_filtered_df" if use_filtered_df else "df"
             if y_type:
-                code_parts.append(f'    chart_df = df.copy()')
+                code_parts.append(f'    chart_df = {base_df}.copy()')
             else:
-                code_parts.append(f'    chart_df = df')
+                code_parts.append(f'    chart_df = {base_df}')
 
             # y_type casting (before filtering and aggregation)
             if y_type == "number":
@@ -660,9 +635,9 @@ def load_data():
             value_field = y  # The value to aggregate for color
             value_label = self._humanize_column_name(value_field)
             if sql_mode:
-                # In SQL mode, chart_data already contains aggregated and limited data
+                # In SQL mode, chart_df already contains aggregated and renamed data
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity (data pre-aggregated by SQL query)
-    heatmap_data = chart_data
+    heatmap_data = chart_df
     c = alt.Chart(heatmap_data).mark_rect().encode(
         x=alt.X("{x}:N", sort=None, title="{x_label}"),
         y=alt.Y("{heatmap_y}:N", title="{heatmap_y_label}"),
@@ -817,6 +792,68 @@ def load_data():
 
         return "\n".join(code_parts)
 
+    def _generate_page_filters(self, page: dict, sql_mode: bool) -> str:
+        """Generate filter widgets + _dashboard_filters dict + optional _filtered_df.
+
+        Returns code at 8-space indent (ready to append inside a `with tab:` block).
+        Always emits _dashboard_filters = {} so charts can call build_filter_clause().
+        In CSV mode, also emits _filtered_df from which chart code reads.
+        """
+        filters = page.get("filters", [])
+        page_id = page["id"]
+        parts = []
+
+        if not filters:
+            parts.append("        _dashboard_filters = {}")
+            if not sql_mode:
+                parts.append("        _filtered_df = df")
+            return "\n".join(parts)
+
+        n = len(filters)
+        col_vars = ", ".join(f"_filter_col{i}" for i in range(n))
+        parts.append("        # Dashboard filters")
+        parts.append(f"        {col_vars} = st.columns({n})")
+
+        for i, f in enumerate(filters):
+            field = f["field"]
+            ftype = f["type"]
+            label = f.get("label", self._humanize_column_name(field))
+            key = f"filter_{page_id}_{field}"
+            static_values = f.get("values")
+
+            parts.append(f"        with _filter_col{i}:")
+
+            if static_values is not None:
+                opts_code = repr(static_values)
+            elif sql_mode:
+                opts_code = f'get_filter_options("{field}")'
+            else:
+                opts_code = f'sorted(df["{field}"].dropna().astype(str).unique().tolist())'
+
+            if ftype == "select":
+                parts.append(f'            _filter_{field} = st.selectbox("{label}", options=[""] + {opts_code}, key="{key}")')
+            else:  # multiselect
+                parts.append(f'            _filter_{field} = st.multiselect("{label}", options={opts_code}, key="{key}")')
+
+        parts.append("        _dashboard_filters = {}")
+        if not sql_mode:
+            parts.append("        _filtered_df = df.copy()")
+
+        for f in filters:
+            field = f["field"]
+            ftype = f["type"]
+            parts.append(f"        if _filter_{field}:")
+            if ftype == "select":
+                parts.append(f'            _dashboard_filters["{field}"] = [_filter_{field}]')
+                if not sql_mode:
+                    parts.append(f'            _filtered_df = _filtered_df[_filtered_df["{field}"] == _filter_{field}]')
+            else:  # multiselect
+                parts.append(f'            _dashboard_filters["{field}"] = _filter_{field}')
+                if not sql_mode:
+                    parts.append(f'            _filtered_df = _filtered_df[_filtered_df["{field}"].isin(_filter_{field})]')
+
+        return "\n".join(parts)
+
     def _generate_pages(self, pages: list, colors: Dict[str, Any], sql_mode: bool = False) -> str:
         code_parts = []
         tab_titles = []
@@ -839,6 +876,17 @@ def load_data():
                 code_parts.append('        st.divider()')
                 code_parts.append("")
 
+            # Dashboard filters (always emits _dashboard_filters; CSV mode also emits _filtered_df)
+            page_filters = page.get("filters", [])
+            filter_code = self._generate_page_filters(page, sql_mode)
+            code_parts.append(filter_code)
+            if page_filters:
+                code_parts.append("")
+                code_parts.append("        st.divider()")
+                code_parts.append("")
+
+            use_filtered_df = bool(page_filters) and not sql_mode
+
             page_charts = page.get("charts", [])
             # Metrics are grouped into a single compact columns row;
             # regular charts each get their own full-width row.
@@ -855,14 +903,14 @@ def load_data():
                     code_parts.append(f'        {", ".join(col_names)} = st.columns({n})')
                     for k, mc in enumerate(metric_run):
                         code_parts.append(f'        with {col_names[k]}:')
-                        mc_code = self._generate_chart(mc, colors, sql_mode=sql_mode)
+                        mc_code = self._generate_chart(mc, colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
                         code_parts.append("\n".join(f"        {line}" for line in mc_code.split("\n")))
                     if idx < len(page_charts):
                         code_parts.append('        st.divider()')
                     code_parts.append("")
                 else:
                     # Regular chart — full width
-                    chart_code = self._generate_chart(page_charts[idx], colors, sql_mode=sql_mode)
+                    chart_code = self._generate_chart(page_charts[idx], colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
                     code_parts.append("\n".join(f"    {line}" for line in chart_code.split("\n")))
                     idx += 1
                     if idx < len(page_charts):

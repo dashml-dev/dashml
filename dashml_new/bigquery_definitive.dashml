@@ -10,6 +10,13 @@ pages:
   - id: "airline_performance"
     title: "Airline Performance"
     description: "Delays and cancellations by airline and airport"
+    filters:
+      - field: "scheduled_charter"
+        type: "select"
+        label: "Flight Type"
+      - field: "origin_destination_country"
+        type: "multiselect"
+        label: "Country"
     charts:
       - id: "total_flights_kpi"
         type: "metric"

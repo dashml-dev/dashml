@@ -142,111 +142,6 @@ class PlotlyTransformer(Transformer):
 
         return json.dumps(multi_file_output)
 
-    def _sql_value(self, value) -> str:
-        """Convert a Python value to a SQL literal"""
-        if isinstance(value, str):
-            return "'" + value.replace("'", "''") + "'"
-        if isinstance(value, (list, tuple)):
-            return "(" + ", ".join(self._sql_value(v) for v in value) + ")"
-        if value is None:
-            return "NULL"
-        return str(value)
-
-    def _build_where_clause(self, filters: list) -> str:
-        """Convert DashML filter specs to a SQL WHERE clause"""
-        if not filters:
-            return ""
-        op_map = {
-            "eq": "=", "ne": "!=", "gt": ">", "lt": "<",
-            "gte": ">=", "lte": "<=",
-        }
-        parts = []
-        for f in filters:
-            field = f["field"]
-            op = f["op"]
-            val = f["value"]
-            if op in op_map:
-                parts.append(f"{field} {op_map[op]} {self._sql_value(val)}")
-            elif op == "in":
-                parts.append(f"{field} IN {self._sql_value(val)}")
-            elif op == "contains":
-                parts.append(f"{field} LIKE '%{val}%'")
-        return " WHERE " + " AND ".join(parts) if parts else ""
-
-    def _build_chart_query(self, chart: Dict[str, Any], table_ref: str) -> str:
-        """Build a per-chart SQL query that does server-side aggregation.
-
-        Returns a SQL string with the minimal data needed for each chart type.
-        """
-        chart_type = chart["type"]
-        x = chart.get("x", "")  # Not required for metric type
-        y = chart["y"]
-        agg = chart.get("agg", "sum")
-        group = chart.get("group")
-        size_field = chart.get("size")
-        filters = chart.get("filters", [])
-        sort_field = chart.get("sort")
-        sort_order = chart.get("sort_order", "asc")
-        limit = chart.get("limit")
-
-        where = self._build_where_clause(filters)
-        agg_map = {"sum": "SUM", "mean": "AVG", "count": "COUNT"}
-        sql_agg = agg_map.get(agg, "SUM")
-
-        # Determine ORDER BY
-        order = ""
-        if sort_field == "y":
-            order = f" ORDER BY y {'ASC' if sort_order == 'asc' else 'DESC'}"
-        elif sort_field == "x":
-            order = f" ORDER BY x {'ASC' if sort_order == 'asc' else 'DESC'}"
-
-        limit_clause = f" LIMIT {limit}" if limit else ""
-
-        # Default ORDER BY x for charts that need sequential ordering
-        if not order and chart_type in ("line", "area"):
-            order = " ORDER BY x ASC"
-
-        if chart_type in ("bar", "line", "area", "pie", "geo"):
-            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
-
-        elif chart_type in ("stacked_bar", "grouped_bar"):
-            return f"SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}, {group}{order}{limit_clause}"
-
-        elif chart_type == "heatmap":
-            heatmap_y = group if group else y
-            hm_where = where if where else " WHERE 1=1"
-            hm_where += f" AND {x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
-            hm_where += f" AND {heatmap_y} IN (SELECT {heatmap_y} FROM {table_ref} GROUP BY {heatmap_y} ORDER BY COUNT(*) DESC LIMIT 20)"
-            return f"SELECT {x} AS x, {heatmap_y} AS heatmap_y, {sql_agg}({y}) AS y FROM {table_ref}{hm_where} GROUP BY {x}, {heatmap_y}{order}{limit_clause}"
-
-        elif chart_type == "scatter":
-            null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
-            sc_where = (where + " AND " + null_filter) if where else (" WHERE " + null_filter)
-            return f"SELECT {x} AS x, {y} AS y FROM {table_ref}{sc_where} ORDER BY RAND() LIMIT 5000"
-
-        elif chart_type == "bubble":
-            size_ref = size_field or y
-            return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {table_ref}{where} GROUP BY {group}{order}{limit_clause}"
-
-        elif chart_type == "histogram":
-            null_filter = f"{x} IS NOT NULL"
-            hist_where = (where + " AND " + null_filter) if where else (" WHERE " + null_filter)
-            return f"SELECT {x} AS x FROM {table_ref}{hist_where} ORDER BY RAND() LIMIT 50000"
-
-        elif chart_type == "box":
-            box_where = where if where else ""
-            top_n = f"{x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
-            null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
-            box_where = (box_where + " AND " + top_n + " AND " + null_filter) if box_where else (" WHERE " + top_n + " AND " + null_filter)
-            return f"SELECT {x} AS x, {y} AS y FROM {table_ref}{box_where} ORDER BY RAND() LIMIT 50000"
-
-        elif chart_type == "metric":
-            return f"SELECT {sql_agg}({y}) AS y FROM {table_ref}{where}"
-
-        else:
-            # Default: treat like bar
-            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
-
     def _generate_flask_app_bigquery(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to BigQuery"""
         db_config = spec["db_config"]
@@ -264,14 +159,22 @@ class PlotlyTransformer(Transformer):
         for page in spec["pages"]:
             all_charts.extend(page.get("charts", []))
 
-        chart_queries_dict = {}
-        for chart in all_charts:
-            chart_queries_dict[chart["id"]] = self._build_chart_query(chart, table_ref)
-
+        # Build per-chart queries from normalizer-generated SQL templates
         chart_queries_code = "CHART_QUERIES = {\n"
-        for cid, query in chart_queries_dict.items():
-            chart_queries_code += f'    "{cid}": """{query}""",\n'
+        chart_static_code = "CHART_STATIC_CONDITIONS = {\n"
+        for chart in all_charts:
+            query = chart["sql"].replace("{table_ref}", table_ref)
+            chart_queries_code += f'    "{chart["id"]}": """{query}""",\n'
+            chart_static_code += f'    "{chart["id"]}": {repr(chart.get("static_conditions", []))},\n'
         chart_queries_code += "}"
+        chart_static_code += "}"
+
+        # Build ALLOWED_FILTER_FIELDS from page-level filters
+        all_filter_fields = set()
+        for page in spec["pages"]:
+            for f in page.get("filters", []):
+                all_filter_fields.add(f["field"])
+        allowed_fields_code = f"ALLOWED_FILTER_FIELDS = frozenset({repr(all_filter_fields)})"
 
         # Build credentials loading code
         if credentials_path:
@@ -307,6 +210,26 @@ TABLE_NAME = "{table_name}"
 
 # Per-chart SQL queries (generated at compile time)
 {chart_queries_code}
+
+{chart_static_code}
+
+{allowed_fields_code}
+
+def build_filter_clause(chart_id, request_args):
+    """Build SQL WHERE body from static per-chart conditions + runtime dashboard filters."""
+    conditions = ["1=1"]
+    conditions.extend(CHART_STATIC_CONDITIONS.get(chart_id, []))
+    for field in ALLOWED_FILTER_FIELDS:
+        values = request_args.getlist(field)
+        if not values:
+            continue
+        escaped = [str(v).replace("'", "''") for v in values]
+        if len(escaped) == 1:
+            conditions.append(field + " = '" + escaped[0] + "'")
+        else:
+            in_list = ", ".join("'" + v + "'" for v in escaped)
+            conditions.append(field + " IN (" + in_list + ")")
+    return " AND ".join(conditions)
 
 # Cache for column types (fetched once from INFORMATION_SCHEMA)
 _column_types_cache = None
@@ -369,10 +292,13 @@ def get_schema():
 @app.route('/api/chart/<chart_id>')
 def get_chart_data(chart_id):
     """Fetch pre-aggregated data for a specific chart"""
-    query = CHART_QUERIES.get(chart_id)
-    if not query:
+    from flask import request
+    query_template = CHART_QUERIES.get(chart_id)
+    if not query_template:
         return jsonify({{"error": "Unknown chart"}}), 404
     try:
+        filter_clause = build_filter_clause(chart_id, request.args)
+        query = query_template.format(filter_clause=filter_clause)
         query_job = client.query(query)
         results = query_job.result()
         data = [dict(row) for row in results]
@@ -380,6 +306,21 @@ def get_chart_data(chart_id):
             response=json.dumps(data, default=serialize),
             mimetype='application/json'
         )
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
+
+@app.route('/api/filter/<field>')
+def get_filter_options(field):
+    """Return DISTINCT values for a filter field (used to populate dropdowns)"""
+    from flask import request
+    if field not in ALLOWED_FILTER_FIELDS:
+        return jsonify({{"error": "Field not allowed"}}), 403
+    try:
+        query = "SELECT DISTINCT `" + field + "` FROM `{project}.{dataset}.{table_name}` WHERE `" + field + "` IS NOT NULL ORDER BY 1 LIMIT 500"
+        query_job = client.query(query)
+        results = query_job.result()
+        values = [str(row[0]) for row in results if row[0] is not None]
+        return jsonify(sorted(values))
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
 
@@ -535,6 +476,159 @@ if __name__ == '__main__':
       color: {primary};
       line-height: 1.1;
     }}
+    .filter-bar {{
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      padding: 14px 18px;
+      background: {card_bg};
+      border-radius: 10px;
+      margin-bottom: 20px;
+      border: 1px solid rgba(128,128,128,0.12);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }}
+    .filter-bar-title {{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      opacity: .4;
+      align-self: center;
+      padding-bottom: 2px;
+      white-space: nowrap;
+      margin-right: 4px;
+      color: {text};
+    }}
+    .filter-item {{
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }}
+    .filter-item > label {{
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      opacity: .55;
+      color: {text};
+    }}
+    .filter-select-wrap {{
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }}
+    .filter-select-wrap select {{
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(128,128,128,0.08);
+      color: {text};
+      border: 1px solid rgba(128,128,128,0.22);
+      border-radius: 7px;
+      padding: 7px 32px 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 150px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      font-family: inherit;
+    }}
+    .filter-select-wrap select:hover {{ border-color: rgba(128,128,128,0.45); }}
+    .filter-select-wrap select:focus {{ border-color: {primary}; box-shadow: 0 0 0 2px {primary}33; }}
+    .filter-select-wrap .sel-arrow {{
+      position: absolute;
+      right: 9px;
+      pointer-events: none;
+      opacity: .45;
+      flex-shrink: 0;
+      color: {text};
+    }}
+    .ms-wrap {{ position: relative; }}
+    .ms-btn {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(128,128,128,0.08);
+      color: {text};
+      border: 1px solid rgba(128,128,128,0.22);
+      border-radius: 7px;
+      padding: 7px 10px 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 150px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      white-space: nowrap;
+      font-family: inherit;
+    }}
+    .ms-btn:hover {{ border-color: rgba(128,128,128,0.45); }}
+    .ms-btn.ms-open, .ms-btn:focus {{ border-color: {primary}; box-shadow: 0 0 0 2px {primary}33; }}
+    .ms-count {{
+      background: {primary};
+      color: #fff;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 600;
+      display: none;
+    }}
+    .ms-count.visible {{ display: inline; }}
+    .ms-arrow {{ opacity: .45; transition: transform 0.15s; flex-shrink: 0; }}
+    .ms-btn.ms-open .ms-arrow {{ transform: rotate(180deg); }}
+    .ms-panel {{
+      position: absolute;
+      top: calc(100% + 5px);
+      left: 0;
+      z-index: 200;
+      background: {bg};
+      border: 1px solid rgba(128,128,128,0.25);
+      border-radius: 9px;
+      padding: 6px;
+      min-width: 190px;
+      max-height: 230px;
+      overflow-y: auto;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+      display: none;
+    }}
+    .ms-panel.ms-open {{ display: block; }}
+    .ms-option {{
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 9px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      user-select: none;
+      transition: background 0.1s;
+      color: {text};
+    }}
+    .ms-option:hover {{ background: rgba(128,128,128,0.1); }}
+    .ms-option input[type="checkbox"] {{
+      accent-color: {primary};
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }}
+    .filter-reset {{
+      align-self: flex-end;
+      background: none;
+      border: 1px solid rgba(128,128,128,0.2);
+      color: {text};
+      padding: 7px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      cursor: pointer;
+      opacity: .55;
+      transition: opacity 0.15s, border-color 0.15s;
+      font-family: inherit;
+    }}
+    .filter-reset:hover {{ opacity: 1; border-color: rgba(128,128,128,0.5); }}
   </style>
 </head>'''
 
@@ -1157,6 +1251,48 @@ if __name__ == '__main__':
 
             if description:
                 container_parts.append(f'      <p class="page-description"><em>{description}</em></p>')
+
+            page_filters = page.get("filters", [])
+            if page_filters:
+                filter_items = []
+                for f in page_filters:
+                    field = f["field"]
+                    label_text = f.get("label", field.replace("_", " ").title())
+                    ftype = f.get("type", "select")
+                    if ftype == "multiselect":
+                        filter_items.append(
+                            f'      <div class="filter-item">'
+                            f'<label>{label_text}</label>'
+                            f'<div class="ms-wrap" id="ms-{page_id}-{field}">'
+                            f'<button type="button" class="ms-btn" onclick="toggleMs(this,\'{page_id}\',\'{field}\')">'
+                            f'<span class="ms-text">All</span>'
+                            f'<span class="ms-count" id="ms-count-{page_id}-{field}"></span>'
+                            f'<svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
+                            f'</button>'
+                            f'<div class="ms-panel" id="ms-panel-{page_id}-{field}"></div>'
+                            f'</div></div>'
+                        )
+                    else:
+                        filter_items.append(
+                            f'      <div class="filter-item">'
+                            f'<label>{label_text}</label>'
+                            f'<div class="filter-select-wrap">'
+                            f'<select id="filter-{page_id}-{field}" onchange="applyDashboardFilter(\'{page_id}\')">'
+                            f'<option value="">All</option></select>'
+                            f'<svg class="sel-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
+                            f'</div></div>'
+                        )
+                container_parts.append(f'      <div class="filter-bar" id="filters-{page_id}">')
+                container_parts.append(
+                    '      <div class="filter-bar-title">'
+                    '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">'
+                    '<path d="M1 2h14l-5 7v4l-4-2V9z"/></svg> Filters</div>'
+                )
+                container_parts.extend(filter_items)
+                container_parts.append(
+                    f'      <button class="filter-reset" onclick="resetFilters(\'{page_id}\')">&#x2715; Reset</button>'
+                )
+                container_parts.append('      </div>')
 
             for chart in page.get("charts", []):
                 chart_id = chart["id"]
@@ -1782,14 +1918,22 @@ if __name__ == '__main__':
         for page in spec["pages"]:
             all_charts.extend(page.get("charts", []))
 
-        chart_queries_dict = {}
-        for chart in all_charts:
-            chart_queries_dict[chart["id"]] = self._build_chart_query(chart, table_ref)
-
+        # Build per-chart queries from normalizer-generated SQL templates
         chart_queries_code = "CHART_QUERIES = {\n"
-        for cid, query in chart_queries_dict.items():
-            chart_queries_code += f'    "{cid}": """{query}""",\n'
+        chart_static_code = "CHART_STATIC_CONDITIONS = {\n"
+        for chart in all_charts:
+            query = chart["sql"].replace("{table_ref}", table_ref)
+            chart_queries_code += f'    "{chart["id"]}": """{query}""",\n'
+            chart_static_code += f'    "{chart["id"]}": {repr(chart.get("static_conditions", []))},\n'
         chart_queries_code += "}"
+        chart_static_code += "}"
+
+        # Build ALLOWED_FILTER_FIELDS from page-level filters
+        all_filter_fields = set()
+        for page in spec["pages"]:
+            for f in page.get("filters", []):
+                all_filter_fields.add(f["field"])
+        allowed_fields_code = f"ALLOWED_FILTER_FIELDS = frozenset({repr(all_filter_fields)})"
 
         # Generate Flask app code
         return f'''from flask import Flask, jsonify, send_from_directory, Response
@@ -1808,6 +1952,26 @@ engine = create_engine(DATABASE_URL)
 
 # Per-chart SQL queries (generated at compile time)
 {chart_queries_code}
+
+{chart_static_code}
+
+{allowed_fields_code}
+
+def build_filter_clause(chart_id, request_args):
+    """Build SQL WHERE body from static per-chart conditions + runtime dashboard filters."""
+    conditions = ["1=1"]
+    conditions.extend(CHART_STATIC_CONDITIONS.get(chart_id, []))
+    for field in ALLOWED_FILTER_FIELDS:
+        values = request_args.getlist(field)
+        if not values:
+            continue
+        escaped = [str(v).replace("'", "''") for v in values]
+        if len(escaped) == 1:
+            conditions.append(field + " = '" + escaped[0] + "'")
+        else:
+            in_list = ", ".join("'" + v + "'" for v in escaped)
+            conditions.append(field + " IN (" + in_list + ")")
+    return " AND ".join(conditions)
 
 # Cache for column types (fetched once from information_schema)
 _column_types_cache = None
@@ -1866,13 +2030,30 @@ def get_schema():
 @app.route('/api/chart/<chart_id>')
 def get_chart_data(chart_id):
     """Fetch pre-aggregated data for a specific chart"""
-    query = CHART_QUERIES.get(chart_id)
-    if not query:
+    from flask import request
+    query_template = CHART_QUERIES.get(chart_id)
+    if not query_template:
         return jsonify({{"error": "Unknown chart"}}), 404
     try:
+        filter_clause = build_filter_clause(chart_id, request.args)
+        query = query_template.format(filter_clause=filter_clause)
         df = pd.read_sql(query, engine)
         json_str = df.to_json(orient='records', date_format='iso')
         return Response(json_str, mimetype='application/json')
+    except Exception as e:
+        return jsonify({{"error": str(e)}}), 500
+
+@app.route('/api/filter/<field>')
+def get_filter_options(field):
+    """Return DISTINCT values for a filter field"""
+    from flask import request
+    if field not in ALLOWED_FILTER_FIELDS:
+        return jsonify({{"error": "Field not allowed"}}), 403
+    try:
+        query = "SELECT DISTINCT " + field + " FROM {schema}.{table_name} WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT 500"
+        df = pd.read_sql(query, engine)
+        values = sorted(df.iloc[:, 0].dropna().astype(str).tolist())
+        return jsonify(values)
     except Exception as e:
         return jsonify({{"error": str(e)}}), 500
 
@@ -1972,6 +2153,19 @@ if __name__ == '__main__':
         for page in pages:
             all_charts.extend(page.get("charts", []))
 
+        # Build PAGE_CHARTS map (compile-time mapping of page_id -> chart_id list)
+        page_charts_map = {}
+        for page in pages:
+            page_id = page["id"]
+            page_filters = page.get("filters", [])
+            if page_filters:
+                page_charts_map[page_id] = {
+                    "charts": [c["id"] for c in page.get("charts", []) if c.get("type") != "metric"],
+                    "metrics": [c["id"] for c in page.get("charts", []) if c.get("type") == "metric"],
+                    "filter_fields": [f["field"] for f in page_filters]
+                }
+        page_charts_json = json.dumps(page_charts_map)
+
         chart_functions = []
         for chart in all_charts:
             chart_id = chart["id"]
@@ -1987,14 +2181,14 @@ if __name__ == '__main__':
 
             if chart_type == "metric":
                 chart_functions.append(f'''
-    function render_{chart_id}(data) {{
+    window.render_{chart_id} = function(data) {{
       const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;
       document.getElementById('metric-{chart_id}').textContent = formatMetric(value, '{format_str}', '{suffix}');
     }}''')
             elif chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
                 chart_functions.append(f'''
-    function render_{chart_id}(data) {{
+    window.render_{chart_id} = function(data) {{
       const groupValues = [...new Set(data.map(d => d.grp))];
       const traces = [];
       groupValues.forEach((groupVal, idx) => {{
@@ -2020,7 +2214,7 @@ if __name__ == '__main__':
     }}''')
             elif chart_type == "bubble" and group:
                 chart_functions.append(f'''
-    function render_{chart_id}(data) {{
+    window.render_{chart_id} = function(data) {{
       const bubbleSizeVals = data.map(d => Math.abs(d.size));
       const maxSize = Math.max(...bubbleSizeVals);
       const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
@@ -2050,7 +2244,7 @@ if __name__ == '__main__':
     }}''')
             elif chart_type == "heatmap":
                 chart_functions.append(f'''
-    function render_{chart_id}(data) {{
+    window.render_{chart_id} = function(data) {{
       const heatmapX = [...new Set(data.map(d => d.x))];
       const heatmapY = [...new Set(data.map(d => d.heatmap_y))];
       const heatmapZ = heatmapY.map(yVal =>
@@ -2073,7 +2267,7 @@ if __name__ == '__main__':
             else:
                 # Standard single-trace charts - data arrives pre-aggregated with x/y columns
                 chart_functions.append(f'''
-    function render_{chart_id}(data) {{
+    window.render_{chart_id} = function(data) {{
       const xValues = data.map(d => d.x);
       const yValues = data.map(d => d.y);
       let trace;
@@ -2149,9 +2343,9 @@ if __name__ == '__main__':
         load_calls = []
         for chart in all_charts:
             if chart.get("type") == "metric":
-                load_calls.append(f"    loadMetric('{chart['id']}', render_{chart['id']})")
+                load_calls.append(f"    loadMetric('{chart['id']}', window['render_{chart['id']}'])")
             else:
-                load_calls.append(f"    loadChart('{chart['id']}', render_{chart['id']})")
+                load_calls.append(f"    loadChart('{chart['id']}', window['render_{chart['id']}'])")
         load_calls_str = ",\n".join(load_calls)
 
         page_show_function = '''
@@ -2181,12 +2375,13 @@ if __name__ == '__main__':
       return str + (suffix || '');
     }}
 
-    async function loadChart(chartId, renderFn) {{
+    async function loadChart(chartId, renderFn, extraParams) {{
       const container = document.getElementById('chart-' + chartId);
       if (!container) return;
       container.innerHTML = '<div class="chart-spinner"><div class="spinner"></div><span>Loading...</span></div>';
       try {{
-        const resp = await fetch('/api/chart/' + chartId);
+        const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
+        const resp = await fetch(url);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         container.innerHTML = '';
@@ -2197,18 +2392,117 @@ if __name__ == '__main__':
       }}
     }}
 
-    async function loadMetric(chartId, renderFn) {{
+    async function loadMetric(chartId, renderFn, extraParams) {{
       const el = document.getElementById('metric-' + chartId);
       if (!el) return;
       el.textContent = '…';
       try {{
-        const resp = await fetch('/api/chart/' + chartId);
+        const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
+        const resp = await fetch(url);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         renderFn(data);
       }} catch (err) {{
         if (el) el.textContent = 'Error';
         console.error('Metric ' + chartId + ' failed:', err);
+      }}
+    }}
+
+    const PAGE_CHARTS = {page_charts_json};
+
+    function toggleMs(btn, pageId, field) {{
+      const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+      const isOpen = panel.classList.contains('ms-open');
+      closeAllMs();
+      if (!isOpen) {{ panel.classList.add('ms-open'); btn.classList.add('ms-open'); }}
+    }}
+    function closeAllMs() {{
+      document.querySelectorAll('.ms-panel.ms-open').forEach(p => p.classList.remove('ms-open'));
+      document.querySelectorAll('.ms-btn.ms-open').forEach(b => b.classList.remove('ms-open'));
+    }}
+    document.addEventListener('click', function(e) {{
+      if (!e.target.closest('.ms-wrap')) closeAllMs();
+    }});
+    function updateMsLabel(pageId, field) {{
+      const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+      const countEl = document.getElementById('ms-count-' + pageId + '-' + field);
+      const textEl = document.querySelector('#ms-' + pageId + '-' + field + ' .ms-text');
+      if (!panel || !countEl || !textEl) return;
+      const checked = Array.from(panel.querySelectorAll('input[type="checkbox"]:checked'));
+      const n = checked.length;
+      if (n === 0) {{
+        textEl.textContent = 'All';
+        countEl.textContent = ''; countEl.classList.remove('visible');
+      }} else if (n === 1) {{
+        textEl.textContent = checked[0].value;
+        countEl.textContent = ''; countEl.classList.remove('visible');
+      }} else {{
+        textEl.textContent = checked[0].value;
+        countEl.textContent = '+' + (n - 1); countEl.classList.add('visible');
+      }}
+    }}
+    function collectFilterParams(pageId) {{
+      const pageInfo = PAGE_CHARTS[pageId];
+      if (!pageInfo) return '';
+      const params = new URLSearchParams();
+      for (const field of pageInfo.filter_fields) {{
+        const sel = document.getElementById('filter-' + pageId + '-' + field);
+        if (sel) {{
+          if (sel.value) params.append(field, sel.value);
+        }} else {{
+          const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+          if (panel) panel.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => params.append(field, cb.value));
+        }}
+      }}
+      return params.toString();
+    }}
+    function applyDashboardFilter(pageId) {{
+      const pageInfo = PAGE_CHARTS[pageId];
+      if (!pageInfo) return;
+      const params = collectFilterParams(pageId);
+      pageInfo.charts.forEach(chartId => {{
+        loadChart(chartId, window['render_' + chartId], params);
+      }});
+      pageInfo.metrics.forEach(chartId => {{
+        loadMetric(chartId, window['render_' + chartId], params);
+      }});
+    }}
+    function resetFilters(pageId) {{
+      const pageInfo = PAGE_CHARTS[pageId];
+      if (!pageInfo) return;
+      for (const field of pageInfo.filter_fields) {{
+        const sel = document.getElementById('filter-' + pageId + '-' + field);
+        if (sel) {{ sel.value = ''; }} else {{
+          const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+          if (panel) {{ panel.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false); updateMsLabel(pageId, field); }}
+        }}
+      }}
+      applyDashboardFilter(pageId);
+    }}
+    function loadFilterOptions(pageId) {{
+      const pageInfo = PAGE_CHARTS[pageId];
+      if (!pageInfo) return;
+      for (const field of pageInfo.filter_fields) {{
+        const isSel = !!document.getElementById('filter-' + pageId + '-' + field);
+        fetch('/api/filter/' + field)
+          .then(r => r.json())
+          .then(values => {{
+            if (isSel) {{
+              const sel = document.getElementById('filter-' + pageId + '-' + field);
+              if (!sel) return;
+              values.forEach(v => {{
+                const opt = document.createElement('option');
+                opt.value = v; opt.textContent = v; sel.appendChild(opt);
+              }});
+            }} else {{
+              const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+              if (!panel) return;
+              panel.innerHTML = values.map(v =>
+                `<label class="ms-option"><input type="checkbox" value="${{v}}" onchange="updateMsLabel('${{pageId}}','${{field}}');applyDashboardFilter('${{pageId}}')"> ${{v}}</label>`
+              ).join('');
+            }}
+          }})
+          .catch(err => console.warn('Could not load filter options for ' + field + ':', err));
       }}
     }}
 
@@ -2220,4 +2514,7 @@ if __name__ == '__main__':
     Promise.allSettled([
 {load_calls_str}
     ]);
+
+    // Initialize filter options
+    Object.keys(PAGE_CHARTS).forEach(pageId => loadFilterOptions(pageId));
   </script>'''

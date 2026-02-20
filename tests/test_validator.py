@@ -517,3 +517,151 @@ class TestHappyPath:
     def test_grouped_bar_with_group(self, v):
         spec = _min_csv(charts=[_min_chart(type="grouped_bar", group="segment")])
         v.validate(spec)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard-level (page) filters validation
+# ---------------------------------------------------------------------------
+
+def _pages_spec_with_filters(filters):
+    """Return a multi-page spec with the given filters on page 1."""
+    return {
+        "version": "0.1",
+        "data": {"type": "csv", "path": "data.csv"},
+        "pages": [
+            {
+                "id": "p1",
+                "title": "Page 1",
+                "charts": [_min_chart()],
+                "filters": filters,
+            }
+        ],
+    }
+
+
+class TestDashboardFiltersValidation:
+    def test_select_filter_valid(self, v):
+        v.validate(_pages_spec_with_filters([{"field": "country", "type": "select"}]))
+
+    def test_multiselect_filter_valid(self, v):
+        v.validate(_pages_spec_with_filters([{"field": "region", "type": "multiselect"}]))
+
+    def test_select_with_label_valid(self, v):
+        v.validate(_pages_spec_with_filters([{"field": "status", "type": "select", "label": "Status"}]))
+
+    def test_multiselect_with_static_values_valid(self, v):
+        v.validate(_pages_spec_with_filters([
+            {"field": "country", "type": "multiselect", "values": ["UK", "US", "DE"]}
+        ]))
+
+    def test_multiple_filters_on_one_page_valid(self, v):
+        v.validate(_pages_spec_with_filters([
+            {"field": "region", "type": "select"},
+            {"field": "country", "type": "multiselect"},
+        ]))
+
+    def test_empty_filters_list_valid(self, v):
+        v.validate(_pages_spec_with_filters([]))
+
+    def test_filters_not_list_raises(self, v):
+        with pytest.raises(ValidationError, match="filters"):
+            v.validate(_pages_spec_with_filters("not-a-list"))
+
+    def test_filter_not_dict_raises(self, v):
+        with pytest.raises(ValidationError, match="filter"):
+            v.validate(_pages_spec_with_filters(["not-a-dict"]))
+
+    def test_filter_missing_field_raises(self, v):
+        with pytest.raises(ValidationError, match="field"):
+            v.validate(_pages_spec_with_filters([{"type": "select"}]))
+
+    def test_filter_missing_type_raises(self, v):
+        with pytest.raises(ValidationError, match="type"):
+            v.validate(_pages_spec_with_filters([{"field": "country"}]))
+
+    def test_filter_unknown_type_raises(self, v):
+        with pytest.raises(ValidationError, match="type"):
+            v.validate(_pages_spec_with_filters([{"field": "country", "type": "date_range"}]))
+
+    def test_filter_values_not_list_raises(self, v):
+        with pytest.raises(ValidationError, match="values"):
+            v.validate(_pages_spec_with_filters([
+                {"field": "country", "type": "select", "values": "UK"}
+            ]))
+
+    @pytest.mark.parametrize("ftype", ["select", "multiselect"])
+    def test_all_supported_dashboard_filter_types(self, v, ftype):
+        v.validate(_pages_spec_with_filters([{"field": "col", "type": ftype}]))
+
+    def test_page_without_filters_key_valid(self, v):
+        """Pages are not required to have a filters key."""
+        spec = {
+            "version": "0.1",
+            "data": {"type": "csv", "path": "data.csv"},
+            "pages": [{"id": "p1", "title": "P1", "charts": [_min_chart()]}],
+        }
+        v.validate(spec)
+
+    def test_dashboard_filter_alongside_chart_filters(self, v):
+        """Page-level dashboard filters coexist with per-chart static filters."""
+        spec = {
+            "version": "0.1",
+            "data": {"type": "bigquery", "path": "dataset.table"},
+            "pages": [
+                {
+                    "id": "overview",
+                    "title": "Overview",
+                    "filters": [
+                        {"field": "country", "type": "multiselect"},
+                        {"field": "status", "type": "select"},
+                    ],
+                    "charts": [
+                        {
+                            "id": "c1",
+                            "type": "bar",
+                            "x": "category",
+                            "y": "revenue",
+                            "filters": [{"field": "year", "op": "eq", "value": 2024}],
+                        }
+                    ],
+                }
+            ],
+        }
+        v.validate(spec)
+
+
+# ---------------------------------------------------------------------------
+# Metric chart type validation
+# ---------------------------------------------------------------------------
+
+class TestMetricChartValidation:
+    def test_metric_without_x_valid(self, v):
+        """Metric charts do not require an x field."""
+        chart = {"id": "kpi1", "type": "metric", "y": "revenue", "agg": "sum"}
+        v.validate(_min_csv(charts=[chart]))
+
+    def test_metric_missing_y_raises(self, v):
+        chart = {"id": "kpi1", "type": "metric", "x": "date"}
+        with pytest.raises(ValidationError, match="missing required field"):
+            v.validate(_min_csv(charts=[chart]))
+
+    def test_metric_with_format_valid(self, v):
+        chart = {"id": "kpi1", "type": "metric", "y": "revenue", "agg": "sum", "format": ",.2f", "suffix": " $"}
+        v.validate(_min_csv(charts=[chart]))
+
+    def test_metric_in_pages_valid(self, v):
+        spec = {
+            "version": "0.1",
+            "data": {"type": "csv", "path": "data.csv"},
+            "pages": [
+                {
+                    "id": "overview",
+                    "title": "Overview",
+                    "charts": [
+                        {"id": "total_rev", "type": "metric", "y": "revenue", "agg": "sum"},
+                        _min_chart(id="bar1"),
+                    ],
+                }
+            ],
+        }
+        v.validate(spec)
