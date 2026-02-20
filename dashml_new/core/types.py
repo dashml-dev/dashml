@@ -128,6 +128,9 @@ class ChartSpec(TypedDict, total=False):
     sort: str                  # Optional: Field to sort by ("x" or "y") after aggregation
     sort_order: str            # Optional: "asc" or "desc" (default: "asc")
     limit: int                 # Optional: Max rows after aggregation
+    # Metric widget fields (type: "metric" only):
+    format: str  # Optional: Python/D3 format string e.g. ",.0f", ".1f", "$,.2f"
+    suffix: str  # Optional: text appended after value e.g. " mins", "%"
     # Normalizer-resolved fields:
     needs_aggregation: bool   # True if chart type in CHARTS_NEED_AGGREGATION
     uses_raw_data: bool       # True if chart type in CHARTS_USE_RAW_DATA

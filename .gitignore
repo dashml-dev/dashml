@@ -49,3 +49,6 @@ htmlcov/
 # DashML generated outputs
 dashml_new/output/
 
+# Demo/scratch files
+generated_streamlit_app.py
+

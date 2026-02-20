@@ -13,6 +13,7 @@ from .constants import (
     DEFAULT_SECONDARY_COLORS,
     TEMPORAL_FIELD_NAMES,
     DEFAULT_SORT_ORDER,
+    resolve_metric_format,
 )
 
 if TYPE_CHECKING:
@@ -132,7 +133,7 @@ class ObservablePlotTransformer(Transformer):
     def _build_chart_query(self, chart: Dict[str, Any], table_ref: str) -> str:
         """Build a per-chart SQL query that does server-side aggregation."""
         chart_type = chart["type"]
-        x = chart["x"]
+        x = chart.get("x", "")  # Not required for metric type
         y = chart["y"]
         agg = chart.get("agg", "sum")
         group = chart.get("group")
@@ -185,6 +186,8 @@ class ObservablePlotTransformer(Transformer):
             null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
             box_where = (box_where + " AND " + top_n + " AND " + null_filter) if box_where else (" WHERE " + top_n + " AND " + null_filter)
             return f"SELECT {x} AS x, {y} AS y FROM {table_ref}{box_where} ORDER BY RAND() LIMIT 50000"
+        elif chart_type == "metric":
+            return f"SELECT {sql_agg}({y}) AS y FROM {table_ref}{where}"
         else:
             return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
 
@@ -327,6 +330,26 @@ class ObservablePlotTransformer(Transformer):
             display: flex; align-items: center; justify-content: center;
             min-height: 300px; color: #e74c3c;
         }}
+        .metric-card {{
+            text-align: center;
+            padding: 24px 20px;
+            min-width: 160px;
+            display: inline-block;
+        }}
+        .metric-title {{
+            font-size: 13px;
+            color: {text_color};
+            opacity: 0.65;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }}
+        .metric-value {{
+            font-size: 2.6rem;
+            font-weight: 700;
+            color: {primary_color};
+            line-height: 1.1;
+        }}
     </style>
 </head>"""
 
@@ -401,6 +424,35 @@ class ObservablePlotTransformer(Transformer):
             }}
             return rows;
         }}
+
+        // Apply filter conditions to a dataset
+        function applyFilters(data, filters) {{
+            if (!filters || filters.length === 0) return data;
+            return data.filter(row => filters.every(f => {{
+                const val = row[f.field];
+                switch (f.op) {{
+                    case 'eq': return val === f.value;
+                    case 'ne': return val !== f.value;
+                    case 'gt': return val > f.value;
+                    case 'lt': return val < f.value;
+                    case 'gte': return val >= f.value;
+                    case 'lte': return val <= f.value;
+                    case 'in': return Array.isArray(f.value) && f.value.includes(val);
+                    case 'contains': return String(val).includes(f.value);
+                    default: return true;
+                }}
+            }}));
+        }}
+
+        // Format a metric scalar value
+        function formatMetric(value, format, suffix) {{
+            if (value === null || value === undefined || isNaN(value)) return 'N/A';
+            const n = parseFloat(value);
+            const m = format.match(/,?\.(\d+)f/);
+            const decimals = m ? parseInt(m[1]) : 0;
+            const str = n.toLocaleString('en-US', {{minimumFractionDigits: decimals, maximumFractionDigits: decimals}});
+            return str + (suffix || '');
+        }}
     </script>"""
 
         return f"""
@@ -415,7 +467,14 @@ class ObservablePlotTransformer(Transformer):
         for chart in charts:
             chart_id = chart["id"]
             title = chart.get("title", chart_id)
-            chart_containers.append(f"""
+            if chart.get("type") == "metric":
+                chart_containers.append(f"""
+    <div class="card metric-card">
+        <div class="metric-title">{title}</div>
+        <div id="chart-{chart_id}" class="metric-value">—</div>
+    </div>""")
+            else:
+                chart_containers.append(f"""
     <div class="card">
         <h2>{title}</h2>
         <div id="chart-{chart_id}"></div>
@@ -459,7 +518,13 @@ class ObservablePlotTransformer(Transformer):
             for chart in charts:
                 chart_id = chart["id"]
                 chart_title = chart.get("title", chart_id)
-                page_html.append(f"""        <div class="card">
+                if chart.get("type") == "metric":
+                    page_html.append(f"""        <div class="card metric-card">
+            <div class="metric-title">{chart_title}</div>
+            <div id="chart-{page_id}-{chart_id}" class="metric-value">—</div>
+        </div>""")
+                else:
+                    page_html.append(f"""        <div class="card">
             <h2>{chart_title}</h2>
             <div id="chart-{page_id}-{chart_id}"></div>
         </div>""")
@@ -504,7 +569,7 @@ class ObservablePlotTransformer(Transformer):
         """Generate Observable Plot rendering code for a single chart"""
         chart_id = chart["id"]
         chart_type = chart["type"]
-        x = chart["x"]
+        x = chart.get("x", "")  # Not required for metric type
         y = chart["y"]
         agg = chart.get("agg", "sum")
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
@@ -519,12 +584,30 @@ class ObservablePlotTransformer(Transformer):
 
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
         secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
+        format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
+        suffix = chart.get("suffix", "")          # metric: unit text
 
         # Determine container ID
         container_id = f"chart-{page_id}-{chart_id}" if page_id else f"chart-{chart_id}"
 
         # Safe variable name
         safe_var_name = chart_id.replace('-', '_')
+
+        # Metric type: render as KPI card with inline JS aggregation
+        if chart_type == "metric":
+            filters_js = json.dumps(filters)
+            agg_method_js = agg  # 'sum', 'mean', 'count'
+            return f"""            // Metric: {chart_id}
+            {{
+              const filters = {filters_js};
+              let d = applyFilters(dashmlData, filters);
+              const vals = d.map(r => parseFloat(r['{y}'])).filter(v => !isNaN(v));
+              const value = vals.length === 0 ? null :
+                '{agg_method_js}' === 'sum' ? vals.reduce((a, b) => a + b, 0) :
+                '{agg_method_js}' === 'mean' ? vals.reduce((a, b) => a + b, 0) / vals.length :
+                vals.length;
+              document.getElementById('{container_id}').textContent = formatMetric(value, '{format_str}', '{suffix}');
+            }}"""
 
         # Generate data code based on chart type requirements
         if chart_type in CHARTS_USE_RAW_DATA:
@@ -1266,11 +1349,11 @@ class ObservablePlotTransformer(Transformer):
 
         # If output is a directory (multi-file), run Flask
         if output_path_obj.is_dir():
-            return f"cd {output_path} && python app.py"
+            return f"cd {output_path} && python3 app.py"
 
         # Otherwise run simple HTTP server for single HTML file
         output_dir = output_path_obj.parent.resolve()
-        return f"cd {output_dir} && python -m http.server 8000"
+        return f"cd {output_dir} && python3 -m http.server 8000"
 
     def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -1380,8 +1463,8 @@ def get_chart_data(chart_id):
 
 if __name__ == '__main__':
     print("Starting Flask server...")
-    print(f"Dashboard available at: http://localhost:5000")
-    app.run(debug=True, port=5000)
+    print(f"Dashboard available at: http://localhost:5001")
+    app.run(debug=True, port=5001)
 '''
 
     def _generate_flask_app_bigquery(self, spec: "NormalizedSpec", data_spec: Dict[str, Any]) -> str:
@@ -1510,8 +1593,8 @@ if __name__ == '__main__':
     print(f"Project: {{PROJECT_ID}}")
     print(f"Dataset: {{DATASET}}")
     print(f"Table: {{TABLE_NAME}}")
-    print(f"Dashboard available at: http://localhost:5000")
-    app.run(debug=True, port=5000)
+    print(f"Dashboard available at: http://localhost:5001")
+    app.run(debug=True, port=5001)
 '''
 
     def _generate_sql_frontend(self, spec: "NormalizedSpec") -> str:
@@ -1548,6 +1631,16 @@ if __name__ == '__main__':
             })
             .catch(err => console.warn('Could not load world topojson:', err));
 
+        // Format a metric scalar value
+        function formatMetric(value, format, suffix) {
+            if (value === null || value === undefined || isNaN(value)) return 'N/A';
+            const n = parseFloat(value);
+            const m = format.match(/,?\.(\d+)f/);
+            const decimals = m ? parseInt(m[1]) : 0;
+            const str = n.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+            return str + (suffix || '');
+        }
+
         async function loadChart(containerId, chartId, renderFn) {
             const container = document.getElementById(containerId);
             if (!container) return;
@@ -1561,6 +1654,21 @@ if __name__ == '__main__':
             } catch (err) {
                 container.innerHTML = '<div class="chart-error">Error loading chart: ' + err.message + '</div>';
                 console.error('Chart ' + chartId + ' failed:', err);
+            }
+        }
+
+        async function loadMetric(containerId, chartId, renderFn) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            el.textContent = '…';
+            try {
+                const resp = await fetch('/api/chart/' + chartId);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                renderFn(data);
+            } catch (err) {
+                if (el) el.textContent = 'Error';
+                console.error('Metric ' + chartId + ' failed:', err);
             }
         }
     </script>"""
@@ -1592,14 +1700,21 @@ if __name__ == '__main__':
                 chart_id = chart["id"]
                 chart_title = chart.get("title", chart_id)
                 container_id = f"chart-{page_id}-{chart_id}"
-                page_html.append(f"""        <div class="card">
+
+                if chart.get("type") == "metric":
+                    page_html.append(f"""        <div class="card metric-card">
+            <div class="metric-title">{chart_title}</div>
+            <div id="{container_id}" class="metric-value">—</div>
+        </div>""")
+                    render_fn = self._generate_sql_chart_render_fn(chart, colors, container_id)
+                    load_calls.append(f"        loadMetric('{container_id}', '{chart_id}', {render_fn})")
+                else:
+                    page_html.append(f"""        <div class="card">
             <h2>{chart_title}</h2>
             <div id="{container_id}"></div>
         </div>""")
-
-                # Generate the render function for this chart
-                render_fn = self._generate_sql_chart_render_fn(chart, colors, container_id)
-                load_calls.append(f"        loadChart('{container_id}', '{chart_id}', {render_fn})")
+                    render_fn = self._generate_sql_chart_render_fn(chart, colors, container_id)
+                    load_calls.append(f"        loadChart('{container_id}', '{chart_id}', {render_fn})")
 
             page_html.append('    </div>')
             page_contents.append("\n".join(page_html))
@@ -1643,11 +1758,13 @@ if __name__ == '__main__':
         """Generate a JS function(data) for rendering a chart with pre-aggregated data"""
         chart_id = chart["id"]
         chart_type = chart["type"]
-        x = chart["x"]
+        x = chart.get("x", "")  # Not required for metric type
         y = chart["y"]
         group = chart.get("group")
         size_field = chart.get("size")
         bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
+        format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
+        suffix = chart.get("suffix", "")          # metric: unit text
 
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
         secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
@@ -1660,6 +1777,13 @@ if __name__ == '__main__':
         margin_bottom = 100 if chart_type in categorical_types else 40
         preprocess = ""
         margin_left = 60
+
+        if chart_type == "metric":
+            return f"""function(data) {{
+            const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;
+            const el = document.getElementById('{container_id}');
+            if (el) el.textContent = formatMetric(value, '{format_str}', '{suffix}');
+        }}"""
 
         if chart_type == "pie":
             color_scale_json = str(secondary_colors).replace("'", '"')
