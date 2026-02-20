@@ -67,12 +67,6 @@ class StreamlitTransformer(Transformer):
             code_parts.append(self._generate_data_loading(spec["data"], spec.get("db_config"), derived_fields))
             code_parts.append("")
 
-            # Fragment functions — one per chart, SQL/BQ mode only
-            if is_sql_mode and spec.get("db_config"):
-                for page in spec["pages"]:
-                    for chart in page["charts"]:
-                        code_parts.append(self._generate_chart_fragment(chart, colors))
-
             # Main function
             code_parts.append("def main():")
 
@@ -118,9 +112,9 @@ import pandas as pd
 import altair as alt"""
 
         if data_type == "sql":
-            imports += "\nfrom sqlalchemy import create_engine"
+            imports += "\nimport concurrent.futures\nfrom sqlalchemy import create_engine"
         elif data_type == "bigquery":
-            imports += "\nfrom google.cloud import bigquery"
+            imports += "\nimport concurrent.futures\nfrom google.cloud import bigquery"
 
         return imports
 
@@ -441,7 +435,7 @@ def load_data():
         # Metric type: render as KPI card using st.metric(), bypass Altair chart path
         if chart_type == "metric":
             if sql_mode:
-                code_parts.append(f'    with st.spinner("Loading {title}..."):\n        _metric_data = run_query("{chart_id}", build_filter_clause("{chart_id}", _dashboard_filters))')
+                code_parts.append(f'    _metric_data = _chart_data["{chart_id}"]')
                 code_parts.append(f'    _metric_val = float(_metric_data.iloc[0]["y"]) if len(_metric_data) > 0 else None')
             else:
                 # CSV mode: filter then aggregate
@@ -479,9 +473,9 @@ def load_data():
         code_parts.append(f'    st.subheader("{title}")')
 
         if sql_mode:
-            # SQL mode: data comes from per-chart queries (generic x/y/grp/size aliases).
+            # SQL mode: data comes from pre-fetched _chart_data dict (all queries ran in parallel).
             # Rename aliases back to original column names so Altair encodings work.
-            code_parts.append(f'    with st.spinner("Loading {title}..."):\n        chart_data = run_query("{chart_id}", build_filter_clause("{chart_id}", _dashboard_filters))')
+            code_parts.append(f'    chart_data = _chart_data["{chart_id}"]')
             # Build rename dict from generic SQL aliases → original column names
             if chart_type in ("stacked_bar", "grouped_bar"):
                 rename_dict = {"x": x, "grp": group, "y": y}
@@ -815,19 +809,6 @@ def load_data():
 
         return "\n".join(code_parts)
 
-    def _generate_chart_fragment(self, chart: Dict[str, Any], colors: Dict[str, Any]) -> str:
-        """Generate a module-level @st.fragment function for one chart (SQL/BQ mode only)."""
-        chart_id = chart["id"]
-        chart_body = self._generate_chart(chart, colors, sql_mode=True)
-        lines = [
-            "@st.fragment",
-            f"def _frag_{chart_id}(_dashboard_filters, column_types):",
-        ]
-        for line in chart_body.split("\n"):
-            lines.append(line)  # already at 4-space indent = valid function body
-        lines.append("")
-        return "\n".join(lines)
-
     def _generate_page_filters(self, page: dict, sql_mode: bool) -> str:
         """Generate filter widgets + _dashboard_filters dict + optional _filtered_df.
 
@@ -924,6 +905,18 @@ def load_data():
             use_filtered_df = bool(page_filters) and not sql_mode
 
             page_charts = page.get("charts", [])
+
+            # SQL/BQ mode: prefetch all page charts in parallel before rendering
+            if sql_mode:
+                chart_ids = [c["id"] for c in page_charts]
+                code_parts.append(f'        # Fetch all charts for this page in parallel')
+                code_parts.append(f'        _page_chart_ids = {repr(chart_ids)}')
+                code_parts.append(f'        with st.spinner("Loading charts..."):')
+                code_parts.append(f'            with concurrent.futures.ThreadPoolExecutor() as _exe:')
+                code_parts.append(f'                _chart_futures = {{cid: _exe.submit(run_query, cid, build_filter_clause(cid, _dashboard_filters)) for cid in _page_chart_ids}}')
+                code_parts.append(f'            _chart_data = {{cid: f.result() for cid, f in _chart_futures.items()}}')
+                code_parts.append("")
+
             # Metrics are grouped into a single compact columns row;
             # regular charts each get their own full-width row.
             idx = 0
@@ -939,21 +932,15 @@ def load_data():
                     code_parts.append(f'        {", ".join(col_names)} = st.columns({n})')
                     for k, mc in enumerate(metric_run):
                         code_parts.append(f'        with {col_names[k]}:')
-                        if sql_mode:
-                            code_parts.append(f'            _frag_{mc["id"]}(_dashboard_filters, column_types)')
-                        else:
-                            mc_code = self._generate_chart(mc, colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
-                            code_parts.append("\n".join(f"        {line}" for line in mc_code.split("\n")))
+                        mc_code = self._generate_chart(mc, colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
+                        code_parts.append("\n".join(f"        {line}" for line in mc_code.split("\n")))
                     if idx < len(page_charts):
                         code_parts.append('        st.divider()')
                     code_parts.append("")
                 else:
                     # Regular chart — full width
-                    if sql_mode:
-                        code_parts.append(f'        _frag_{page_charts[idx]["id"]}(_dashboard_filters, column_types)')
-                    else:
-                        chart_code = self._generate_chart(page_charts[idx], colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
-                        code_parts.append("\n".join(f"    {line}" for line in chart_code.split("\n")))
+                    chart_code = self._generate_chart(page_charts[idx], colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
+                    code_parts.append("\n".join(f"    {line}" for line in chart_code.split("\n")))
                     idx += 1
                     if idx < len(page_charts):
                         code_parts.append('        st.divider()')
