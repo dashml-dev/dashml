@@ -22,7 +22,7 @@ class DashMLValidator:
     REQUIRED_TOP_LEVEL = ["version", "data"]
     # TODO: [Immutability] Use frozenset for constants to prevent accidental modification
     # SUPPORTED_CHART_TYPES = frozenset(["bar", "line", ...])
-    SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "bubble", "heatmap", "box", "pie", "area", "histogram", "stacked_bar", "grouped_bar", "geo"]
+    SUPPORTED_CHART_TYPES = ["bar", "line", "scatter", "bubble", "heatmap", "box", "pie", "area", "histogram", "stacked_bar", "grouped_bar", "geo", "metric"]
     SUPPORTED_DATA_TYPES = ["csv", "sql", "bigquery"]  # CSV, SQL, and BigQuery datasources
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
     SUPPORTED_COLUMN_TYPES = ["date", "number", "string"]  # For x_type/y_type hints
@@ -181,8 +181,11 @@ class DashMLValidator:
         if not isinstance(chart, dict):
             raise ValidationError(f"Chart at index {index} must be an object, got {type(chart)}")
 
-        # Required fields
-        required = ["id", "type", "x", "y"]
+        # Required fields (metric only needs id, type, y, agg — no x-axis)
+        if chart.get("type") == "metric":
+            required = ["id", "type", "y", "agg"]
+        else:
+            required = ["id", "type", "x", "y"]
         for field in required:
             if field not in chart:
                 raise ValidationError(f"Chart '{chart.get('id', index)}' missing required field: '{field}'")

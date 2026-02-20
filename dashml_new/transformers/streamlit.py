@@ -10,6 +10,7 @@ from .constants import (
     AGG_METHODS,
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
+    resolve_metric_format,
 )
 
 if TYPE_CHECKING:
@@ -148,7 +149,7 @@ import altair as alt"""
     def _build_chart_query(self, chart: dict, table_ref: str) -> str:
         """Build a per-chart SQL query using ORIGINAL column names (not aliased)."""
         chart_type = chart["type"]
-        x = chart["x"]
+        x = chart.get("x", "")  # Not required for metric type
         y = chart["y"]
         agg = chart.get("agg", "sum")
         group = chart.get("group")
@@ -200,6 +201,8 @@ import altair as alt"""
             null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
             box_where = (box_where + " AND " + top_n + " AND " + null_filter) if box_where else (" WHERE " + top_n + " AND " + null_filter)
             return f"SELECT {x}, {y} FROM {table_ref}{box_where} ORDER BY RAND() LIMIT 50000"
+        elif chart_type == "metric":
+            return f"SELECT {sql_agg}({y}) AS y FROM {table_ref}{where}"
         else:
             return f"SELECT {x}, {sql_agg}({y}) AS {y} FROM {table_ref}{where} GROUP BY {x}{order}{limit_clause}"
 
@@ -430,7 +433,7 @@ def load_data():
         chart_id = chart["id"]
         chart_type = chart["type"]
         title = chart["title"]
-        x = chart["x"]
+        x = chart.get("x", "")  # Not required for metric type
         y = chart["y"]
         agg = chart.get("agg", "sum")
         group = chart.get("group")
@@ -441,17 +444,57 @@ def load_data():
         sort_field = chart.get("sort")
         sort_order = chart.get("sort_order", "desc" if sort_field == "y" else "asc")
         limit = chart.get("limit")
+        format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
+        suffix = chart.get("suffix", "")          # metric: unit text after value
 
         # Extract colors using constants
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
         secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
 
         # Humanize column names for axis labels
-        x_label = self._humanize_column_name(x)
+        x_label = self._humanize_column_name(x) if x else ""
         y_label = self._humanize_column_name(y)
 
         code_parts = []
         code_parts.append(f'    # Chart: {chart_id}')
+
+        # Metric type: render as KPI card using st.metric(), bypass Altair chart path
+        if chart_type == "metric":
+            if sql_mode:
+                code_parts.append(f'    _metric_data = run_query("{chart_id}")')
+                code_parts.append(f'    _metric_val = float(_metric_data.iloc[0]["y"]) if len(_metric_data) > 0 else None')
+            else:
+                # CSV mode: filter then aggregate
+                if filters:
+                    code_parts.append(f'    _metric_df = df.copy()')
+                    for f in filters:
+                        field, op, value = f["field"], f["op"], f["value"]
+                        op_map = {"eq": "==", "ne": "!=", "gt": ">", "lt": "<", "gte": ">=", "lte": "<="}
+                        if op in op_map:
+                            code_parts.append(f'    _metric_df = _metric_df[_metric_df["{field}"] {op_map[op]} {repr(value)}]')
+                        elif op == "in":
+                            code_parts.append(f'    _metric_df = _metric_df[_metric_df["{field}"].isin({repr(value)})]')
+                        elif op == "contains":
+                            code_parts.append(f'    _metric_df = _metric_df[_metric_df["{field}"].str.contains({repr(value)}, na=False)]')
+                else:
+                    code_parts.append(f'    _metric_df = df')
+                agg_method = AGG_METHODS.get(agg, "sum")
+                code_parts.append(f'    _metric_df["{y}"] = pd.to_numeric(_metric_df["{y}"], errors="coerce")')
+                if agg == "count":
+                    code_parts.append(f'    _metric_val = float(len(_metric_df))')
+                else:
+                    code_parts.append(f'    _metric_val = float(_metric_df["{y}"].{agg_method}())')
+            # Format and display as styled HTML card (matches Observable/Plotly look)
+            code_parts.append(f'    if _metric_val is not None and not (isinstance(_metric_val, float) and __import__("math").isnan(_metric_val)):')
+            code_parts.append(f'        _metric_formatted = f"{{_metric_val:{format_str}}}"' + (f' + "{suffix}"' if suffix else ''))
+            code_parts.append(f'    else:')
+            code_parts.append(f'        _metric_formatted = "N/A"')
+            code_parts.append(f'    st.markdown(f\'\'\'<div style="background:rgba(255,255,255,0.05);border-radius:8px;padding:16px 20px;text-align:center;">')
+            code_parts.append(f'        <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;opacity:0.6;margin-bottom:8px;">{title}</div>')
+            code_parts.append(f'        <div style="font-size:2rem;font-weight:700;color:{primary_color};">{{_metric_formatted}}</div>')
+            code_parts.append(f'    </div>\'\'\', unsafe_allow_html=True)')
+            return "\n".join(code_parts)
+
         code_parts.append(f'    st.subheader("{title}")')
 
         if sql_mode:
@@ -797,28 +840,36 @@ def load_data():
                 code_parts.append("")
 
             page_charts = page.get("charts", [])
-            # Layout charts in rows of 2 columns
-            for j in range(0, len(page_charts), 2):
-                if j + 1 < len(page_charts):
-                    # Two charts side by side
-                    code_parts.append(f'        col1, col2 = st.columns(2)')
-                    for col_idx, chart in enumerate([page_charts[j], page_charts[j + 1]]):
-                        col_var = f"col{col_idx + 1}"
-                        code_parts.append(f'        with {col_var}:')
-                        chart_code = self._generate_chart(chart, colors, sql_mode=sql_mode)
-                        indented_chart = "\n".join(f"        {line}" for line in chart_code.split("\n"))
-                        code_parts.append(indented_chart)
+            # Metrics are grouped into a single compact columns row;
+            # regular charts each get their own full-width row.
+            idx = 0
+            while idx < len(page_charts):
+                if page_charts[idx].get("type") == "metric":
+                    # Collect the run of consecutive metrics
+                    metric_run = []
+                    while idx < len(page_charts) and page_charts[idx].get("type") == "metric":
+                        metric_run.append(page_charts[idx])
+                        idx += 1
+                    n = len(metric_run)
+                    col_names = [f"_mc{k}" for k in range(n)]
+                    code_parts.append(f'        {", ".join(col_names)} = st.columns({n})')
+                    for k, mc in enumerate(metric_run):
+                        code_parts.append(f'        with {col_names[k]}:')
+                        mc_code = self._generate_chart(mc, colors, sql_mode=sql_mode)
+                        code_parts.append("\n".join(f"        {line}" for line in mc_code.split("\n")))
+                    if idx < len(page_charts):
+                        code_parts.append('        st.divider()')
+                    code_parts.append("")
                 else:
-                    # Single remaining chart at full width
-                    chart_code = self._generate_chart(page_charts[j], colors, sql_mode=sql_mode)
-                    indented_chart = "\n".join(f"    {line}" for line in chart_code.split("\n"))
-                    code_parts.append(indented_chart)
-
-                if j + 2 < len(page_charts):
-                    code_parts.append('        st.divider()')
-                code_parts.append("")
+                    # Regular chart — full width
+                    chart_code = self._generate_chart(page_charts[idx], colors, sql_mode=sql_mode)
+                    code_parts.append("\n".join(f"    {line}" for line in chart_code.split("\n")))
+                    idx += 1
+                    if idx < len(page_charts):
+                        code_parts.append('        st.divider()')
+                    code_parts.append("")
 
         return "\n".join(code_parts)
 
     def get_run_command(self, output_path: str) -> str:
-        return f"streamlit run {output_path}"
+        return f"python3 -m streamlit run {output_path}"

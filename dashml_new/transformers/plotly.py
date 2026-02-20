@@ -12,6 +12,7 @@ from .constants import (
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
     DEFAULT_SORT_ORDER,
+    resolve_metric_format,
 )
 
 if TYPE_CHECKING:
@@ -178,7 +179,7 @@ class PlotlyTransformer(Transformer):
         Returns a SQL string with the minimal data needed for each chart type.
         """
         chart_type = chart["type"]
-        x = chart["x"]
+        x = chart.get("x", "")  # Not required for metric type
         y = chart["y"]
         agg = chart.get("agg", "sum")
         group = chart.get("group")
@@ -238,6 +239,9 @@ class PlotlyTransformer(Transformer):
             null_filter = f"{x} IS NOT NULL AND {y} IS NOT NULL"
             box_where = (box_where + " AND " + top_n + " AND " + null_filter) if box_where else (" WHERE " + top_n + " AND " + null_filter)
             return f"SELECT {x} AS x, {y} AS y FROM {table_ref}{box_where} ORDER BY RAND() LIMIT 50000"
+
+        elif chart_type == "metric":
+            return f"SELECT {sql_agg}({y}) AS y FROM {table_ref}{where}"
 
         else:
             # Default: treat like bar
@@ -384,8 +388,8 @@ if __name__ == '__main__':
     print(f"Project: {{PROJECT_ID}}")
     print(f"Dataset: {{DATASET}}")
     print(f"Table: {{TABLE_NAME}}")
-    print(f"Dashboard available at: http://localhost:5000")
-    app.run(debug=True, port=5000)
+    print(f"Dashboard available at: http://localhost:5002")
+    app.run(debug=True, port=5002)
 '''
 
     def _generate_html_header(self, title: str, colors: Dict[str, str]) -> str:
@@ -510,6 +514,26 @@ if __name__ == '__main__':
     .chart-error {{
       display: flex; align-items: center; justify-content: center;
       min-height: 300px; color: #e74c3c;
+    }}
+    .metric-card {{
+      text-align: center;
+      padding: 24px 20px;
+      min-width: 160px;
+      display: inline-block;
+    }}
+    .metric-title {{
+      font-size: 13px;
+      color: {text};
+      opacity: 0.65;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }}
+    .metric-value {{
+      font-size: 2.6rem;
+      font-weight: 700;
+      color: {primary};
+      line-height: 1.1;
     }}
   </style>
 </head>'''
@@ -1136,9 +1160,16 @@ if __name__ == '__main__':
 
             for chart in page.get("charts", []):
                 chart_id = chart["id"]
-                container_parts.append(f'      <div class="card">')
-                container_parts.append(f'        <div id="chart-{chart_id}"></div>')
-                container_parts.append(f'      </div>')
+                if chart.get("type") == "metric":
+                    chart_title = chart.get("title", chart_id)
+                    container_parts.append(f'      <div class="card metric-card">')
+                    container_parts.append(f'        <div class="metric-title">{chart_title}</div>')
+                    container_parts.append(f'        <div class="metric-value" id="metric-{chart_id}">—</div>')
+                    container_parts.append(f'      </div>')
+                else:
+                    container_parts.append(f'      <div class="card">')
+                    container_parts.append(f'        <div id="chart-{chart_id}"></div>')
+                    container_parts.append(f'      </div>')
 
             container_parts.append('    </div>')
             containers.append("\n".join(container_parts))
@@ -1160,7 +1191,7 @@ if __name__ == '__main__':
         for chart in all_charts:
             chart_id = chart["id"]
             chart_type = chart["type"]
-            x = chart["x"]
+            x = chart.get("x", "")  # Not required for metric type
             y = chart["y"]
             agg = chart.get("agg", "sum")
             group = chart.get("group")
@@ -1173,6 +1204,8 @@ if __name__ == '__main__':
             sort_order = chart.get("sort_order", "asc")  # Optional: "asc" or "desc"
             limit = chart.get("limit")  # Optional: max rows after aggregation
             size_field = chart.get("size")  # Optional: size field for bubble charts
+            format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
+            suffix = chart.get("suffix", "")          # metric: unit text
 
             # Build options object for aggregation
             options_obj = {
@@ -1187,8 +1220,18 @@ if __name__ == '__main__':
                 options_obj["sizeField"] = size_field
             options_js = json.dumps(options_obj)
 
+            # Metric: render as KPI card (no Plotly chart)
+            if chart_type == "metric":
+                filters_js = json.dumps(filters)
+                chart_functions.append(f'''
+    function render_{chart_id}(data) {{
+      const filters = {filters_js};
+      const value = computeMetric(data, '{y}', '{agg}', filters);
+      document.getElementById('metric-{chart_id}').textContent = formatMetric(value, '{format_str}', '{suffix}');
+    }}''')
+
             # Check if this is stacked/grouped bar
-            if chart_type in ["stacked_bar", "grouped_bar"]:
+            elif chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
@@ -1644,6 +1687,32 @@ if __name__ == '__main__':
       return result;
     }}
 
+    // Format a metric scalar value using a format string and optional suffix
+    function formatMetric(value, format, suffix) {{
+      if (value === null || value === undefined || isNaN(value)) return 'N/A';
+      const n = parseFloat(value);
+      let str;
+      if (format === ',.0f') str = n.toLocaleString('en-US', {{maximumFractionDigits: 0}});
+      else if (format === ',.1f') str = n.toLocaleString('en-US', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
+      else if (format === ',.2f') str = n.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+      else if (format === '.0f') str = n.toFixed(0);
+      else if (format === '.1f') str = n.toFixed(1);
+      else if (format === '.2f') str = n.toFixed(2);
+      else str = n.toLocaleString('en-US');
+      return str + (suffix || '');
+    }}
+
+    // Aggregate a column to a scalar metric value
+    function computeMetric(data, yField, agg, filters) {{
+      let d = applyFilters(data, filters);
+      const vals = d.map(r => parseFloat(r[yField])).filter(v => !isNaN(v));
+      if (!vals.length) return null;
+      if (agg === 'sum') return vals.reduce((a, b) => a + b, 0);
+      if (agg === 'mean') return vals.reduce((a, b) => a + b, 0) / vals.length;
+      if (agg === 'count') return vals.length;
+      return null;
+    }}
+
 {''.join(chart_functions)}
 
 {page_show_function}
@@ -1680,11 +1749,11 @@ if __name__ == '__main__':
 
         # If output is a directory (multi-file), run Flask
         if output_path_obj.is_dir():
-            return f"cd {output_path} && python app.py"
+            return f"cd {output_path} && python3 app.py"
 
         # Otherwise run simple HTTP server for single HTML file
         output_dir = output_path_obj.parent.resolve()
-        return f"cd {output_dir} && python -m http.server 8000"
+        return f"cd {output_dir} && python3 -m http.server 8000"
 
     def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -1814,8 +1883,8 @@ def get_chart_data(chart_id):
 
 if __name__ == '__main__':
     print("Starting Flask server...")
-    print(f"Dashboard available at: http://localhost:5000")
-    app.run(debug=True, port=5000)
+    print(f"Dashboard available at: http://localhost:5002")
+    app.run(debug=True, port=5002)
 '''
 
     def _generate_sql_frontend(self, spec: "NormalizedSpec", title: str, colors: Dict[str, str]) -> str:
@@ -1913,13 +1982,21 @@ if __name__ == '__main__':
             chart_id = chart["id"]
             chart_type = chart["type"]
             title = chart.get("title", chart_id)
-            x = chart["x"]
+            x = chart.get("x", "")  # Not required for metric type
             y = chart["y"]
             group = chart.get("group")
             size_field = chart.get("size")
             bins = chart.get("bins", 20)
+            format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
+            suffix = chart.get("suffix", "")          # metric: unit text
 
-            if chart_type in ["stacked_bar", "grouped_bar"]:
+            if chart_type == "metric":
+                chart_functions.append(f'''
+    function render_{chart_id}(data) {{
+      const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;
+      document.getElementById('metric-{chart_id}').textContent = formatMetric(value, '{format_str}', '{suffix}');
+    }}''')
+            elif chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
                 chart_functions.append(f'''
     function render_{chart_id}(data) {{
@@ -2073,10 +2150,13 @@ if __name__ == '__main__':
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
 
-        # Generate load calls
+        # Generate load calls (metrics use loadMetric; charts use loadChart)
         load_calls = []
         for chart in all_charts:
-            load_calls.append(f"    loadChart('{chart['id']}', render_{chart['id']})")
+            if chart.get("type") == "metric":
+                load_calls.append(f"    loadMetric('{chart['id']}', render_{chart['id']})")
+            else:
+                load_calls.append(f"    loadChart('{chart['id']}', render_{chart['id']})")
         load_calls_str = ",\n".join(load_calls)
 
         page_show_function = '''
@@ -2096,6 +2176,21 @@ if __name__ == '__main__':
         return f'''  <script>
     const theme = {theme_json};
 
+    // Format a metric scalar value
+    function formatMetric(value, format, suffix) {{
+      if (value === null || value === undefined || isNaN(value)) return 'N/A';
+      const n = parseFloat(value);
+      let str;
+      if (format === ',.0f') str = n.toLocaleString('en-US', {{maximumFractionDigits: 0}});
+      else if (format === ',.1f') str = n.toLocaleString('en-US', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
+      else if (format === ',.2f') str = n.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+      else if (format === '.0f') str = n.toFixed(0);
+      else if (format === '.1f') str = n.toFixed(1);
+      else if (format === '.2f') str = n.toFixed(2);
+      else str = n.toLocaleString('en-US');
+      return str + (suffix || '');
+    }}
+
     async function loadChart(chartId, renderFn) {{
       const container = document.getElementById('chart-' + chartId);
       if (!container) return;
@@ -2109,6 +2204,21 @@ if __name__ == '__main__':
       }} catch (err) {{
         container.innerHTML = '<div class="chart-error">Error loading chart: ' + err.message + '</div>';
         console.error('Chart ' + chartId + ' failed:', err);
+      }}
+    }}
+
+    async function loadMetric(chartId, renderFn) {{
+      const el = document.getElementById('metric-' + chartId);
+      if (!el) return;
+      el.textContent = '…';
+      try {{
+        const resp = await fetch('/api/chart/' + chartId);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        renderFn(data);
+      }} catch (err) {{
+        if (el) el.textContent = 'Error';
+        console.error('Metric ' + chartId + ' failed:', err);
       }}
     }}
 
