@@ -118,6 +118,9 @@ class DashMLNormalizer:
                 self._normalize_chart(chart)
                 for chart in page.get("charts", [])
             ]
+            # Default filters to empty list (mirrors chart filter defaulting)
+            if "filters" not in normalized_page:
+                normalized_page["filters"] = []
             normalized_pages.append(normalized_page)
 
         return normalized_pages  # type: ignore

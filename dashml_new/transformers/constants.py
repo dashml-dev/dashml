@@ -81,6 +81,9 @@ def resolve_metric_format(fmt: str) -> str:
     return fmt  # pass-through for raw format specs
 
 
+# Dashboard-level filter widget types
+SUPPORTED_DASHBOARD_FILTER_TYPES = frozenset({"select", "multiselect"})
+
 # Column types for x_type/y_type hints
 COLUMN_TYPES = frozenset({"date", "number", "string"})
 

@@ -136,6 +136,29 @@ class ChartSpec(TypedDict, total=False):
     uses_raw_data: bool       # True if chart type in CHARTS_USE_RAW_DATA
 
 
+class DashboardFilterSpec(TypedDict, total=False):
+    """
+    Dashboard-level runtime filter widget spec.
+
+    Renders as a selectbox (select) or multiselect above all charts on a page.
+    Filter values are applied to every chart on that page at request time.
+
+    Example:
+        filters:
+          - field: "scheduled_charter"
+            type: "select"
+            label: "Flight Type"
+          - field: "origin_destination_country"
+            type: "multiselect"
+            label: "Country"
+            values: ["UK", "US", "DE"]   # optional; omit → fetch DISTINCT at runtime
+    """
+    field: str           # Column name to filter on (required)
+    type: str            # Widget type: "select" | "multiselect" (required)
+    label: str           # Display label (optional; defaults to humanized field name)
+    values: List[Any]    # Static option list (optional; omit → DISTINCT query at runtime)
+
+
 class PageSpec(TypedDict, total=False):
     """
     Page specification for multi-page dashboards.
@@ -146,6 +169,7 @@ class PageSpec(TypedDict, total=False):
     title: str
     description: str
     charts: List[ChartSpec]
+    filters: List[DashboardFilterSpec]   # Optional: dashboard-level runtime filter widgets
 
 
 class DashMLSpec(TypedDict, total=False):
