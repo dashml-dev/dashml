@@ -134,6 +134,8 @@ class ChartSpec(TypedDict, total=False):
     # Normalizer-resolved fields:
     needs_aggregation: bool   # True if chart type in CHARTS_NEED_AGGREGATION
     uses_raw_data: bool       # True if chart type in CHARTS_USE_RAW_DATA
+    sql: str                  # SQL template with {table_ref} and {filter_clause} placeholders (sql/bigquery only)
+    static_conditions: List[str]  # Compile-time SQL conditions from chart filters (sql/bigquery only)
 
 
 class DashboardFilterSpec(TypedDict, total=False):

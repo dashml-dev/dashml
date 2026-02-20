@@ -142,116 +142,6 @@ class PlotlyTransformer(Transformer):
 
         return json.dumps(multi_file_output)
 
-    def _sql_value(self, value) -> str:
-        """Convert a Python value to a SQL literal"""
-        if isinstance(value, str):
-            return "'" + value.replace("'", "''") + "'"
-        if isinstance(value, (list, tuple)):
-            return "(" + ", ".join(self._sql_value(v) for v in value) + ")"
-        if value is None:
-            return "NULL"
-        return str(value)
-
-    def _build_where_clause(self, filters: list) -> str:
-        """Convert DashML filter specs to a SQL WHERE clause"""
-        if not filters:
-            return ""
-        op_map = {
-            "eq": "=", "ne": "!=", "gt": ">", "lt": "<",
-            "gte": ">=", "lte": "<=",
-        }
-        parts = []
-        for f in filters:
-            field = f["field"]
-            op = f["op"]
-            val = f["value"]
-            if op in op_map:
-                parts.append(f"{field} {op_map[op]} {self._sql_value(val)}")
-            elif op == "in":
-                parts.append(f"{field} IN {self._sql_value(val)}")
-            elif op == "contains":
-                parts.append(f"{field} LIKE '%{val}%'")
-        return " WHERE " + " AND ".join(parts) if parts else ""
-
-    def _build_static_conditions_list(self, filters: list) -> list:
-        """Convert chart static filters to SQL condition strings (for CHART_STATIC_CONDITIONS)."""
-        if not filters:
-            return []
-        op_map = {"eq": "=", "ne": "!=", "gt": ">", "lt": "<", "gte": ">=", "lte": "<="}
-        parts = []
-        for f in filters:
-            field, op, val = f["field"], f["op"], f["value"]
-            if op in op_map:
-                parts.append(f"{field} {op_map[op]} {self._sql_value(val)}")
-            elif op == "in":
-                parts.append(f"{field} IN {self._sql_value(val)}")
-            elif op == "contains":
-                parts.append(f"{field} LIKE '%{val}%'")
-        return parts
-
-    def _build_chart_query(self, chart: Dict[str, Any], table_ref: str) -> str:
-        """Build a per-chart SQL query that does server-side aggregation.
-
-        Returns a SQL string with the minimal data needed for each chart type.
-        """
-        chart_type = chart["type"]
-        x = chart.get("x", "")  # Not required for metric type
-        y = chart["y"]
-        agg = chart.get("agg", "sum")
-        group = chart.get("group")
-        size_field = chart.get("size")
-        filters = chart.get("filters", [])
-        sort_field = chart.get("sort")
-        sort_order = chart.get("sort_order", "asc")
-        limit = chart.get("limit")
-
-        agg_map = {"sum": "SUM", "mean": "AVG", "count": "COUNT"}
-        sql_agg = agg_map.get(agg, "SUM")
-
-        # Determine ORDER BY
-        order = ""
-        if sort_field == "y":
-            order = f" ORDER BY y {'ASC' if sort_order == 'asc' else 'DESC'}"
-        elif sort_field == "x":
-            order = f" ORDER BY x {'ASC' if sort_order == 'asc' else 'DESC'}"
-
-        limit_clause = f" LIMIT {limit}" if limit else ""
-
-        # Default ORDER BY x for charts that need sequential ordering
-        if not order and chart_type in ("line", "area"):
-            order = " ORDER BY x ASC"
-
-        if chart_type in ("bar", "line", "area", "pie", "geo"):
-            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref} WHERE {{filter_clause}} GROUP BY {x}{order}{limit_clause}"
-
-        elif chart_type in ("stacked_bar", "grouped_bar"):
-            return f"SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {table_ref} WHERE {{filter_clause}} GROUP BY {x}, {group}{order}{limit_clause}"
-
-        elif chart_type == "heatmap":
-            heatmap_y = group if group else y
-            return f"SELECT {x} AS x, {heatmap_y} AS heatmap_y, {sql_agg}({y}) AS y FROM {table_ref} WHERE {{filter_clause}} AND {x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20) AND {heatmap_y} IN (SELECT {heatmap_y} FROM {table_ref} GROUP BY {heatmap_y} ORDER BY COUNT(*) DESC LIMIT 20) GROUP BY {x}, {heatmap_y}{order}{limit_clause}"
-
-        elif chart_type == "scatter":
-            return f"SELECT {x} AS x, {y} AS y FROM {table_ref} WHERE {{filter_clause}} AND {x} IS NOT NULL AND {y} IS NOT NULL ORDER BY RAND() LIMIT 5000"
-
-        elif chart_type == "bubble":
-            size_ref = size_field or y
-            return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {table_ref} WHERE {{filter_clause}} GROUP BY {group}{order}{limit_clause}"
-
-        elif chart_type == "histogram":
-            return f"SELECT {x} AS x FROM {table_ref} WHERE {{filter_clause}} AND {x} IS NOT NULL ORDER BY RAND() LIMIT 50000"
-
-        elif chart_type == "box":
-            top_n = f"{x} IN (SELECT {x} FROM {table_ref} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
-            return f"SELECT {x} AS x, {y} AS y FROM {table_ref} WHERE {{filter_clause}} AND {top_n} AND {x} IS NOT NULL AND {y} IS NOT NULL ORDER BY RAND() LIMIT 50000"
-
-        elif chart_type == "metric":
-            return f"SELECT {sql_agg}({y}) AS y FROM {table_ref} WHERE {{filter_clause}}"
-
-        else:
-            # Default: treat like bar
-            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {table_ref} WHERE {{filter_clause}} GROUP BY {x}{order}{limit_clause}"
-
     def _generate_flask_app_bigquery(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to BigQuery"""
         db_config = spec["db_config"]
@@ -269,20 +159,14 @@ class PlotlyTransformer(Transformer):
         for page in spec["pages"]:
             all_charts.extend(page.get("charts", []))
 
-        chart_queries_dict = {}
-        for chart in all_charts:
-            chart_queries_dict[chart["id"]] = self._build_chart_query(chart, table_ref)
-
+        # Build per-chart queries from normalizer-generated SQL templates
         chart_queries_code = "CHART_QUERIES = {\n"
-        for cid, query in chart_queries_dict.items():
-            chart_queries_code += f'    "{cid}": """{query}""",\n'
-        chart_queries_code += "}"
-
-        # Build CHART_STATIC_CONDITIONS dict
         chart_static_code = "CHART_STATIC_CONDITIONS = {\n"
         for chart in all_charts:
-            conds = self._build_static_conditions_list(chart.get("filters", []))
-            chart_static_code += f'    "{chart["id"]}": {repr(conds)},\n'
+            query = chart["sql"].replace("{table_ref}", table_ref)
+            chart_queries_code += f'    "{chart["id"]}": """{query}""",\n'
+            chart_static_code += f'    "{chart["id"]}": {repr(chart.get("static_conditions", []))},\n'
+        chart_queries_code += "}"
         chart_static_code += "}"
 
         # Build ALLOWED_FILTER_FIELDS from page-level filters
@@ -2034,20 +1918,14 @@ if __name__ == '__main__':
         for page in spec["pages"]:
             all_charts.extend(page.get("charts", []))
 
-        chart_queries_dict = {}
-        for chart in all_charts:
-            chart_queries_dict[chart["id"]] = self._build_chart_query(chart, table_ref)
-
+        # Build per-chart queries from normalizer-generated SQL templates
         chart_queries_code = "CHART_QUERIES = {\n"
-        for cid, query in chart_queries_dict.items():
-            chart_queries_code += f'    "{cid}": """{query}""",\n'
-        chart_queries_code += "}"
-
-        # Build CHART_STATIC_CONDITIONS dict
         chart_static_code = "CHART_STATIC_CONDITIONS = {\n"
         for chart in all_charts:
-            conds = self._build_static_conditions_list(chart.get("filters", []))
-            chart_static_code += f'    "{chart["id"]}": {repr(conds)},\n'
+            query = chart["sql"].replace("{table_ref}", table_ref)
+            chart_queries_code += f'    "{chart["id"]}": """{query}""",\n'
+            chart_static_code += f'    "{chart["id"]}": {repr(chart.get("static_conditions", []))},\n'
+        chart_queries_code += "}"
         chart_static_code += "}"
 
         # Build ALLOWED_FILTER_FIELDS from page-level filters
