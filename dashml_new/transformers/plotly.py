@@ -1691,14 +1691,9 @@ if __name__ == '__main__':
     function formatMetric(value, format, suffix) {{
       if (value === null || value === undefined || isNaN(value)) return 'N/A';
       const n = parseFloat(value);
-      let str;
-      if (format === ',.0f') str = n.toLocaleString('en-US', {{maximumFractionDigits: 0}});
-      else if (format === ',.1f') str = n.toLocaleString('en-US', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
-      else if (format === ',.2f') str = n.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
-      else if (format === '.0f') str = n.toFixed(0);
-      else if (format === '.1f') str = n.toFixed(1);
-      else if (format === '.2f') str = n.toFixed(2);
-      else str = n.toLocaleString('en-US');
+      const m = format.match(/,?\.(\d+)f/);
+      const decimals = m ? parseInt(m[1]) : 0;
+      const str = n.toLocaleString('en-US', {{minimumFractionDigits: decimals, maximumFractionDigits: decimals}});
       return str + (suffix || '');
     }}
 
@@ -2180,14 +2175,9 @@ if __name__ == '__main__':
     function formatMetric(value, format, suffix) {{
       if (value === null || value === undefined || isNaN(value)) return 'N/A';
       const n = parseFloat(value);
-      let str;
-      if (format === ',.0f') str = n.toLocaleString('en-US', {{maximumFractionDigits: 0}});
-      else if (format === ',.1f') str = n.toLocaleString('en-US', {{minimumFractionDigits: 1, maximumFractionDigits: 1}});
-      else if (format === ',.2f') str = n.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
-      else if (format === '.0f') str = n.toFixed(0);
-      else if (format === '.1f') str = n.toFixed(1);
-      else if (format === '.2f') str = n.toFixed(2);
-      else str = n.toLocaleString('en-US');
+      const m = format.match(/,?\.(\d+)f/);
+      const decimals = m ? parseInt(m[1]) : 0;
+      const str = n.toLocaleString('en-US', {{minimumFractionDigits: decimals, maximumFractionDigits: decimals}});
       return str + (suffix || '');
     }}
 
