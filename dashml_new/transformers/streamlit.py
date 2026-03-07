@@ -13,6 +13,7 @@ from .constants import (
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
     resolve_metric_format,
+    country_mapping_as_python,
 )
 
 if TYPE_CHECKING:
@@ -68,6 +69,16 @@ class StreamlitTransformer(Transformer):
             code_parts.append(self._generate_data_loading(spec["data"], spec.get("db_config"), derived_fields))
             code_parts.append("")
 
+            # Geo normalization helpers (emitted once if any chart is type "geo")
+            has_geo = any(
+                c.get("type") == "geo"
+                for p in spec["pages"]
+                for c in p.get("charts", [])
+            )
+            if has_geo:
+                code_parts.append(self._generate_geo_helpers())
+                code_parts.append("")
+
             # Main function
             code_parts.append("def main():")
 
@@ -118,6 +129,31 @@ import altair as alt"""
             imports += "\nfrom google.cloud import bigquery"
 
         return imports
+
+    def _generate_geo_helpers(self) -> str:
+        """Emit Python mapping dicts + detect/normalize functions for geo charts."""
+        mapping = country_mapping_as_python()
+        return f'''{mapping}
+
+def detect_geo_encoding(values):
+    """Auto-detect whether values are ISO-2, ISO-3, or country names."""
+    sample = [str(v).strip() for v in values.dropna().head(20)]
+    if all(len(v) == 2 and v.isalpha() and v.isupper() for v in sample if v):
+        return "iso2"
+    if all(len(v) == 3 and v.isalpha() and v.isupper() for v in sample if v):
+        return "iso3"
+    return "name"
+
+def normalize_country(value, encoding):
+    """Normalize a country value to its TopoJSON properties.name equivalent."""
+    v = str(value).strip()
+    if not v:
+        return v
+    if encoding == "iso2":
+        return _ISO2_TO_TOPO.get(v.upper(), v)
+    if encoding == "iso3":
+        return _ISO3_TO_TOPO.get(v.upper(), v)
+    return _ALIAS_TO_TOPO.get(v.lower(), v)'''
 
     def _humanize_column_name(self, name: str) -> str:
         """Convert snake_case column names to Title Case labels"""
@@ -414,6 +450,7 @@ def load_data():
         group = chart.get("group")
         x_type = chart.get("x_type")
         y_type = chart.get("y_type")
+        geo_encoding = chart.get("geo_encoding")
         bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
         filters = chart.get("filters", [])
         sort_field = chart.get("sort")
@@ -660,7 +697,7 @@ def load_data():
         x=alt.X("{x}:N", sort=None, title="{x_label}"),
         y=alt.Y("{heatmap_y}:N", title="{heatmap_y_label}"),
         color=alt.Color("{value_field}:Q",
-            scale=alt.Scale(scheme="blues"),
+            scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"),
             legend=alt.Legend(title="{value_label}")
         ),
         tooltip=["{x}", "{heatmap_y}", "{value_field}"]
@@ -678,7 +715,7 @@ def load_data():
         x=alt.X("{x}:N", sort=None, title="{x_label}"),
         y=alt.Y("{heatmap_y}:N", title="{heatmap_y_label}"),
         color=alt.Color("{value_field}:Q",
-            scale=alt.Scale(scheme="blues"),
+            scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"),
             legend=alt.Legend(title="{value_label}")
         ),
         tooltip=["{x}", "{heatmap_y}", "{value_field}"]
@@ -762,11 +799,16 @@ def load_data():
 
         elif chart_type == "geo":
             # Choropleth map using Altair with world topojson
+            if geo_encoding:
+                geo_enc_line = f'    geo_enc = "{geo_encoding}"'
+            else:
+                geo_enc_line = f'    geo_enc = detect_geo_encoding(geo_data["{x}"])'
             code_parts.append(f'''    # Geo chart: choropleth map colored by {y}
-    # Normalize country names: strip whitespace and convert to title case to match topojson
+    # Normalize country names to match topojson properties.name
     geo_data = chart_data.copy()
-    geo_data["{x}"] = geo_data["{x}"].fillna("").str.strip().str.title()
-    # Re-aggregate after normalization (merges any entries that differ only by case)
+{geo_enc_line}
+    geo_data["{x}"] = geo_data["{x}"].fillna("").apply(lambda v: normalize_country(v, geo_enc))
+    # Re-aggregate after normalization (merges entries that map to same country)
     geo_data = geo_data[geo_data["{x}"] != ""].groupby("{x}")["{y}"].sum().reset_index()
 
     # Load world countries topojson (has country names in properties.name)
@@ -789,7 +831,7 @@ def load_data():
         strokeWidth=0.5
     ).encode(
         color=alt.Color("{y}:Q",
-            scale=alt.Scale(scheme="blues"),
+            scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"),
             legend=alt.Legend(title="{y_label}")
         ),
         tooltip=["properties.name:N", "{y}:Q"]

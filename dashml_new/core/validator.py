@@ -31,6 +31,7 @@ class DashMLValidator:
     SUPPORTED_SORT_ORDERS = ["asc", "desc"]
     SUPPORTED_SORT_FIELDS = ["x", "y"]  # Can sort by x or y field after aggregation
     SUPPORTED_DASHBOARD_FILTER_TYPES = ["select", "multiselect"]  # Dashboard-level filter widget types
+    SUPPORTED_GEO_ENCODINGS = ["iso2", "iso3", "name"]  # Country encoding for geo charts
     _IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')  # Valid derived field name pattern
 
     def validate(self, spec: Dict[str, Any]) -> None:
@@ -235,6 +236,13 @@ class DashMLValidator:
             raise ValidationError(
                 f"Chart '{chart['id']}' has unsupported y_type: '{chart['y_type']}'. "
                 f"Supported: {', '.join(self.SUPPORTED_COLUMN_TYPES)}"
+            )
+
+        # geo_encoding validation (optional field)
+        if "geo_encoding" in chart and chart["geo_encoding"] not in self.SUPPORTED_GEO_ENCODINGS:
+            raise ValidationError(
+                f"Chart '{chart['id']}' has unsupported geo_encoding: '{chart['geo_encoding']}'. "
+                f"Supported: {', '.join(self.SUPPORTED_GEO_ENCODINGS)}"
             )
 
         # filters validation (optional field)

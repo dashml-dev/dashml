@@ -15,6 +15,8 @@ from .constants import (
     DEFAULT_SECONDARY_COLORS,
     DEFAULT_SORT_ORDER,
     resolve_metric_format,
+    resolve_plotly_colorscale,
+    country_mapping_as_js,
 )
 
 if TYPE_CHECKING:
@@ -653,6 +655,10 @@ if __name__ == '__main__':
         """Generate JavaScript code for data loading and rendering"""
         data_path = data_spec["path"]
 
+        # Resolve sequential colorscale at code-gen time
+        colors = dict(colors)
+        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
+
         # Pass theme colors to JS for Plotly layout
         theme_json = json.dumps(colors)
 
@@ -662,6 +668,12 @@ if __name__ == '__main__':
         js_parts.append("    // Chart definitions")
         js_parts.append(f"    const charts = {self._charts_to_json(charts)};")
         js_parts.append("")
+
+        # Geo normalization helpers (if any chart is geo)
+        if any(c.get("type") == "geo" for c in charts):
+            js_parts.append(self._generate_geo_js_helpers(target="plotly"))
+            js_parts.append("")
+
         js_parts.append(self._generate_csv_parser())
         js_parts.append(self._generate_aggregator())
         js_parts.append("")
@@ -692,6 +704,26 @@ if __name__ == '__main__':
     def _charts_to_json(self, charts: list) -> str:
         import json
         return json.dumps(charts, indent=6)
+
+    def _generate_geo_js_helpers(self, target: str = "plotly") -> str:
+        """Emit JS mapping tables + detectGeoEncoding + normalize function."""
+        mapping_js = country_mapping_as_js(target=target)
+        suffix = "Plotly" if target == "plotly" else "Topo"
+        return f'''    // Geo country normalization
+    {mapping_js.replace(chr(10), chr(10) + "    ")}
+    function detectGeoEncoding(values) {{
+      const sample = values.filter(v => v != null && v !== '').slice(0, 20);
+      if (sample.every(v => /^[A-Z]{{2}}$/.test(String(v)))) return 'iso2';
+      if (sample.every(v => /^[A-Z]{{3}}$/.test(String(v)))) return 'iso3';
+      return 'name';
+    }}
+    function normalizeCountryFor{suffix}(value, encoding) {{
+      const v = String(value).trim();
+      if (!v) return v;
+      if (encoding === 'iso2') return iso2To{suffix}[v.toUpperCase()] || v;
+      if (encoding === 'iso3') return iso3To{suffix}[v.toUpperCase()] || v;
+      return aliasTo{suffix}[v.toLowerCase()] || v;
+    }}'''
 
     def _generate_csv_parser(self) -> str:
         return '''    function parseCSV(csvText) {
@@ -1143,7 +1175,7 @@ if __name__ == '__main__':
               return found ? found.y : 0;
             }})
           );
-          trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+          trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
           break;
         case 'pie':
           trace = {{ labels: xValues, values: yValues, type: 'pie', marker: {{ colors: theme.secondary }} }};
@@ -1168,14 +1200,27 @@ if __name__ == '__main__':
           }});
           break;
         case 'geo':
-          trace = {{
-            type: 'choropleth',
-            locations: xValues,
-            z: yValues,
-            locationmode: 'country names',
-            colorscale: 'Blues',
-            colorbar: {{ title: chart.y }}
-          }};
+          const geoEnc = chart.geo_encoding || detectGeoEncoding(xValues);
+          if (geoEnc === 'iso3') {{
+            trace = {{
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: chart.y }}
+            }};
+          }} else {{
+            const normalizedX = xValues.map(v => normalizeCountryForPlotly(v, geoEnc));
+            trace = {{
+              type: 'choropleth',
+              locations: normalizedX,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: chart.y }}
+            }};
+          }}
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -1329,6 +1374,8 @@ if __name__ == '__main__':
     def _generate_javascript_pages(self, data_spec: Dict[str, Any], pages: list, colors: Dict[str, str], derived_fields: list = None) -> str:
         """Generate JavaScript for multi-page dashboard"""
         data_path = data_spec["path"]
+        colors = dict(colors)
+        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)
 
         # Collect all charts
@@ -1348,6 +1395,7 @@ if __name__ == '__main__':
             title = chart.get("title", chart_id)
             x_type = chart.get("x_type")  # Optional: "date", "number", "string"
             y_type = chart.get("y_type")  # Optional: "number", "string"
+            geo_encoding = chart.get("geo_encoding")  # Optional: "iso2", "iso3", "name"
             bins = chart.get("bins", 20)  # Number of bins for histogram
             filters = chart.get("filters", [])  # Optional: filter conditions
             sort_field = chart.get("sort")  # Optional: "x" or "y"
@@ -1466,7 +1514,7 @@ if __name__ == '__main__':
         }})
       );
 
-      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
 
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
@@ -1534,14 +1582,27 @@ if __name__ == '__main__':
           }});
           break;
         case 'geo':
-          trace = {{
-            type: 'choropleth',
-            locations: xValues,
-            z: yValues,
-            locationmode: 'country names',
-            colorscale: 'Blues',
-            colorbar: {{ title: '{y}' }}
-          }};
+          const geoEnc_{chart_id.replace('-', '_')} = '{geo_encoding}' !== 'None' ? '{geo_encoding}' : detectGeoEncoding(xValues);
+          if (geoEnc_{chart_id.replace('-', '_')} === 'iso3') {{
+            trace = {{
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: '{y}' }}
+            }};
+          }} else {{
+            const normalizedX_{chart_id.replace('-', '_')} = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_{chart_id.replace('-', '_')}));
+            trace = {{
+              type: 'choropleth',
+              locations: normalizedX_{chart_id.replace('-', '_')},
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: '{y}' }}
+            }};
+          }}
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -1601,10 +1662,15 @@ if __name__ == '__main__':
 {chr(10).join(render_pages)}
     }}'''
 
+        # Geo normalization helpers (if any chart is geo)
+        geo_js_block = ""
+        if any(c.get("type") == "geo" for c in all_charts):
+            geo_js_block = "\n    " + self._generate_geo_js_helpers(target="plotly").replace("\n", "\n    ") + "\n"
+
         # Use the same full-featured aggregation functions as single-page mode
         return f'''  <script>
     const theme = {theme_json};
-
+{geo_js_block}
     // Apply filters to data
     function applyFilters(data, filters) {{
       if (!filters || filters.length === 0) return data;
@@ -2102,6 +2168,8 @@ if __name__ == '__main__':
 
     def _generate_javascript_sql(self, charts: list, colors: Dict[str, str]) -> str:
         """Generate JavaScript that fetches from Flask API instead of CSV"""
+        colors = dict(colors)
+        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)
 
         js_parts = []
@@ -2112,6 +2180,12 @@ if __name__ == '__main__':
         js_parts.append("    // Column types from INFORMATION_SCHEMA (auto-detected)")
         js_parts.append("    let columnTypes = {};")
         js_parts.append("")
+
+        # Geo normalization helpers (if any chart is geo)
+        if any(c.get("type") == "geo" for c in charts):
+            js_parts.append(self._generate_geo_js_helpers(target="plotly"))
+            js_parts.append("")
+
         js_parts.append(self._generate_aggregator_with_schema())
         js_parts.append("")
         js_parts.append(self._generate_renderer(multi_page=False))
@@ -2161,6 +2235,8 @@ if __name__ == '__main__':
 
     def _generate_javascript_pages_sql(self, pages: list, colors: Dict[str, str]) -> str:
         """Generate JavaScript for multi-page dashboard with per-chart async loading"""
+        colors = dict(colors)
+        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)
 
         all_charts = []
@@ -2267,7 +2343,7 @@ if __name__ == '__main__':
           return found ? found.y : 0;
         }})
       );
-      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
         xaxis: {{ title: '{x}', color: theme.text }},
@@ -2280,6 +2356,7 @@ if __name__ == '__main__':
     }}''')
             else:
                 # Standard single-trace charts - data arrives pre-aggregated with x/y columns
+                geo_enc_val = chart.get("geo_encoding")
                 chart_functions.append(f'''
     window.render_{chart_id} = function(data) {{
       const xValues = data.map(d => d.x);
@@ -2314,14 +2391,27 @@ if __name__ == '__main__':
           }});
           break;
         case 'geo':
-          trace = {{
-            type: 'choropleth',
-            locations: xValues,
-            z: yValues,
-            locationmode: 'country names',
-            colorscale: 'Blues',
-            colorbar: {{ title: '{y}' }}
-          }};
+          const geoEnc = '{geo_enc_val}' !== 'None' ? '{geo_enc_val}' : detectGeoEncoding(xValues);
+          if (geoEnc === 'iso3') {{
+            trace = {{
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: '{y}' }}
+            }};
+          }} else {{
+            const normalizedX = xValues.map(v => normalizeCountryForPlotly(v, geoEnc));
+            trace = {{
+              type: 'choropleth',
+              locations: normalizedX,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: '{y}' }}
+            }};
+          }}
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -2376,9 +2466,14 @@ if __name__ == '__main__':
       }
     }'''
 
+        # Geo normalization helpers (if any chart is geo)
+        geo_js_block_sql = ""
+        if any(c.get("type") == "geo" for c in all_charts):
+            geo_js_block_sql = "\n    " + self._generate_geo_js_helpers(target="plotly").replace("\n", "\n    ") + "\n"
+
         return f'''  <script>
     const theme = {theme_json};
-
+{geo_js_block_sql}
     // Format a metric scalar value
     function formatMetric(value, format, suffix) {{
       if (value === null || value === undefined || isNaN(value)) return 'N/A';

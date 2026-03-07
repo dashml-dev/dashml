@@ -6,6 +6,7 @@ colors:
   primary: "#bd93f9"
   text: "#f8f8f2"
   buttons: "#ff79c6"
+  sequential: "purples"
   secondary:
     - "#50fa7b"  # Green
     - "#ffb86c"  # Orange

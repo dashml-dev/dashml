@@ -149,6 +149,7 @@ class ChartSpec(TypedDict, total=False):
     # Metric widget fields (type: "metric" only):
     format: str  # Optional: Python/D3 format string e.g. ",.0f", ".1f", "$,.2f"
     suffix: str  # Optional: text appended after value e.g. " mins", "%"
+    geo_encoding: str  # Optional: "iso2", "iso3", or "name" — auto-detected if omitted
     # Normalizer-resolved fields:
     needs_aggregation: bool   # True if chart type in CHARTS_NEED_AGGREGATION
     uses_raw_data: bool       # True if chart type in CHARTS_USE_RAW_DATA
@@ -221,6 +222,7 @@ class ResolvedStyle(TypedDict, total=False):
     primary: str
     text: str
     buttons: str
+    sequential: str
     secondary: List[str]
 
 

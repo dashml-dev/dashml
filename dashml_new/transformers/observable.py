@@ -16,6 +16,7 @@ from .constants import (
     TEMPORAL_FIELD_NAMES,
     DEFAULT_SORT_ORDER,
     resolve_metric_format,
+    country_mapping_as_js,
 )
 
 if TYPE_CHECKING:
@@ -463,6 +464,16 @@ class ObservablePlotTransformer(Transformer):
 {chr(10).join(tabs)}
     </div>"""
 
+        # Geo normalization helpers (if any chart is geo)
+        geo_helpers_js = ""
+        has_geo = any(
+            c.get("type") == "geo"
+            for p in pages
+            for c in p.get("charts", [])
+        )
+        if has_geo:
+            geo_helpers_js = "\n        " + self._generate_geo_js_helpers_inline()
+
         script = f"""
     <script>
         function showPage(pageId, buttonElement) {{
@@ -480,7 +491,7 @@ class ObservablePlotTransformer(Transformer):
             document.getElementById('page-' + pageId).classList.add('active');
             buttonElement.classList.add('active');
         }}
-
+{geo_helpers_js}
         function renderAllCharts() {{
 {chr(10).join(render_functions)}
         }}
@@ -580,7 +591,8 @@ class ObservablePlotTransformer(Transformer):
             return self._generate_d3_pie_chart(safe_var_name, x, y, data_code, container_id, colors)
 
         # Generate Observable Plot mark based on chart type
-        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field)
+        sequential_scheme = colors.get("sequential", "blues")
+        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field, sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"))
 
         # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
         # TODO: [Magic Values] Extract temporal field names to module-level constant
@@ -1009,7 +1021,7 @@ class ObservablePlotTransformer(Transformer):
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None) -> str:
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None) -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -1121,7 +1133,7 @@ class ObservablePlotTransformer(Transformer):
                 ],
                 color: {{
                     type: "linear",
-                    scheme: "blues",
+                    scheme: "{sequential}",
                     legend: true,
                     label: "{y}"
                 }}"""
@@ -1206,51 +1218,25 @@ class ObservablePlotTransformer(Transformer):
 
         elif chart_type == "geo":
             # Choropleth map using Observable Plot with world topojson
-            return f"""marks: [
-                    // Geo chart with country name normalization
-                    Plot.geo(window.worldTopojson, {{
+            geo_enc_js = f'"{geo_encoding}"' if geo_encoding else "null"
+            return f"""marks: (() => {{
+                    const enc = {geo_enc_js} || detectGeoEncoding(data_{data_var}.map(d => d.{x}));
+                    const geoLookup = new Map(data_{data_var}.map(d => [normalizeCountryToTopo(d.{x}, enc).toLowerCase(), d.{y}]));
+                    return [Plot.geo(window.worldTopojson, {{
                         fill: d => {{
-                            // Country name normalization map
-                            const countryNameMap = {{
-                                "USA": "United States of America",
-                                "US": "United States of America",
-                                "United States": "United States of America",
-                                "UK": "United Kingdom",
-                                "Britain": "United Kingdom",
-                                "Great Britain": "United Kingdom",
-                                "Russia": "Russian Federation",
-                                "South Korea": "Korea, Republic of",
-                                "Korea": "Korea, Republic of",
-                                "North Korea": "Korea, Democratic People's Republic of",
-                                "Iran": "Iran, Islamic Republic of",
-                                "Syria": "Syrian Arab Republic",
-                                "Venezuela": "Venezuela, Bolivarian Republic of",
-                                "Bolivia": "Bolivia, Plurinational State of",
-                                "Tanzania": "Tanzania, United Republic of",
-                                "Vietnam": "Viet Nam",
-                                "Laos": "Lao People's Democratic Republic",
-                                "Czech Republic": "Czechia",
-                                "Moldova": "Moldova, Republic of",
-                                "Taiwan": "Taiwan, Province of China"
-                            }};
                             const topoName = d.properties ? d.properties.name : null;
                             if (!topoName) return null;
-                            const countryData = data_{data_var}.find(row => {{
-                                if (!row.{x}) return false;
-                                const normalizedName = countryNameMap[row.{x}] || row.{x};
-                                return normalizedName.toLowerCase() === topoName.toLowerCase();
-                            }});
-                            return countryData ? countryData.{y} : null;
+                            return geoLookup.get(topoName.toLowerCase()) ?? null;
                         }},
                         stroke: "#ccc",
                         strokeWidth: 0.5,
                         tip: true
-                    }})
-                ],
+                    }})];
+                }})(),
                 projection: "equal-earth",
                 color: {{
                     type: "linear",
-                    scheme: "blues",
+                    scheme: "{sequential}",
                     unknown: "#f0f0f0",
                     legend: true,
                     label: "{y}"
@@ -1277,6 +1263,25 @@ class ObservablePlotTransformer(Transformer):
         # Otherwise run simple HTTP server for single HTML file
         output_dir = output_path_obj.parent.resolve()
         return f"cd {output_dir} && {sys.executable} -m http.server 8000"
+
+    def _generate_geo_js_helpers_inline(self) -> str:
+        """Emit JS mapping tables + detectGeoEncoding + normalizeCountryToTopo for inline script blocks."""
+        mapping_js = country_mapping_as_js(target="topojson")
+        return f"""// Geo country normalization
+        {mapping_js.replace(chr(10), chr(10) + "        ")}
+        function detectGeoEncoding(values) {{
+            const sample = values.filter(v => v != null && v !== '').slice(0, 20);
+            if (sample.every(v => /^[A-Z]{{2}}$/.test(String(v)))) return 'iso2';
+            if (sample.every(v => /^[A-Z]{{3}}$/.test(String(v)))) return 'iso3';
+            return 'name';
+        }}
+        function normalizeCountryToTopo(value, encoding) {{
+            const v = String(value).trim();
+            if (!v) return v;
+            if (encoding === 'iso2') return iso2ToTopo[v.toUpperCase()] || v;
+            if (encoding === 'iso3') return iso3ToTopo[v.toUpperCase()] || v;
+            return aliasToTopo[v.toLowerCase()] || v;
+        }}"""
 
     def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -1942,6 +1947,16 @@ if __name__ == '__main__':
         render_fn_assignments_str = "\n".join(render_fn_assignments)
         load_calls_str = ",\n".join(load_calls)
 
+        # Geo normalization helpers (if any chart is geo)
+        geo_helpers_sql_js = ""
+        has_geo = any(
+            c.get("type") == "geo"
+            for p in pages
+            for c in p.get("charts", [])
+        )
+        if has_geo:
+            geo_helpers_sql_js = "\n        " + self._generate_geo_js_helpers_inline()
+
         script = f"""
     <script>
         function showPage(pageId, buttonElement) {{
@@ -1954,7 +1969,7 @@ if __name__ == '__main__':
             document.getElementById('page-' + pageId).classList.add('active');
             buttonElement.classList.add('active');
         }}
-
+{geo_helpers_sql_js}
         const PAGE_CHARTS = {page_charts_json};
 
         function toggleMs(btn, pageId, field) {{
@@ -2168,7 +2183,11 @@ if __name__ == '__main__':
             sphere_color = "#1a1a2e" if self._is_dark_theme(bg_color) else "#f8f8f8"
             unknown_color = "#2a2a3e" if self._is_dark_theme(bg_color) else "#e0e0e0"
             border_color = "#555570" if self._is_dark_theme(bg_color) else "#ccc"
+            geo_enc = chart.get("geo_encoding")
+            geo_enc_js = f'"{geo_enc}"' if geo_enc else "null"
             return f"""function(data) {{
+            const enc = {geo_enc_js} || detectGeoEncoding(data.map(d => d.x));
+            const geoLookup = new Map(data.map(d => [normalizeCountryToTopo(d.x, enc).toLowerCase(), d.y]));
             const plot = Plot.plot({{
                 width: 928,
                 marks: [
@@ -2176,27 +2195,9 @@ if __name__ == '__main__':
                     Plot.graticule({{stroke: "{border_color}40", strokeWidth: 0.5}}),
                     Plot.geo(window.worldTopojson, {{
                         fill: d => {{
-                            const countryNameMap = {{
-                                "USA": "United States of America",
-                                "US": "United States of America",
-                                "United States": "United States of America",
-                                "UK": "United Kingdom",
-                                "UNITED KINGDOM": "United Kingdom",
-                                "Russia": "Russian Federation",
-                                "South Korea": "Korea, Republic of",
-                                "Iran": "Iran, Islamic Republic of",
-                                "Czech Republic": "Czechia",
-                                "SPAIN(CANARY IS)": "Spain",
-                                "SPAIN (CANARY IS)": "Spain"
-                            }};
                             const topoName = d.properties ? d.properties.name : null;
                             if (!topoName) return null;
-                            const countryData = data.find(row => {{
-                                if (!row.x) return false;
-                                const normalizedName = countryNameMap[row.x] || row.x;
-                                return normalizedName.toLowerCase() === topoName.toLowerCase();
-                            }});
-                            return countryData ? countryData.y : null;
+                            return geoLookup.get(topoName.toLowerCase()) ?? null;
                         }},
                         stroke: "{border_color}",
                         strokeWidth: 0.5,
@@ -2206,7 +2207,7 @@ if __name__ == '__main__':
                 projection: "equal-earth",
                 color: {{
                     type: "linear",
-                    scheme: "YlGnBu",
+                    scheme: "{colors.get("sequential", "blues")}",
                     unknown: "{unknown_color}",
                     legend: true,
                     label: "{y}"
@@ -2382,7 +2383,7 @@ if __name__ == '__main__':
                 y: {{ label: "{heatmap_y_label}" }},
                 color: {{
                     type: "linear",
-                    scheme: "blues",
+                    scheme: "{colors.get("sequential", "blues")}",
                     legend: true,
                     label: "{y}"
                 }}"""

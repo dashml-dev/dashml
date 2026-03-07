@@ -32,6 +32,30 @@ def load_data():
     except Exception as e:
         return None, None
 
+_ISO2_TO_TOPO = {'AF': 'Afghanistan', 'AL': 'Albania', 'DZ': 'Algeria', 'AO': 'Angola', 'AR': 'Argentina', 'AM': 'Armenia', 'AU': 'Australia', 'AT': 'Austria', 'AZ': 'Azerbaijan', 'BS': 'Bahamas', 'BD': 'Bangladesh', 'BY': 'Belarus', 'BE': 'Belgium', 'BZ': 'Belize', 'BJ': 'Benin', 'BT': 'Bhutan', 'BO': 'Bolivia', 'BA': 'Bosnia and Herz.', 'BW': 'Botswana', 'BR': 'Brazil', 'BN': 'Brunei', 'BG': 'Bulgaria', 'BF': 'Burkina Faso', 'BI': 'Burundi', 'KH': 'Cambodia', 'CM': 'Cameroon', 'CA': 'Canada', 'CF': 'Central African Rep.', 'TD': 'Chad', 'CL': 'Chile', 'CN': 'China', 'CO': 'Colombia', 'CG': 'Congo', 'CR': 'Costa Rica', 'CI': "Côte d'Ivoire", 'HR': 'Croatia', 'CU': 'Cuba', 'CY': 'Cyprus', 'CZ': 'Czechia', 'CD': 'Dem. Rep. Congo', 'DK': 'Denmark', 'DJ': 'Djibouti', 'DO': 'Dominican Rep.', 'EC': 'Ecuador', 'EG': 'Egypt', 'SV': 'El Salvador', 'GQ': 'Eq. Guinea', 'ER': 'Eritrea', 'EE': 'Estonia', 'SZ': 'eSwatini', 'ET': 'Ethiopia', 'FK': 'Falkland Is.', 'FJ': 'Fiji', 'FI': 'Finland', 'FR': 'France', 'GA': 'Gabon', 'GM': 'Gambia', 'GE': 'Georgia', 'DE': 'Germany', 'GH': 'Ghana', 'GR': 'Greece', 'GL': 'Greenland', 'GT': 'Guatemala', 'GN': 'Guinea', 'GW': 'Guinea-Bissau', 'GY': 'Guyana', 'HT': 'Haiti', 'HN': 'Honduras', 'HU': 'Hungary', 'IS': 'Iceland', 'IN': 'India', 'ID': 'Indonesia', 'IR': 'Iran', 'IQ': 'Iraq', 'IE': 'Ireland', 'IL': 'Israel', 'IT': 'Italy', 'JM': 'Jamaica', 'JP': 'Japan', 'JO': 'Jordan', 'KZ': 'Kazakhstan', 'KE': 'Kenya', 'KW': 'Kuwait', 'KG': 'Kyrgyzstan', 'LA': 'Laos', 'LV': 'Latvia', 'LB': 'Lebanon', 'LS': 'Lesotho', 'LR': 'Liberia', 'LY': 'Libya', 'LT': 'Lithuania', 'LU': 'Luxembourg', 'MK': 'Macedonia', 'MG': 'Madagascar', 'MW': 'Malawi', 'MY': 'Malaysia', 'ML': 'Mali', 'MR': 'Mauritania', 'MX': 'Mexico', 'MD': 'Moldova', 'MN': 'Mongolia', 'ME': 'Montenegro', 'MA': 'Morocco', 'MZ': 'Mozambique', 'MM': 'Myanmar', 'NA': 'Namibia', 'NP': 'Nepal', 'NL': 'Netherlands', 'NC': 'New Caledonia', 'NZ': 'New Zealand', 'NI': 'Nicaragua', 'NE': 'Niger', 'NG': 'Nigeria', 'KP': 'North Korea', 'NO': 'Norway', 'OM': 'Oman', 'PK': 'Pakistan', 'PS': 'Palestine', 'PA': 'Panama', 'PG': 'Papua New Guinea', 'PY': 'Paraguay', 'PE': 'Peru', 'PH': 'Philippines', 'PL': 'Poland', 'PT': 'Portugal', 'PR': 'Puerto Rico', 'QA': 'Qatar', 'RO': 'Romania', 'RU': 'Russia', 'RW': 'Rwanda', 'SA': 'Saudi Arabia', 'SN': 'Senegal', 'RS': 'Serbia', 'SL': 'Sierra Leone', 'SI': 'Slovenia', 'SB': 'Solomon Is.', 'SO': 'Somalia', 'ZA': 'South Africa', 'KR': 'South Korea', 'SS': 'S. Sudan', 'ES': 'Spain', 'LK': 'Sri Lanka', 'SD': 'Sudan', 'SR': 'Suriname', 'SE': 'Sweden', 'CH': 'Switzerland', 'SY': 'Syria', 'TW': 'Taiwan', 'TJ': 'Tajikistan', 'TZ': 'Tanzania', 'TH': 'Thailand', 'TL': 'Timor-Leste', 'TG': 'Togo', 'TT': 'Trinidad and Tobago', 'TN': 'Tunisia', 'TR': 'Turkey', 'TM': 'Turkmenistan', 'UG': 'Uganda', 'UA': 'Ukraine', 'AE': 'United Arab Emirates', 'GB': 'United Kingdom', 'US': 'United States of America', 'UY': 'Uruguay', 'UZ': 'Uzbekistan', 'VU': 'Vanuatu', 'VE': 'Venezuela', 'VN': 'Vietnam', 'EH': 'W. Sahara', 'YE': 'Yemen', 'ZM': 'Zambia', 'ZW': 'Zimbabwe', 'XK': 'Kosovo'}
+_ISO3_TO_TOPO = {'AFG': 'Afghanistan', 'ALB': 'Albania', 'DZA': 'Algeria', 'AGO': 'Angola', 'ARG': 'Argentina', 'ARM': 'Armenia', 'AUS': 'Australia', 'AUT': 'Austria', 'AZE': 'Azerbaijan', 'BHS': 'Bahamas', 'BGD': 'Bangladesh', 'BLR': 'Belarus', 'BEL': 'Belgium', 'BLZ': 'Belize', 'BEN': 'Benin', 'BTN': 'Bhutan', 'BOL': 'Bolivia', 'BIH': 'Bosnia and Herz.', 'BWA': 'Botswana', 'BRA': 'Brazil', 'BRN': 'Brunei', 'BGR': 'Bulgaria', 'BFA': 'Burkina Faso', 'BDI': 'Burundi', 'KHM': 'Cambodia', 'CMR': 'Cameroon', 'CAN': 'Canada', 'CAF': 'Central African Rep.', 'TCD': 'Chad', 'CHL': 'Chile', 'CHN': 'China', 'COL': 'Colombia', 'COG': 'Congo', 'CRI': 'Costa Rica', 'CIV': "Côte d'Ivoire", 'HRV': 'Croatia', 'CUB': 'Cuba', 'CYP': 'Cyprus', 'CZE': 'Czechia', 'COD': 'Dem. Rep. Congo', 'DNK': 'Denmark', 'DJI': 'Djibouti', 'DOM': 'Dominican Rep.', 'ECU': 'Ecuador', 'EGY': 'Egypt', 'SLV': 'El Salvador', 'GNQ': 'Eq. Guinea', 'ERI': 'Eritrea', 'EST': 'Estonia', 'SWZ': 'eSwatini', 'ETH': 'Ethiopia', 'FLK': 'Falkland Is.', 'FJI': 'Fiji', 'FIN': 'Finland', 'FRA': 'France', 'GAB': 'Gabon', 'GMB': 'Gambia', 'GEO': 'Georgia', 'DEU': 'Germany', 'GHA': 'Ghana', 'GRC': 'Greece', 'GRL': 'Greenland', 'GTM': 'Guatemala', 'GIN': 'Guinea', 'GNB': 'Guinea-Bissau', 'GUY': 'Guyana', 'HTI': 'Haiti', 'HND': 'Honduras', 'HUN': 'Hungary', 'ISL': 'Iceland', 'IND': 'India', 'IDN': 'Indonesia', 'IRN': 'Iran', 'IRQ': 'Iraq', 'IRL': 'Ireland', 'ISR': 'Israel', 'ITA': 'Italy', 'JAM': 'Jamaica', 'JPN': 'Japan', 'JOR': 'Jordan', 'KAZ': 'Kazakhstan', 'KEN': 'Kenya', 'KWT': 'Kuwait', 'KGZ': 'Kyrgyzstan', 'LAO': 'Laos', 'LVA': 'Latvia', 'LBN': 'Lebanon', 'LSO': 'Lesotho', 'LBR': 'Liberia', 'LBY': 'Libya', 'LTU': 'Lithuania', 'LUX': 'Luxembourg', 'MKD': 'Macedonia', 'MDG': 'Madagascar', 'MWI': 'Malawi', 'MYS': 'Malaysia', 'MLI': 'Mali', 'MRT': 'Mauritania', 'MEX': 'Mexico', 'MDA': 'Moldova', 'MNG': 'Mongolia', 'MNE': 'Montenegro', 'MAR': 'Morocco', 'MOZ': 'Mozambique', 'MMR': 'Myanmar', 'NAM': 'Namibia', 'NPL': 'Nepal', 'NLD': 'Netherlands', 'NCL': 'New Caledonia', 'NZL': 'New Zealand', 'NIC': 'Nicaragua', 'NER': 'Niger', 'NGA': 'Nigeria', 'PRK': 'North Korea', 'NOR': 'Norway', 'OMN': 'Oman', 'PAK': 'Pakistan', 'PSE': 'Palestine', 'PAN': 'Panama', 'PNG': 'Papua New Guinea', 'PRY': 'Paraguay', 'PER': 'Peru', 'PHL': 'Philippines', 'POL': 'Poland', 'PRT': 'Portugal', 'PRI': 'Puerto Rico', 'QAT': 'Qatar', 'ROU': 'Romania', 'RUS': 'Russia', 'RWA': 'Rwanda', 'SAU': 'Saudi Arabia', 'SEN': 'Senegal', 'SRB': 'Serbia', 'SLE': 'Sierra Leone', 'SVN': 'Slovenia', 'SLB': 'Solomon Is.', 'SOM': 'Somalia', 'ZAF': 'South Africa', 'KOR': 'South Korea', 'SSD': 'S. Sudan', 'ESP': 'Spain', 'LKA': 'Sri Lanka', 'SDN': 'Sudan', 'SUR': 'Suriname', 'SWE': 'Sweden', 'CHE': 'Switzerland', 'SYR': 'Syria', 'TWN': 'Taiwan', 'TJK': 'Tajikistan', 'TZA': 'Tanzania', 'THA': 'Thailand', 'TLS': 'Timor-Leste', 'TGO': 'Togo', 'TTO': 'Trinidad and Tobago', 'TUN': 'Tunisia', 'TUR': 'Turkey', 'TKM': 'Turkmenistan', 'UGA': 'Uganda', 'UKR': 'Ukraine', 'ARE': 'United Arab Emirates', 'GBR': 'United Kingdom', 'USA': 'United States of America', 'URY': 'Uruguay', 'UZB': 'Uzbekistan', 'VUT': 'Vanuatu', 'VEN': 'Venezuela', 'VNM': 'Vietnam', 'ESH': 'W. Sahara', 'YEM': 'Yemen', 'ZMB': 'Zambia', 'ZWE': 'Zimbabwe', 'XKX': 'Kosovo'}
+_ALIAS_TO_TOPO = {'usa': 'United States of America', 'united states': 'United States of America', 'uk': 'United Kingdom', 'britain': 'United Kingdom', 'great britain': 'United Kingdom', 'england': 'United Kingdom', 'russian federation': 'Russia', 'republic of korea': 'South Korea', 'korea': 'South Korea', 'korea, republic of': 'South Korea', 'dprk': 'North Korea', "korea, democratic people's republic of": 'North Korea', 'iran, islamic republic of': 'Iran', 'islamic republic of iran': 'Iran', 'syrian arab republic': 'Syria', 'viet nam': 'Vietnam', "lao people's democratic republic": 'Laos', 'czech republic': 'Czechia', 'moldova, republic of': 'Moldova', 'republic of moldova': 'Moldova', 'taiwan, province of china': 'Taiwan', 'ivory coast': "Côte d'Ivoire", "cote d'ivoire": "Côte d'Ivoire", 'burma': 'Myanmar', 'swaziland': 'eSwatini', 'the bahamas': 'Bahamas', 'north macedonia': 'Macedonia', 'uae': 'United Arab Emirates', 'bosnia and herzegovina': 'Bosnia and Herz.', 'bosnia': 'Bosnia and Herz.', 'democratic republic of the congo': 'Dem. Rep. Congo', 'drc': 'Dem. Rep. Congo', 'dr congo': 'Dem. Rep. Congo', 'republic of the congo': 'Congo', 'congo-brazzaville': 'Congo', 'dominican republic': 'Dominican Rep.', 'central african republic': 'Central African Rep.', 'equatorial guinea': 'Eq. Guinea', 'falkland islands': 'Falkland Is.', 'solomon islands': 'Solomon Is.', 'south sudan': 'S. Sudan', 'western sahara': 'W. Sahara', 'spain(canary is)': 'Spain', 'spain (canary is)': 'Spain', 'united kingdom': 'United Kingdom', 'venezuela, bolivarian republic of': 'Venezuela', 'bolivia, plurinational state of': 'Bolivia', 'tanzania, united republic of': 'Tanzania', 'united republic of tanzania': 'Tanzania'}
+
+def detect_geo_encoding(values):
+    """Auto-detect whether values are ISO-2, ISO-3, or country names."""
+    sample = [str(v).strip() for v in values.dropna().head(20)]
+    if all(len(v) == 2 and v.isalpha() and v.isupper() for v in sample if v):
+        return "iso2"
+    if all(len(v) == 3 and v.isalpha() and v.isupper() for v in sample if v):
+        return "iso3"
+    return "name"
+
+def normalize_country(value, encoding):
+    """Normalize a country value to its TopoJSON properties.name equivalent."""
+    v = str(value).strip()
+    if not v:
+        return v
+    if encoding == "iso2":
+        return _ISO2_TO_TOPO.get(v.upper(), v)
+    if encoding == "iso3":
+        return _ISO3_TO_TOPO.get(v.upper(), v)
+    return _ALIAS_TO_TOPO.get(v.lower(), v)
+
 def main():
     st.set_page_config(
         page_title="SQL Definitive - All Chart Types",
@@ -219,10 +243,11 @@ def main():
         # Determine Altair encoding type based on effective x_type
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         # Geo chart: choropleth map colored by total_amount
-        # Normalize country names: strip whitespace and convert to title case to match topojson
+        # Normalize country names to match topojson properties.name
         geo_data = chart_data.copy()
-        geo_data["shipping_address_country"] = geo_data["shipping_address_country"].fillna("").str.strip().str.title()
-        # Re-aggregate after normalization (merges any entries that differ only by case)
+        geo_enc = detect_geo_encoding(geo_data["shipping_address_country"])
+        geo_data["shipping_address_country"] = geo_data["shipping_address_country"].fillna("").apply(lambda v: normalize_country(v, geo_enc))
+        # Re-aggregate after normalization (merges entries that map to same country)
         geo_data = geo_data[geo_data["shipping_address_country"] != ""].groupby("shipping_address_country")["total_amount"].sum().reset_index()
     
         # Load world countries topojson (has country names in properties.name)
@@ -245,7 +270,7 @@ def main():
             strokeWidth=0.5
         ).encode(
             color=alt.Color("total_amount:Q",
-                scale=alt.Scale(scheme="blues"),
+                scale=alt.Scale(scheme="purples"),
                 legend=alt.Legend(title="Total Amount")
             ),
             tooltip=["properties.name:N", "total_amount:Q"]
@@ -441,7 +466,7 @@ def main():
             x=alt.X("shipping_address_country:N", sort=None, title="Shipping Address Country"),
             y=alt.Y("status:N", title="Status"),
             color=alt.Color("order_id:Q",
-                scale=alt.Scale(scheme="blues"),
+                scale=alt.Scale(scheme="purples"),
                 legend=alt.Legend(title="Order Id")
             ),
             tooltip=["shipping_address_country", "status", "order_id"]
