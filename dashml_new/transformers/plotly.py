@@ -2,6 +2,7 @@
 Plotly Transformer - Generates Plotly HTML/JavaScript from DashML specs
 """
 import re
+import sys
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import json
@@ -1082,7 +1083,7 @@ if __name__ == '__main__':
           textposition: 'top center',
           marker: {{
             size: normalizedSizes,
-            color: theme.secondary ? theme.secondary.slice(0, bubbleData.length) : theme.primary,
+            color: theme.secondary ? bubbleData.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
             sizemode: 'diameter'
           }},
           hovertemplate: bubbleData.map(d => `${{d.group}}<br>${{chart.x}}: ${{d.x}}<br>${{chart.y}}: ${{d.y}}<br>${{chart.size || chart.y}}: ${{d.size}}<extra></extra>`)
@@ -1893,11 +1894,11 @@ if __name__ == '__main__':
 
         # If output is a directory (multi-file), run Flask
         if output_path_obj.is_dir():
-            return f"cd {output_path} && python3 app.py"
+            return f"cd {output_path} && {sys.executable} app.py"
 
         # Otherwise run simple HTTP server for single HTML file
         output_dir = output_path_obj.parent.resolve()
-        return f"cd {output_dir} && python3 -m http.server 8000"
+        return f"cd {output_dir} && {sys.executable} -m http.server 8000"
 
     def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -2240,7 +2241,7 @@ if __name__ == '__main__':
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: theme.secondary ? theme.secondary.slice(0, data.length) : theme.primary,
+          color: theme.secondary ? data.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
           sizemode: 'diameter'
         }},
         hovertemplate: data.map(d => d.grp + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>size: ' + d.size + '<extra></extra>')

@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flight Punctuality Dashboard</title>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #282a36;
+      color: #f8f8f2;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background-color: #282a36;
+      padding: 0;
+    }
+    .card {
+      background-color: #313343;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(255,255,255,0.1);
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin-top: 0;
+      color: #f8f8f2;
+    }
+    #chart {
+      margin-top: 20px;
+      min-height: 500px;
+    }
+    .chart-selector {
+      margin: 20px 0;
+    }
+    select {
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #313343;
+      color: #f8f8f2;
+    }
+    label {
+      margin-right: 10px;
+      font-weight: 500;
+      color: #f8f8f2;
+    }
+    .page-tabs {
+      display: flex;
+      gap: 10px;
+      margin: 20px 0;
+      border-bottom: 2px solid #f8f8f240; /* 40 = 25% opacity hex */
+      padding-bottom: 0;
+    }
+    .tab-button {
+      padding: 10px 20px;
+      background-color: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      color: #f8f8f2;
+      opacity: 0.7;
+      transition: all 0.2s;
+    }
+    .tab-button:hover {
+      opacity: 1;
+      background-color: #f8f8f210; /* 10 = ~6% opacity */
+    }
+    .tab-button.active {
+      color: #bd93f9;
+      border-bottom-color: #bd93f9;
+      opacity: 1;
+    }
+    .page-container {
+      margin-top: 20px;
+    }
+    .page-description {
+      color: #f8f8f2;
+      opacity: 0.8;
+      margin-bottom: 20px;
+    }
+    .chart-container {
+      margin: 20px 0;
+      min-height: 400px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Flight Punctuality Dashboard</h1>
+    <div class="page-tabs">
+      <button class="tab-button active" onclick="showPage('overview', this)">Overview</button>
+      <button class="tab-button" onclick="showPage('delays', this)">Delays</button>
+      <button class="tab-button" onclick="showPage('cancellations', this)">Cancellations</button>
+    </div>
+    <div id="page-overview" class="page-container">
+      <p class="page-description"><em>High-level flight punctuality metrics</em></p>
+      <div class="card">
+        <div id="chart-flights_by_airline"></div>
+      </div>
+      <div class="card">
+        <div id="chart-airline_share"></div>
+      </div>
+    </div>
+    <div id="page-delays" class="page-container" style="display:none">
+      <p class="page-description"><em>Delay patterns and trends</em></p>
+      <div class="card">
+        <div id="chart-avg_delay_by_airline"></div>
+      </div>
+      <div class="card">
+        <div id="chart-delay_over_time"></div>
+      </div>
+    </div>
+    <div id="page-cancellations" class="page-container" style="display:none">
+      <p class="page-description"><em>Cancellation rates across airlines and destinations</em></p>
+      <div class="card">
+        <div id="chart-cancellation_by_airline"></div>
+      </div>
+      <div class="card">
+        <div id="chart-cancellation_by_destination"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const theme = {"primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"], "background": "#282a36", "text": "#f8f8f2", "card": "#313343", "buttons": "#ff79c6"};
+    // Column types from INFORMATION_SCHEMA (auto-detected)
+    let columnTypes = {};
+
+    // Get effective x_type: explicit > schema-detected > undefined
+    function getEffectiveXType(xColumn, explicitXType) {
+      if (explicitXType) return explicitXType;
+      return columnTypes[xColumn] || undefined;
+    }
+
+    // Apply filters to data
+    function applyFilters(data, filters) {
+      if (!filters || filters.length === 0) return data;
+      return data.filter(row => {
+        return filters.every(f => {
+          const val = row[f.field];
+          switch (f.op) {
+            case 'eq': return val === f.value;
+            case 'ne': return val !== f.value;
+            case 'gt': return val > f.value;
+            case 'lt': return val < f.value;
+            case 'gte': return val >= f.value;
+            case 'lte': return val <= f.value;
+            case 'in': return Array.isArray(f.value) && f.value.includes(val);
+            case 'contains': return String(val).includes(f.value);
+            default: return true;
+          }
+        });
+      });
+    }
+
+    // Cast y values based on y_type
+    function castYValues(data, y, yType) {
+      if (!yType) return data;
+      return data.map(row => {
+        const newRow = {...row};
+        if (yType === 'number') {
+          newRow[y] = parseFloat(row[y]) || 0;
+        } else if (yType === 'string') {
+          newRow[y] = String(row[y]);
+        }
+        return newRow;
+      });
+    }
+
+    // Sort aggregated data
+    function sortData(data, sortField, sortOrder, xType) {
+      const result = [...data];
+      const ascending = sortOrder !== 'desc';
+
+      if (sortField === 'y') {
+        result.sort((a, b) => ascending ? a.y - b.y : b.y - a.y);
+      } else if (sortField === 'x') {
+        if (xType === 'date') {
+          result.sort((a, b) => {
+            const diff = new Date(a.x) - new Date(b.x);
+            return ascending ? diff : -diff;
+          });
+        } else if (xType === 'number') {
+          result.sort((a, b) => ascending ? a.x - b.x : b.x - a.x);
+        } else {
+          result.sort((a, b) => {
+            const cmp = String(a.x).localeCompare(String(b.x));
+            return ascending ? cmp : -cmp;
+          });
+        }
+      } else if (xType === 'date') {
+        // Default: sort by date if x_type is date
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      } else {
+        // Default: sort strings alphabetically for consistency across transformers
+        result.sort((a, b) => String(a.x).localeCompare(String(b.x)));
+      }
+      return result;
+    }
+
+    function aggregateData(data, x, y, agg, options) {
+      options = options || {};
+      const xType = options.xType || getEffectiveXType(x, options.xType);
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+      const sizeField = options.sizeField;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const key = row[x];
+        if (!grouped[key]) grouped[key] = { values: [], count: 0, sizeValues: [] };
+        grouped[key].values.push(row[y]);
+        grouped[key].count++;
+        if (sizeField) grouped[key].sizeValues.push(parseFloat(row[sizeField]) || 0);
+      });
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const values = grouped[key].values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = grouped[key].count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        const entry = { x: key, y: aggregated };
+        if (sizeField) {
+          const sizeVals = grouped[key].sizeValues;
+          switch (agg) {
+            case 'sum': entry.size = sizeVals.reduce((a, b) => a + b, 0); break;
+            case 'mean': entry.size = sizeVals.reduce((a, b) => a + b, 0) / sizeVals.length; break;
+            case 'count': entry.size = grouped[key].count; break;
+            default: entry.size = sizeVals.reduce((a, b) => a + b, 0);
+          }
+        }
+        result.push(entry);
+      });
+
+      // Sort
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    function aggregateDataWithGroup(data, x, y, groupField, agg, options) {
+      options = options || {};
+      const xType = options.xType || getEffectiveXType(x, options.xType);
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const xKey = row[x];
+        const groupKey = row[groupField];
+        const compositeKey = xKey + '|||' + groupKey;
+        if (!grouped[compositeKey]) grouped[compositeKey] = { x: xKey, group: groupKey, values: [], count: 0 };
+        grouped[compositeKey].values.push(row[y]);
+        grouped[compositeKey].count++;
+      });
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const entry = grouped[key];
+        const values = entry.values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = entry.count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        result.push({ x: entry.x, group: entry.group, y: aggregated });
+      });
+
+      // Sort based on sortField or default x_type
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    // Aggregate data for bubble charts: group by groupField, aggregate x, y, size independently
+    function aggregateBubbleData(data, groupField, xMetric, yMetric, sizeMetric, agg, options) {
+      options = options || {};
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      let filtered = applyFilters(data, filters);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const key = row[groupField];
+        if (!grouped[key]) grouped[key] = { xValues: [], yValues: [], sizeValues: [], count: 0 };
+        grouped[key].xValues.push(parseFloat(row[xMetric]) || 0);
+        grouped[key].yValues.push(parseFloat(row[yMetric]) || 0);
+        grouped[key].sizeValues.push(parseFloat(row[sizeMetric]) || 0);
+        grouped[key].count++;
+      });
+
+      function aggArray(values, count) {
+        switch (agg) {
+          case 'sum': return values.reduce((a, b) => a + b, 0);
+          case 'mean': return values.reduce((a, b) => a + b, 0) / values.length;
+          case 'count': return count;
+          default: return values.reduce((a, b) => a + b, 0);
+        }
+      }
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const g = grouped[key];
+        result.push({
+          group: key,
+          x: aggArray(g.xValues, g.count),
+          y: aggArray(g.yValues, g.count),
+          size: aggArray(g.sizeValues, g.count)
+        });
+      });
+
+      if (sortField === 'y') {
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.y - b.y : b.y - a.y);
+      } else {
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.x - b.x : b.x - a.x);
+      }
+
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+
+    function render_flights_by_airline(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 15};
+      const grouped = aggregateData(data, 'airline_name', 'total_flights', 'sum', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_flights_by_airline = [...new Set(data.map(d => d['airline_name']))];
+          boxGroups_flights_by_airline.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['airline_name'] === group).map(d => parseFloat(d['total_flights'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'total_flights' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('bar' === 'geo') {
+        layout = {
+          title: { text: 'Top 15 Airlines by Total Flights', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Top 15 Airlines by Total Flights', font: { color: theme.text } },
+          xaxis: { title: 'airline_name', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'total_flights', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-flights_by_airline', traces, layout, { responsive: true });
+    }
+    function render_airline_share(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 10};
+      const grouped = aggregateData(data, 'airline_name', 'total_flights', 'sum', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('pie') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_airline_share = [...new Set(data.map(d => d['airline_name']))];
+          boxGroups_airline_share.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['airline_name'] === group).map(d => parseFloat(d['total_flights'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'total_flights' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('pie' === 'geo') {
+        layout = {
+          title: { text: 'Flight Share - Top 10 Airlines', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Flight Share - Top 10 Airlines', font: { color: theme.text } },
+          xaxis: { title: 'airline_name', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'total_flights', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-airline_share', traces, layout, { responsive: true });
+    }
+    function render_avg_delay_by_airline(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 15};
+      const grouped = aggregateData(data, 'airline_name', 'average_delay_mins', 'mean', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_avg_delay_by_airline = [...new Set(data.map(d => d['airline_name']))];
+          boxGroups_avg_delay_by_airline.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['airline_name'] === group).map(d => parseFloat(d['average_delay_mins'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'average_delay_mins' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('bar' === 'geo') {
+        layout = {
+          title: { text: 'Average Delay (mins) - Top 15 Airlines', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Average Delay (mins) - Top 15 Airlines', font: { color: theme.text } },
+          xaxis: { title: 'airline_name', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'average_delay_mins', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-avg_delay_by_airline', traces, layout, { responsive: true });
+    }
+    function render_delay_over_time(data) {
+      const options = {"xType": "date", "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null};
+      const grouped = aggregateData(data, 'reporting_month', 'average_delay_mins', 'mean', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('line') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_delay_over_time = [...new Set(data.map(d => d['reporting_month']))];
+          boxGroups_delay_over_time.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['reporting_month'] === group).map(d => parseFloat(d['average_delay_mins'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'average_delay_mins' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('line' === 'geo') {
+        layout = {
+          title: { text: 'Average Delay Over Time', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Average Delay Over Time', font: { color: theme.text } },
+          xaxis: { title: 'reporting_month', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'average_delay_mins', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-delay_over_time', traces, layout, { responsive: true });
+    }
+    function render_cancellation_by_airline(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 15};
+      const grouped = aggregateData(data, 'airline_name', 'flights_cancelled_percent', 'mean', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_cancellation_by_airline = [...new Set(data.map(d => d['airline_name']))];
+          boxGroups_cancellation_by_airline.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['airline_name'] === group).map(d => parseFloat(d['flights_cancelled_percent'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'flights_cancelled_percent' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('bar' === 'geo') {
+        layout = {
+          title: { text: 'Cancellation Rate (%) - Top 15 Airlines by Flights', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Cancellation Rate (%) - Top 15 Airlines by Flights', font: { color: theme.text } },
+          xaxis: { title: 'airline_name', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'flights_cancelled_percent', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-cancellation_by_airline', traces, layout, { responsive: true });
+    }
+    function render_cancellation_by_destination(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 15};
+      const grouped = aggregateData(data, 'origin_destination_country', 'flights_cancelled_percent', 'mean', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_cancellation_by_destination = [...new Set(data.map(d => d['origin_destination_country']))];
+          boxGroups_cancellation_by_destination.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['origin_destination_country'] === group).map(d => parseFloat(d['flights_cancelled_percent'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'flights_cancelled_percent' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('bar' === 'geo') {
+        layout = {
+          title: { text: 'Cancellation Rate (%) - Top 15 Destination Countries', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Cancellation Rate (%) - Top 15 Destination Countries', font: { color: theme.text } },
+          xaxis: { title: 'origin_destination_country', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'flights_cancelled_percent', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-cancellation_by_destination', traces, layout, { responsive: true });
+    }
+
+
+    function showPage(pageId, clickedButton) {
+      document.querySelectorAll('.page-container').forEach(page => {
+        page.style.display = 'none';
+      });
+      document.querySelectorAll('.tab-button').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.getElementById('page-' + pageId).style.display = 'block';
+      if (clickedButton) {
+        clickedButton.classList.add('active');
+      }
+    }
+
+
+    function renderAllPages(data) {
+      render_flights_by_airline(data);
+      render_airline_share(data);
+      render_avg_delay_by_airline(data);
+      render_delay_over_time(data);
+      render_cancellation_by_airline(data);
+      render_cancellation_by_destination(data);
+    }
+
+    // Fetch schema first, then data
+    Promise.all([
+      fetch('/api/schema').then(r => r.json()),
+      fetch('/api/data').then(r => r.json())
+    ])
+      .then(([schema, data]) => {
+        columnTypes = schema;
+
+        // Parse ISO 8601 date strings to Date objects
+        // Server already cast types, we just need to parse ISO dates
+        const parsedData = data.map(row => {
+          const parsedRow = {};
+          for (const [column, value] of Object.entries(row)) {
+            if (columnTypes[column] === 'date' && value !== null) {
+              // Parse ISO 8601 date string (e.g., "2023-01-05T00:00:00.000Z")
+              parsedRow[column] = new Date(value);
+            } else {
+              // Numbers are already parsed by JSON, strings stay as strings
+              parsedRow[column] = value;
+            }
+          }
+          return parsedRow;
+        });
+
+        console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
+        renderAllPages(parsedData);
+      })
+      .catch(error => console.error('Error loading data:', error));
+  </script>
+</body>
+</html>

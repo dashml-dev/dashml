@@ -152,15 +152,14 @@ class DashMLNormalizer:
                 f" GROUP BY {x}, {hy}{order}{limit_clause}"
             )
         elif chart_type == "scatter":
-            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL ORDER BY RAND() LIMIT 5000"
+            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL"
         elif chart_type == "bubble":
             size_ref = size_field or y
             return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {T} WHERE {F} GROUP BY {group}{order}{limit_clause}"
         elif chart_type == "histogram":
-            return f"SELECT {x} AS x FROM {T} WHERE {F} AND {x} IS NOT NULL ORDER BY RAND() LIMIT 50000"
+            return f"SELECT {x} AS x FROM {T} WHERE {F} AND {x} IS NOT NULL"
         elif chart_type == "box":
-            top_n = f"{x} IN (SELECT {x} FROM {T} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
-            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {top_n} AND {x} IS NOT NULL AND {y} IS NOT NULL ORDER BY RAND() LIMIT 50000"
+            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL"
         elif chart_type == "metric":
             return f"SELECT {sql_agg}({y}) AS y FROM {T} WHERE {F}"
         else:

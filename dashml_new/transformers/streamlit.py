@@ -2,6 +2,7 @@
 Streamlit Transformer - Generates Streamlit Python code from DashML specs
 """
 import re
+import sys
 from typing import TYPE_CHECKING, Dict, Any, List
 from .base import Transformer, TransformerError
 from .constants import (
@@ -937,4 +938,4 @@ def load_data():
         return "\n".join(code_parts)
 
     def get_run_command(self, output_path: str) -> str:
-        return f"python3 -m streamlit run {output_path}"
+        return f"{sys.executable} -m streamlit run {output_path}"

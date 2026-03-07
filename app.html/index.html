@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SQL Definitive - All Chart Types</title>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #282a36;
+      color: #f8f8f2;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background-color: #282a36;
+      padding: 0;
+    }
+    .card {
+      background-color: #313343;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(255,255,255,0.1);
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin-top: 0;
+      color: #f8f8f2;
+    }
+    #chart {
+      margin-top: 20px;
+      min-height: 500px;
+    }
+    .chart-selector {
+      margin: 20px 0;
+    }
+    select {
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #313343;
+      color: #f8f8f2;
+    }
+    label {
+      margin-right: 10px;
+      font-weight: 500;
+      color: #f8f8f2;
+    }
+    .page-tabs {
+      display: flex;
+      gap: 10px;
+      margin: 20px 0;
+      border-bottom: 2px solid #f8f8f240; /* 40 = 25% opacity hex */
+      padding-bottom: 0;
+    }
+    .tab-button {
+      padding: 10px 20px;
+      background-color: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      color: #f8f8f2;
+      opacity: 0.7;
+      transition: all 0.2s;
+    }
+    .tab-button:hover {
+      opacity: 1;
+      background-color: #f8f8f210; /* 10 = ~6% opacity */
+    }
+    .tab-button.active {
+      color: #bd93f9;
+      border-bottom-color: #bd93f9;
+      opacity: 1;
+    }
+    .page-container {
+      margin-top: 20px;
+    }
+    .page-description {
+      color: #f8f8f2;
+      opacity: 0.8;
+      margin-bottom: 20px;
+    }
+    .chart-container {
+      margin: 20px 0;
+      min-height: 400px;
+    }
+    .chart-spinner {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 300px; gap: 12px;
+      color: #f8f8f2; opacity: 0.6;
+    }
+    .chart-spinner .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #f8f8f220;
+      border-top-color: #bd93f9;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .chart-error {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 300px; color: #e74c3c;
+    }
+    .metric-card {
+      text-align: center;
+      padding: 24px 20px;
+      min-width: 160px;
+      display: inline-block;
+    }
+    .metric-title {
+      font-size: 13px;
+      color: #f8f8f2;
+      opacity: 0.65;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .metric-value {
+      font-size: 2.6rem;
+      font-weight: 700;
+      color: #bd93f9;
+      line-height: 1.1;
+    }
+    .filter-bar {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      padding: 14px 18px;
+      background: #313343;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      border: 1px solid rgba(128,128,128,0.12);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }
+    .filter-bar-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      opacity: .4;
+      align-self: center;
+      padding-bottom: 2px;
+      white-space: nowrap;
+      margin-right: 4px;
+      color: #f8f8f2;
+    }
+    .filter-item {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .filter-item > label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      opacity: .55;
+      color: #f8f8f2;
+    }
+    .filter-select-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .filter-select-wrap select {
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(128,128,128,0.08);
+      color: #f8f8f2;
+      border: 1px solid rgba(128,128,128,0.22);
+      border-radius: 7px;
+      padding: 7px 32px 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 150px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      font-family: inherit;
+    }
+    .filter-select-wrap select:hover { border-color: rgba(128,128,128,0.45); }
+    .filter-select-wrap select:focus { border-color: #bd93f9; box-shadow: 0 0 0 2px #bd93f933; }
+    .filter-select-wrap .sel-arrow {
+      position: absolute;
+      right: 9px;
+      pointer-events: none;
+      opacity: .45;
+      flex-shrink: 0;
+      color: #f8f8f2;
+    }
+    .ms-wrap { position: relative; }
+    .ms-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(128,128,128,0.08);
+      color: #f8f8f2;
+      border: 1px solid rgba(128,128,128,0.22);
+      border-radius: 7px;
+      padding: 7px 10px 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 150px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+    .ms-btn:hover { border-color: rgba(128,128,128,0.45); }
+    .ms-btn.ms-open, .ms-btn:focus { border-color: #bd93f9; box-shadow: 0 0 0 2px #bd93f933; }
+    .ms-count {
+      background: #bd93f9;
+      color: #fff;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 600;
+      display: none;
+    }
+    .ms-count.visible { display: inline; }
+    .ms-arrow { opacity: .45; transition: transform 0.15s; flex-shrink: 0; }
+    .ms-btn.ms-open .ms-arrow { transform: rotate(180deg); }
+    .ms-panel {
+      position: absolute;
+      top: calc(100% + 5px);
+      left: 0;
+      z-index: 200;
+      background: #282a36;
+      border: 1px solid rgba(128,128,128,0.25);
+      border-radius: 9px;
+      padding: 6px;
+      min-width: 190px;
+      max-height: 230px;
+      overflow-y: auto;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+      display: none;
+    }
+    .ms-panel.ms-open { display: block; }
+    .ms-option {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 9px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      user-select: none;
+      transition: background 0.1s;
+      color: #f8f8f2;
+    }
+    .ms-option:hover { background: rgba(128,128,128,0.1); }
+    .ms-option input[type="checkbox"] {
+      accent-color: #bd93f9;
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .filter-reset {
+      align-self: flex-end;
+      background: none;
+      border: 1px solid rgba(128,128,128,0.2);
+      color: #f8f8f2;
+      padding: 7px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      cursor: pointer;
+      opacity: .55;
+      transition: opacity 0.15s, border-color 0.15s;
+      font-family: inherit;
+    }
+    .filter-reset:hover { opacity: 1; border-color: rgba(128,128,128,0.5); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>SQL Definitive - All Chart Types</h1>
+    <div class="page-tabs">
+      <button class="tab-button active" onclick="showPage('categorical_charts', this)">Categorical Charts</button>
+      <button class="tab-button" onclick="showPage('time_series', this)">Time Series Charts</button>
+      <button class="tab-button" onclick="showPage('distribution', this)">Distribution & Relationships</button>
+    </div>
+    <div id="page-categorical_charts" class="page-container">
+      <p class="page-description"><em>Bar charts and pie charts for categorical data</em></p>
+      <div class="card">
+        <div id="chart-bar_sales_by_country"></div>
+      </div>
+      <div class="card">
+        <div id="chart-pie_orders_by_status"></div>
+      </div>
+      <div class="card">
+        <div id="chart-grouped_bar_country_status"></div>
+      </div>
+      <div class="card">
+        <div id="chart-stacked_bar_payment_status"></div>
+      </div>
+      <div class="card">
+        <div id="chart-geo_sales_by_country"></div>
+      </div>
+    </div>
+    <div id="page-time_series" class="page-container" style="display:none">
+      <p class="page-description"><em>Line and area charts for temporal trends</em></p>
+      <div class="card">
+        <div id="chart-line_orders_over_time"></div>
+      </div>
+      <div class="card">
+        <div id="chart-area_revenue_over_time"></div>
+      </div>
+    </div>
+    <div id="page-distribution" class="page-container" style="display:none">
+      <p class="page-description"><em>Scatter plots, histograms, box plots, bubble charts, and heatmaps</em></p>
+      <div class="card">
+        <div id="chart-scatter_amount_vs_tax"></div>
+      </div>
+      <div class="card">
+        <div id="chart-histogram_order_amounts"></div>
+      </div>
+      <div class="card">
+        <div id="chart-box_amount_by_status"></div>
+      </div>
+      <div class="card">
+        <div id="chart-bubble_region_sales"></div>
+      </div>
+      <div class="card">
+        <div id="chart-heatmap_country_status"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const theme = {"primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"], "background": "#282a36", "text": "#f8f8f2", "card": "#313343", "buttons": "#ff79c6"};
+
+    // Format a metric scalar value
+    function formatMetric(value, format, suffix) {
+      if (value === null || value === undefined || isNaN(value)) return 'N/A';
+      const n = parseFloat(value);
+      const m = format.match(/,?\.(\d+)f/);
+      const decimals = m ? parseInt(m[1]) : 0;
+      const str = n.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+      return str + (suffix || '');
+    }
+
+    async function loadChart(chartId, renderFn, extraParams) {
+      const container = document.getElementById('chart-' + chartId);
+      if (!container) return;
+      container.innerHTML = '<div class="chart-spinner"><div class="spinner"></div><span>Loading...</span></div>';
+      try {
+        const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        container.innerHTML = '';
+        renderFn(data);
+      } catch (err) {
+        container.innerHTML = '<div class="chart-error">Error loading chart: ' + err.message + '</div>';
+        console.error('Chart ' + chartId + ' failed:', err);
+      }
+    }
+
+    async function loadMetric(chartId, renderFn, extraParams) {
+      const el = document.getElementById('metric-' + chartId);
+      if (!el) return;
+      el.textContent = '…';
+      try {
+        const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        renderFn(data);
+      } catch (err) {
+        if (el) el.textContent = 'Error';
+        console.error('Metric ' + chartId + ' failed:', err);
+      }
+    }
+
+    const PAGE_CHARTS = {};
+
+    function toggleMs(btn, pageId, field) {
+      const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+      const isOpen = panel.classList.contains('ms-open');
+      closeAllMs();
+      if (!isOpen) { panel.classList.add('ms-open'); btn.classList.add('ms-open'); }
+    }
+    function closeAllMs() {
+      document.querySelectorAll('.ms-panel.ms-open').forEach(p => p.classList.remove('ms-open'));
+      document.querySelectorAll('.ms-btn.ms-open').forEach(b => b.classList.remove('ms-open'));
+    }
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.ms-wrap')) closeAllMs();
+    });
+    function updateMsLabel(pageId, field) {
+      const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+      const countEl = document.getElementById('ms-count-' + pageId + '-' + field);
+      const textEl = document.querySelector('#ms-' + pageId + '-' + field + ' .ms-text');
+      if (!panel || !countEl || !textEl) return;
+      const checked = Array.from(panel.querySelectorAll('input[type="checkbox"]:checked'));
+      const n = checked.length;
+      if (n === 0) {
+        textEl.textContent = 'All';
+        countEl.textContent = ''; countEl.classList.remove('visible');
+      } else if (n === 1) {
+        textEl.textContent = checked[0].value;
+        countEl.textContent = ''; countEl.classList.remove('visible');
+      } else {
+        textEl.textContent = checked[0].value;
+        countEl.textContent = '+' + (n - 1); countEl.classList.add('visible');
+      }
+    }
+    function collectFilterParams(pageId) {
+      const pageInfo = PAGE_CHARTS[pageId];
+      if (!pageInfo) return '';
+      const params = new URLSearchParams();
+      for (const field of pageInfo.filter_fields) {
+        const sel = document.getElementById('filter-' + pageId + '-' + field);
+        if (sel) {
+          if (sel.value) params.append(field, sel.value);
+        } else {
+          const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+          if (panel) panel.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => params.append(field, cb.value));
+        }
+      }
+      return params.toString();
+    }
+    function applyDashboardFilter(pageId) {
+      const pageInfo = PAGE_CHARTS[pageId];
+      if (!pageInfo) return;
+      const params = collectFilterParams(pageId);
+      pageInfo.charts.forEach(chartId => {
+        loadChart(chartId, window['render_' + chartId], params);
+      });
+      pageInfo.metrics.forEach(chartId => {
+        loadMetric(chartId, window['render_' + chartId], params);
+      });
+    }
+    function resetFilters(pageId) {
+      const pageInfo = PAGE_CHARTS[pageId];
+      if (!pageInfo) return;
+      for (const field of pageInfo.filter_fields) {
+        const sel = document.getElementById('filter-' + pageId + '-' + field);
+        if (sel) { sel.value = ''; } else {
+          const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+          if (panel) { panel.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false); updateMsLabel(pageId, field); }
+        }
+      }
+      applyDashboardFilter(pageId);
+    }
+    function loadFilterOptions(pageId) {
+      const pageInfo = PAGE_CHARTS[pageId];
+      if (!pageInfo) return;
+      for (const field of pageInfo.filter_fields) {
+        const isSel = !!document.getElementById('filter-' + pageId + '-' + field);
+        fetch('/api/filter/' + field)
+          .then(r => r.json())
+          .then(values => {
+            if (isSel) {
+              const sel = document.getElementById('filter-' + pageId + '-' + field);
+              if (!sel) return;
+              values.forEach(v => {
+                const opt = document.createElement('option');
+                opt.value = v; opt.textContent = v; sel.appendChild(opt);
+              });
+            } else {
+              const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+              if (!panel) return;
+              panel.innerHTML = values.map(v =>
+                `<label class="ms-option"><input type="checkbox" value="${v}" onchange="updateMsLabel('${pageId}','${field}');applyDashboardFilter('${pageId}')"> ${v}</label>`
+              ).join('');
+            }
+          })
+          .catch(err => console.warn('Could not load filter options for ' + field + ':', err));
+      }
+    }
+
+
+    window.render_bar_sales_by_country = function(data) {
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
+      let trace;
+      let traces = [];
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {
+            traces.push({
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'total_amount' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+      if (trace) traces.push(trace);
+      let layout;
+      if ('bar' === 'geo') {
+        layout = {
+          title: { text: 'Total Sales by Country', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Total Sales by Country', font: { color: theme.text } },
+          xaxis: { title: 'shipping_address_country', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+      Plotly.newPlot('chart-bar_sales_by_country', traces, layout, { responsive: true });
+    }
+    window.render_pie_orders_by_status = function(data) {
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
+      let trace;
+      let traces = [];
+      switch ('pie') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {
+            traces.push({
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'order_id' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+      if (trace) traces.push(trace);
+      let layout;
+      if ('pie' === 'geo') {
+        layout = {
+          title: { text: 'Orders by Status', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Orders by Status', font: { color: theme.text } },
+          xaxis: { title: 'status', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+      Plotly.newPlot('chart-pie_orders_by_status', traces, layout, { responsive: true });
+    }
+    window.render_grouped_bar_country_status = function(data) {
+      const groupValues = [...new Set(data.map(d => d.grp))];
+      const traces = [];
+      groupValues.forEach((groupVal, idx) => {
+        const filtered = data.filter(d => d.grp === groupVal);
+        traces.push({
+          x: filtered.map(d => d.x),
+          y: filtered.map(d => d.y),
+          name: groupVal,
+          type: 'bar',
+          marker: { color: theme.secondary[idx % theme.secondary.length] }
+        });
+      });
+      const layout = {
+        title: { text: 'Orders by Country (Grouped by Status)', font: { color: theme.text } },
+        xaxis: { title: 'shipping_address_country', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+        barmode: 'group',
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+      Plotly.newPlot('chart-grouped_bar_country_status', traces, layout, { responsive: true });
+    }
+    window.render_stacked_bar_payment_status = function(data) {
+      const groupValues = [...new Set(data.map(d => d.grp))];
+      const traces = [];
+      groupValues.forEach((groupVal, idx) => {
+        const filtered = data.filter(d => d.grp === groupVal);
+        traces.push({
+          x: filtered.map(d => d.x),
+          y: filtered.map(d => d.y),
+          name: groupVal,
+          type: 'bar',
+          marker: { color: theme.secondary[idx % theme.secondary.length] }
+        });
+      });
+      const layout = {
+        title: { text: 'Orders by Payment Method (Stacked by Status)', font: { color: theme.text } },
+        xaxis: { title: 'payment_method', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+        barmode: 'stack',
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+      Plotly.newPlot('chart-stacked_bar_payment_status', traces, layout, { responsive: true });
+    }
+    window.render_geo_sales_by_country = function(data) {
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
+      let trace;
+      let traces = [];
+      switch ('geo') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {
+            traces.push({
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'total_amount' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+      if (trace) traces.push(trace);
+      let layout;
+      if ('geo' === 'geo') {
+        layout = {
+          title: { text: 'Sales by Country (Map)', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Sales by Country (Map)', font: { color: theme.text } },
+          xaxis: { title: 'shipping_address_country', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+      Plotly.newPlot('chart-geo_sales_by_country', traces, layout, { responsive: true });
+    }
+    window.render_line_orders_over_time = function(data) {
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
+      let trace;
+      let traces = [];
+      switch ('line') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {
+            traces.push({
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'order_id' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+      if (trace) traces.push(trace);
+      let layout;
+      if ('line' === 'geo') {
+        layout = {
+          title: { text: 'Orders Over Time', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Orders Over Time', font: { color: theme.text } },
+          xaxis: { title: 'order_date', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+      Plotly.newPlot('chart-line_orders_over_time', traces, layout, { responsive: true });
+    }
+    window.render_area_revenue_over_time = function(data) {
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
+      let trace;
+      let traces = [];
+      switch ('area') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {
+            traces.push({
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'total_amount' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+      if (trace) traces.push(trace);
+      let layout;
+      if ('area' === 'geo') {
+        layout = {
+          title: { text: 'Revenue Over Time', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Revenue Over Time', font: { color: theme.text } },
+          xaxis: { title: 'order_date', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+      Plotly.newPlot('chart-area_revenue_over_time', traces, layout, { responsive: true });
+    }
+    window.render_scatter_amount_vs_tax = function(data) {
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
+      let trace;
+      let traces = [];
+      switch ('scatter') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {
+            traces.push({
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'tax_amount' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+      if (trace) traces.push(trace);
+      let layout;
+      if ('scatter' === 'geo') {
+        layout = {
+          title: { text: 'Order Amount vs Tax Amount', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Order Amount vs Tax Amount', font: { color: theme.text } },
+          xaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'tax_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+      Plotly.newPlot('chart-scatter_amount_vs_tax', traces, layout, { responsive: true });
+    }
+    window.render_histogram_order_amounts = function(data) {
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
+      let trace;
+      let traces = [];
+      switch ('histogram') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {
+            traces.push({
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'order_id' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+      if (trace) traces.push(trace);
+      let layout;
+      if ('histogram' === 'geo') {
+        layout = {
+          title: { text: 'Distribution of Order Amounts', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Distribution of Order Amounts', font: { color: theme.text } },
+          xaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+      Plotly.newPlot('chart-histogram_order_amounts', traces, layout, { responsive: true });
+    }
+    window.render_box_amount_by_status = function(data) {
+      const xValues = data.map(d => d.x);
+      const yValues = data.map(d => d.y);
+      let trace;
+      let traces = [];
+      switch ('box') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          const boxGroups = [...new Set(data.map(d => d.x))];
+          boxGroups.forEach(group => {
+            traces.push({
+              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          trace = {
+            type: 'choropleth',
+            locations: xValues,
+            z: yValues,
+            locationmode: 'country names',
+            colorscale: 'Blues',
+            colorbar: { title: 'total_amount' }
+          };
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+      if (trace) traces.push(trace);
+      let layout;
+      if ('box' === 'geo') {
+        layout = {
+          title: { text: 'Order Amount Distribution by Status', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Order Amount Distribution by Status', font: { color: theme.text } },
+          xaxis: { title: 'status', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+      Plotly.newPlot('chart-box_amount_by_status', traces, layout, { responsive: true });
+    }
+    window.render_bubble_region_sales = function(data) {
+      const bubbleSizeVals = data.map(d => Math.abs(d.size));
+      const maxSize = Math.max(...bubbleSizeVals);
+      const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
+      const trace = {
+        x: data.map(d => d.x),
+        y: data.map(d => d.y),
+        text: data.map(d => d.grp),
+        type: 'scatter',
+        mode: 'markers+text',
+        textposition: 'top center',
+        marker: {
+          size: normalizedSizes,
+          color: theme.secondary ? data.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
+          sizemode: 'diameter'
+        },
+        hovertemplate: data.map(d => d.grp + '<br>total_amount: ' + d.x + '<br>tax_amount: ' + d.y + '<br>size: ' + d.size + '<extra></extra>')
+      };
+      const layout = {
+        title: { text: 'Sales vs Tax by Region', font: { color: theme.text } },
+        xaxis: { title: 'total_amount', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'tax_amount', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+      Plotly.newPlot('chart-bubble_region_sales', [trace], layout, { responsive: true });
+    }
+    window.render_heatmap_country_status = function(data) {
+      const heatmapX = [...new Set(data.map(d => d.x))];
+      const heatmapY = [...new Set(data.map(d => d.heatmap_y))];
+      const heatmapZ = heatmapY.map(yVal =>
+        heatmapX.map(xVal => {
+          const found = data.find(d => d.x === xVal && d.heatmap_y === yVal);
+          return found ? found.y : 0;
+        })
+      );
+      const trace = { x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' };
+      const layout = {
+        title: { text: 'Order Count by Country and Status', font: { color: theme.text } },
+        xaxis: { title: 'shipping_address_country', color: theme.text },
+        yaxis: { title: 'status', color: theme.text },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+      Plotly.newPlot('chart-heatmap_country_status', [trace], layout, { responsive: true });
+    }
+
+
+    function showPage(pageId, clickedButton) {
+      document.querySelectorAll('.page-container').forEach(page => {
+        page.style.display = 'none';
+      });
+      document.querySelectorAll('.tab-button').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.getElementById('page-' + pageId).style.display = 'block';
+      if (clickedButton) {
+        clickedButton.classList.add('active');
+      }
+    }
+
+    // Load all charts independently (async per-chart)
+    Promise.allSettled([
+    loadChart('bar_sales_by_country', window['render_bar_sales_by_country']),
+    loadChart('pie_orders_by_status', window['render_pie_orders_by_status']),
+    loadChart('grouped_bar_country_status', window['render_grouped_bar_country_status']),
+    loadChart('stacked_bar_payment_status', window['render_stacked_bar_payment_status']),
+    loadChart('geo_sales_by_country', window['render_geo_sales_by_country']),
+    loadChart('line_orders_over_time', window['render_line_orders_over_time']),
+    loadChart('area_revenue_over_time', window['render_area_revenue_over_time']),
+    loadChart('scatter_amount_vs_tax', window['render_scatter_amount_vs_tax']),
+    loadChart('histogram_order_amounts', window['render_histogram_order_amounts']),
+    loadChart('box_amount_by_status', window['render_box_amount_by_status']),
+    loadChart('bubble_region_sales', window['render_bubble_region_sales']),
+    loadChart('heatmap_country_status', window['render_heatmap_country_status'])
+    ]);
+
+    // Initialize filter options
+    Object.keys(PAGE_CHARTS).forEach(pageId => loadFilterOptions(pageId));
+  </script>
+</body>
+</html>

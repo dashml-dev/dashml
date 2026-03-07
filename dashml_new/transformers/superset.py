@@ -1437,6 +1437,10 @@ class SupersetTransformer(Transformer):
                     print(f"✗ Failed to update dashboard: {update_response.status_code}")
                     return None
 
+                # Associate new charts with dashboard (chart-side relationship)
+                for cid in chart_ids:
+                    self._associate_chart_with_dashboard(cid, existing_dashboard_id)
+
                 print(f"✓ Updated dashboard with {len(chart_ids)} charts")
                 return existing_dashboard_id
             except Exception as e:
