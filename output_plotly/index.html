@@ -700,6 +700,10 @@
     window.render_grouped_bar_country_status = function(data) {
       const groupValues = [...new Set(data.map(d => d.grp))];
       const traces = [];
+      // Sort x categories by total y
+      const catTotals = {};
+      data.forEach(d => { catTotals[d.x] = (catTotals[d.x] || 0) + (parseFloat(d.y) || 0); });
+      const catOrder = Object.keys(catTotals).sort((a, b) => false ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
       groupValues.forEach((groupVal, idx) => {
         const filtered = data.filter(d => d.grp === groupVal);
         traces.push({
@@ -712,7 +716,7 @@
       });
       const layout = {
         title: { text: 'Orders by Country (Grouped by Status)', font: { color: theme.text } },
-        xaxis: { title: 'shipping_address_country', color: theme.text, gridcolor: theme.text + '20' },
+        xaxis: { title: 'shipping_address_country', color: theme.text, gridcolor: theme.text + '20', categoryorder: 'array', categoryarray: catOrder },
         yaxis: { title: 'order_id', color: theme.text, gridcolor: theme.text + '20' },
         barmode: 'group',
         margin: { t: 60, r: 40, b: 60, l: 60 },

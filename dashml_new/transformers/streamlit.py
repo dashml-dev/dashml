@@ -249,7 +249,7 @@ def normalize_country(value, encoding):
         derived_fields = derived_fields or []
 
         if data_type == "csv":
-            path = data_spec["path"]
+            path = data_spec.get("csv_path", data_spec["path"])
             # Build derived field computation lines (injected after CSV load)
             derived_lines = ""
             if derived_fields:
@@ -517,22 +517,35 @@ def load_data():
             code_parts.append(f'    chart_data = run_query("{chart_id}", build_filter_clause("{chart_id}", _dashboard_filters))')
             # Build rename dict from generic SQL aliases → original column names
             if chart_type in ("stacked_bar", "grouped_bar"):
-                rename_dict = {"x": x, "grp": group, "y": y}
+                rename_dict = {"x": x, "y": y}
+                if group not in (x, y):
+                    rename_dict["grp"] = group
             elif chart_type == "heatmap":
                 heatmap_y_col = chart.get("group", y)
-                rename_dict = {"x": x, "heatmap_y": heatmap_y_col, "y": y}
+                rename_dict = {"x": x, "y": y}
+                if heatmap_y_col not in (x, y):
+                    rename_dict["heatmap_y"] = heatmap_y_col
             elif chart_type == "bubble":
                 size_field_col = chart.get("size", y)
-                rename_dict = {"grp": group, "x": x, "y": y}
+                rename_dict = {"x": x, "y": y}
+                if group and group not in (x, y):
+                    rename_dict["grp"] = group
                 # Only rename size if it won't create a duplicate column name
                 if size_field_col not in (x, y):
                     rename_dict["size"] = size_field_col
             elif chart_type == "histogram":
                 rename_dict = {"x": x}
             else:  # bar, line, area, pie, geo, scatter, box
-                rename_dict = {"x": x, "y": y}
+                rename_dict = {"x": x}
+                if y != x:
+                    rename_dict["y"] = y
             if rename_dict:
                 code_parts.append(f'    chart_data = chart_data.rename(columns={repr(rename_dict)})')
+            # Re-apply sort in Python (SQL ORDER BY may not survive driver/pandas roundtrip)
+            if sort_field:
+                actual_sort_col = x if sort_field == "x" else y
+                ascending = sort_order == "asc"
+                code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
             code_parts.append(f'    chart_df = chart_data')
             code_parts.append(f'    effective_x_type = "{x_type}" if "{x_type}" != "None" else column_types.get("{x}")')
             code_parts.append(f'    x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")')
@@ -636,28 +649,37 @@ def load_data():
             code_parts.append(f'    x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")')
         x_encoding_type = ""  # Will be added dynamically at runtime
 
+        # Compute Altair x-axis sort parameter based on chart spec sort field
+        # Altair sort accepts channel names ("-y", "y") not column names
+        if sort_field == "y":
+            x_sort = '"-y"' if sort_order == "desc" else '"y"'
+        elif sort_field == "x":
+            x_sort = '"ascending"' if sort_order == "asc" else '"descending"'
+        else:
+            x_sort = "None"
+
         # Altair Chart Generation
         if chart_type == "bar":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "line":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "scatter":
-            code_parts.append(f'''    # Scatter: aggregated data points
-    c = alt.Chart(chart_data).mark_circle(color="{primary_color}", size=60).encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+            code_parts.append(f'''    # Scatter: raw data points
+    c = alt.Chart(chart_df).mark_circle(color="{primary_color}", size=60).encode(
+        x=alt.X("{x}:Q", title="{x_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
@@ -682,7 +704,7 @@ def load_data():
                 code_parts.append(f'''    # Bubble: scatter with size encoding
     c = alt.Chart(chart_data).mark_circle(color="{primary_color}").encode(
         x=alt.X("{x}:Q", title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
         tooltip=["{x}", "{y}", "{size_col}"]
     )
@@ -700,7 +722,7 @@ def load_data():
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity (data pre-aggregated by SQL query)
     heatmap_data = chart_df
     c = alt.Chart(heatmap_data).mark_rect().encode(
-        x=alt.X("{x}:N", sort=None, title="{x_label}"),
+        x=alt.X("{x}:N", sort={x_sort}, title="{x_label}"),
         y=alt.Y("{heatmap_y}:N", title="{heatmap_y_label}"),
         color=alt.Color("{value_field}:Q",
             scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"),
@@ -718,7 +740,7 @@ def load_data():
     top_y = heatmap_data.groupby("{heatmap_y}")["{value_field}"].sum().nlargest(15).index
     heatmap_data = heatmap_data[heatmap_data["{x}"].isin(top_x) & heatmap_data["{heatmap_y}"].isin(top_y)]
     c = alt.Chart(heatmap_data).mark_rect().encode(
-        x=alt.X("{x}:N", sort=None, title="{x_label}"),
+        x=alt.X("{x}:N", sort={x_sort}, title="{x_label}"),
         y=alt.Y("{heatmap_y}:N", title="{heatmap_y_label}"),
         color=alt.Color("{value_field}:Q",
             scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"),
@@ -744,8 +766,8 @@ def load_data():
 
         elif chart_type == "area":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
@@ -776,7 +798,7 @@ def load_data():
             code_parts.append(f'''    # Stacked bar: stack {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
         y=alt.Y("{y}:Q", stack="zero", title="{y_label}"),
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),
@@ -789,16 +811,21 @@ def load_data():
         elif chart_type == "grouped_bar":
             # Use secondary colors from theme for grouped bars
             group_label = self._humanize_column_name(group) if group else group
+            # Sort bars within each group by y value
+            if sort_field == "y":
+                offset_sort = f'"-y"' if sort_order == "desc" else f'"y"'
+            else:
+                offset_sort = "None"
             code_parts.append(f'''    # Grouped bar: group {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
         y=alt.Y("{y}:Q", title="{y_label}"),
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),
             legend=alt.Legend(title="{group_label}")
         ),
-        xOffset="{group}:N",
+        xOffset=alt.XOffset("{group}:N", sort={offset_sort}),
         tooltip=["{x}", "{group}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
@@ -985,5 +1012,13 @@ def load_data():
 
         return "\n".join(code_parts)
 
+    @property
+    def output_filename(self) -> str:
+        return "app.py"
+
     def get_run_command(self, output_path: str) -> str:
+        from pathlib import Path
+        output_path_obj = Path(output_path)
+        if output_path_obj.is_dir():
+            return f"{sys.executable} -m streamlit run {output_path_obj / 'app.py'}"
         return f"{sys.executable} -m streamlit run {output_path}"

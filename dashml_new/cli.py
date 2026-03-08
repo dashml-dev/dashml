@@ -7,6 +7,7 @@ import argparse
 import subprocess
 import threading
 import json
+import shutil
 from pathlib import Path
 from dashml_new.core import DashMLEngine, ValidationError, DashMLWatcher
 from dashml_new.transformers import TransformerRegistry
@@ -14,6 +15,7 @@ from dashml_new.transformers.streamlit import StreamlitTransformer
 from dashml_new.transformers.plotly import PlotlyTransformer
 from dashml_new.transformers.observable import ObservablePlotTransformer
 from dashml_new.transformers.superset import SupersetTransformer
+from dashml_new.transformers.grafana import GrafanaTransformer
 
 
 def register_builtin_transformers():
@@ -22,23 +24,25 @@ def register_builtin_transformers():
     TransformerRegistry.register(PlotlyTransformer)
     TransformerRegistry.register(ObservablePlotTransformer)
     TransformerRegistry.register(SupersetTransformer)
+    TransformerRegistry.register(GrafanaTransformer)
 
 
-def _build_db_config(args, data_type: str):
+def _build_db_config(args, data_type: str, silent: bool = False):
     """Build database config from CLI args based on data type.
 
     Returns:
         dict: Database config, or None for CSV.
-        Returns False if required args are missing (error already printed).
+        Returns False if required args are missing (error printed unless silent).
     """
     if data_type == "sql":
         required_db_args = ["db_type", "db_host", "db_port", "db_name", "db_user", "db_password"]
         missing_args = [arg for arg in required_db_args if not getattr(args, arg, None)]
 
         if missing_args:
-            print(f"Error: SQL datasource requires database configuration arguments:", file=sys.stderr)
-            for arg in missing_args:
-                print(f"  --{arg.replace('_', '-')}", file=sys.stderr)
+            if not silent:
+                print(f"Error: SQL datasource requires database configuration arguments:", file=sys.stderr)
+                for arg in missing_args:
+                    print(f"  --{arg.replace('_', '-')}", file=sys.stderr)
             return False
 
         return {
@@ -52,7 +56,8 @@ def _build_db_config(args, data_type: str):
 
     elif data_type == "bigquery":
         if not getattr(args, "bq_project", None):
-            print(f"Error: BigQuery datasource requires --bq-project argument", file=sys.stderr)
+            if not silent:
+                print(f"Error: BigQuery datasource requires --bq-project argument", file=sys.stderr)
             return False
 
         return {
@@ -91,9 +96,15 @@ def build_command(args):
 
     # Step 2: Build db_config from CLI args based on data type
     data_type = spec_raw.get("data", {}).get("type", "csv")
-    db_config = _build_db_config(args, data_type)
-    if db_config is False:
-        return 1
+    # Grafana generates static JSON — no DB connection needed at build time
+    if target == "grafana" and data_type in ("sql", "bigquery"):
+        db_config = _build_db_config(args, data_type, silent=True)
+        if db_config is False:
+            db_config = {"type": getattr(args, "db_type", None) or "postgresql"}
+    else:
+        db_config = _build_db_config(args, data_type)
+        if db_config is False:
+            return 1
 
     # Step 3: Normalize (produces NormalizedSpec with db_config baked in)
     try:
@@ -114,6 +125,20 @@ def build_command(args):
                 superset_url=args.superset_url,
                 username=args.superset_user,
                 password=args.superset_password
+            )
+        elif target == "grafana":
+            from dashml_new.transformers.grafana import GrafanaTransformer
+            csv_url = getattr(args, "grafana_csv_url", None)
+            serve_port = getattr(args, "grafana_serve_csv", None)
+            # --grafana-serve-csv: derive csv_url from the port + csv filename
+            if serve_port and data_type == "csv" and not csv_url:
+                csv_path = spec.get("data", {}).get("csv_path")
+                if csv_path:
+                    csv_filename = Path(csv_path).name
+                    csv_url = f"http://localhost:{serve_port}/{csv_filename}"
+            transformer = GrafanaTransformer(
+                datasource_uid=getattr(args, "grafana_datasource_uid", None),
+                csv_url=csv_url,
             )
         else:
             transformer = TransformerRegistry.get(target)
@@ -166,11 +191,28 @@ def build_command(args):
 
                     print(f"\n✓ Multi-file output created in: {output_dir}")
                 else:
-                    # Single-file output - write normally
-                    output_file = Path(output_path)
-                    output_file.parent.mkdir(parents=True, exist_ok=True)
-                    output_file.write_text(code, encoding="utf-8")
-                    print(f"✓ Output written to: {output_path}")
+                    # Single-file output - write inside a directory
+                    output_dir = Path(output_path)
+                    # If a file exists at this path, remove it so we can create a directory
+                    if output_dir.is_file():
+                        output_dir.unlink()
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    # Clean stale files from previous builds of different type
+                    for stale in ("app.py", "index.html"):
+                        stale_file = output_dir / stale
+                        if stale_file.exists() and stale != transformer.output_filename:
+                            stale_file.unlink()
+                    out_file = output_dir / transformer.output_filename
+                    out_file.write_text(code, encoding="utf-8")
+                    print(f"✓ Output written to: {out_file}")
+
+                    # For CSV data sources, copy CSV into output dir so it's served alongside
+                    if data_type == "csv":
+                        csv_path = spec.get("data", {}).get("csv_path")
+                        if csv_path and Path(csv_path).exists():
+                            csv_dest = output_dir / Path(csv_path).name
+                            shutil.copy2(csv_path, csv_dest)
+                            print(f"✓ Copied data file: {csv_dest}")
             except Exception as e:
                 print(f"Error writing output: {e}", file=sys.stderr)
                 return 1
@@ -182,6 +224,31 @@ def build_command(args):
             else:
                 print("\n--- Generated Code ---")
                 print(code)
+
+    # Start CSV file server for Grafana if requested
+    if target == "grafana" and getattr(args, "grafana_serve_csv", None) and output_path:
+        serve_port = args.grafana_serve_csv
+        serve_dir = Path(output_path).resolve()
+        import http.server
+        import functools
+
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(serve_dir))
+        try:
+            httpd = http.server.HTTPServer(("", serve_port), handler)
+        except OSError as e:
+            print(f"Error: Could not start CSV server on port {serve_port}: {e}", file=sys.stderr)
+            return 1
+
+        server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        server_thread.start()
+        print(f"\n✓ Serving CSV at http://localhost:{serve_port}/")
+        print(f"  Keep this process running while Grafana is open. Press Ctrl+C to stop.\n")
+        try:
+            server_thread.join()
+        except KeyboardInterrupt:
+            httpd.shutdown()
+            print("\n✓ CSV server stopped")
+            return 0
 
     # Run the dashboard if --run flag is set
     if args.run and output_path:
@@ -271,9 +338,25 @@ def watch_command(args):
                 for warning in warnings:
                     print(f"  - {warning}")
 
-            # Write output
-            Path(output_path).write_text(code, encoding="utf-8")
-            print(f"✓ Written to {output_path}")
+            # Write output (directory-based, consistent with build_command)
+            output_dir = Path(output_path)
+            if output_dir.is_file():
+                output_dir.unlink()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            # Clean stale files from previous builds of different type
+            for stale in ("app.py", "index.html"):
+                stale_file = output_dir / stale
+                if stale_file.exists() and stale != transformer.output_filename:
+                    stale_file.unlink()
+            out_file = output_dir / transformer.output_filename
+            out_file.write_text(code, encoding="utf-8")
+            # Copy CSV data file if needed
+            data_type = spec.get("data", {}).get("type", "csv")
+            if data_type == "csv":
+                csv_path = spec.get("data", {}).get("csv_path")
+                if csv_path and Path(csv_path).exists():
+                    shutil.copy2(csv_path, output_dir / Path(csv_path).name)
+            print(f"✓ Written to {out_file}")
 
         except ValidationError as e:
             print(f"✗ Validation Error: {e}", file=sys.stderr)
@@ -380,6 +463,23 @@ Examples:
     build_parser.add_argument(
         "--superset-password",
         help="Superset password (for superset backend only)"
+    )
+    build_parser.add_argument(
+        "--grafana-datasource-uid",
+        help="Grafana datasource UID (for grafana backend; default: placeholder for import wizard)"
+    )
+    build_parser.add_argument(
+        "--grafana-csv-url",
+        help="URL serving the CSV file (for grafana backend with Infinity plugin)"
+    )
+    build_parser.add_argument(
+        "--grafana-serve-csv",
+        type=int,
+        nargs="?",
+        const=8888,
+        default=None,
+        metavar="PORT",
+        help="Start a local HTTP server for the CSV file (default port: 8888, for grafana backend with Infinity plugin)"
     )
 
     # Database arguments (for SQL datasources)

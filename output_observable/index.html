@@ -652,7 +652,7 @@
                         x: "grp",
                         y: "y",
                         fill: "grp",
-                        tip: true
+                        tip: true, sort: {x: "-y"}
                     }),
                     Plot.ruleY([0])
                 ],
@@ -661,6 +661,7 @@
                     axis: null
                 },
                 fx: {
+                    domain: d3.groupSort(data, g => -d3.sum(g, d => d.y), d => d.x),
                     padding: 0.2,
                     tickRotate: -45,
                     label: "shipping_address_country"

@@ -7,12 +7,12 @@ These constants are used across all transformers to ensure consistent behavior.
 # Chart type categorization by data requirements
 # Charts that need data aggregation (groupby + agg function)
 CHARTS_NEED_AGGREGATION = frozenset({
-    "bar", "line", "area", "pie", "stacked_bar", "grouped_bar", "scatter", "bubble", "heatmap", "geo"
+    "bar", "line", "area", "pie", "stacked_bar", "grouped_bar", "bubble", "heatmap", "geo"
 })
 
 # Charts that work with raw data points (no aggregation)
 # These compute their own statistics (bins for histogram, quartiles for box)
-CHARTS_USE_RAW_DATA = frozenset({"histogram", "box"})
+CHARTS_USE_RAW_DATA = frozenset({"histogram", "box", "scatter"})
 
 # Scalar widgets: return a single aggregated value, no x-axis
 CHARTS_SCALAR = frozenset({"metric"})

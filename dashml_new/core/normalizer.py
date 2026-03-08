@@ -141,6 +141,16 @@ class DashMLNormalizer:
         if chart_type in ("bar", "line", "area", "pie", "geo"):
             return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}{order}{limit_clause}"
         elif chart_type in ("stacked_bar", "grouped_bar"):
+            if sort_field == "y":
+                # Sort x categories by aggregate total across all groups
+                direction = 'ASC' if sort_order == 'asc' else 'DESC'
+                return (
+                    f"SELECT agg.x, agg.grp, agg.y FROM"
+                    f" (SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}, {group}) agg"
+                    f" JOIN (SELECT {x} AS x, {sql_agg}({y}) AS x_total FROM {T} WHERE {F} GROUP BY {x}) totals"
+                    f" ON agg.x = totals.x"
+                    f" ORDER BY totals.x_total {direction}, agg.x{limit_clause}"
+                )
             return f"SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}, {group}{order}{limit_clause}"
         elif chart_type == "heatmap":
             hy = group if group else y
@@ -155,6 +165,8 @@ class DashMLNormalizer:
             return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL"
         elif chart_type == "bubble":
             size_ref = size_field or y
+            if not group:
+                return f"SELECT {x} AS x, {y} AS y, {size_ref} AS size FROM {T} WHERE {F}"
             return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {T} WHERE {F} GROUP BY {group}{order}{limit_clause}"
         elif chart_type == "histogram":
             return f"SELECT {x} AS x FROM {T} WHERE {F} AND {x} IS NOT NULL"

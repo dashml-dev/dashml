@@ -76,8 +76,8 @@ class PlotlyTransformer(Transformer):
 
         for chart in all_charts:
             chart_type = chart.get("type")
-            if chart_type in ["stacked_bar", "grouped_bar"]:
-                self.warn(f"'{chart_type}' requires a grouping column - not yet fully supported")
+            if chart_type in ["stacked_bar", "grouped_bar"] and not chart.get("group"):
+                self.warn(f"'{chart_type}' chart '{chart.get('id')}' is missing a 'group' field")
 
         html_parts = []
 
@@ -340,8 +340,8 @@ if __name__ == '__main__':
     print(f"Project: {{PROJECT_ID}}")
     print(f"Dataset: {{DATASET}}")
     print(f"Table: {{TABLE_NAME}}")
-    print(f"Dashboard available at: http://localhost:5002")
-    app.run(debug=True, port=5002)
+    print(f"Dashboard available at: http://localhost:5001")
+    app.run(debug=True, port=5001)
 '''
 
     def _generate_html_header(self, title: str, colors: Dict[str, str]) -> str:
@@ -1090,8 +1090,8 @@ if __name__ == '__main__':
 
         return f'''    function renderChart(chart) {{
       // Chart types that need aggregation vs raw data
-      const chartsNeedAggregation = new Set(['bar', 'line', 'area', 'pie', 'stacked_bar', 'grouped_bar', 'scatter']);
-      const chartsUseRawData = new Set(['histogram']);
+      const chartsNeedAggregation = new Set(['bar', 'line', 'area', 'pie', 'stacked_bar', 'grouped_bar']);
+      const chartsUseRawData = new Set(['histogram', 'scatter']);
 
       let traces = [];
       let barmode = undefined;
@@ -1142,6 +1142,14 @@ if __name__ == '__main__':
             marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
           }});
         }});
+
+        // Sort x categories by aggregate y total
+        if (aggOptions.sort === 'y') {{
+          const catTotals = {{}};
+          aggregated.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (d.y || 0); }});
+          const asc = aggOptions.sortOrder !== 'desc';
+          window.__catOrder = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
+        }}
 
         barmode = chart.type === 'stacked_bar' ? 'stack' : 'group';
       }} else {{
@@ -1277,6 +1285,13 @@ if __name__ == '__main__':
 
       if (barmode) {{
         layout.barmode = barmode;
+      }}
+
+      // Apply category order for sorted grouped/stacked bars
+      if (window.__catOrder) {{
+        layout.xaxis.categoryorder = 'array';
+        layout.xaxis.categoryarray = window.__catOrder;
+        delete window.__catOrder;
       }}
 
       Plotly.newPlot('chart', traces, layout, {{ responsive: true }});
@@ -1467,6 +1482,15 @@ if __name__ == '__main__':
         plot_bgcolor: 'rgba(0,0,0,0)'
       }};
 
+      // Sort x categories by aggregate y total
+      if ('{sort_field}' === 'y') {{
+        const catTotals = {{}};
+        aggregated.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (d.y || 0); }});
+        const asc = '{sort_order}' !== 'desc';
+        layout.xaxis.categoryorder = 'array';
+        layout.xaxis.categoryarray = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
+      }}
+
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
             elif chart_type == "bubble" and group:
@@ -1488,7 +1512,7 @@ if __name__ == '__main__':
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: theme.secondary ? theme.secondary.slice(0, bubbleData.length) : theme.primary,
+          color: theme.secondary ? bubbleData.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
           sizemode: 'diameter'
         }},
         hovertemplate: bubbleData.map(d => d.group + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>{size_field or y}: ' + d.size + '<extra></extra>')
@@ -1965,13 +1989,13 @@ if __name__ == '__main__':
         from pathlib import Path
         output_path_obj = Path(output_path)
 
-        # If output is a directory (multi-file), run Flask
-        if output_path_obj.is_dir():
+        # If output is a directory with Flask app, run Flask
+        if output_path_obj.is_dir() and (output_path_obj / "app.py").exists():
             return f"cd {output_path} && {sys.executable} app.py"
 
-        # Otherwise run simple HTTP server for single HTML file
-        output_dir = output_path_obj.parent.resolve()
-        return f"cd {output_dir} && {sys.executable} -m http.server 8000"
+        # Otherwise serve directory with http.server (index.html served at /)
+        serve_dir = output_path_obj if output_path_obj.is_dir() else output_path_obj.parent
+        return f"cd {serve_dir} && echo Dashboard available at: http://localhost:5001 && {sys.executable} -m http.server 5001"
 
     def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -2146,8 +2170,8 @@ def get_filter_options(field):
 
 if __name__ == '__main__':
     print("Starting Flask server...")
-    print(f"Dashboard available at: http://localhost:5002")
-    app.run(debug=True, port=5002)
+    print(f"Dashboard available at: http://localhost:5001")
+    app.run(debug=True, port=5001)
 '''
 
     def _generate_sql_frontend(self, spec: "NormalizedSpec", title: str, colors: Dict[str, str]) -> str:
@@ -2174,7 +2198,9 @@ if __name__ == '__main__':
         return "\n".join(html_parts)
 
     def _generate_javascript_sql(self, charts: list, colors: Dict[str, str]) -> str:
-        """Generate JavaScript that fetches from Flask API instead of CSV"""
+        """DEPRECATED: Dead code — references non-existent /api/data endpoint.
+        Multi-page SQL mode uses _generate_javascript_pages instead.
+        Kept for reference only; do not call."""
         colors = dict(colors)
         colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)
@@ -2222,7 +2248,6 @@ if __name__ == '__main__':
           return parsedRow;
         });
 
-        console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
         renderChart(charts[0]);
       })
       .catch(error => {
@@ -2273,6 +2298,8 @@ if __name__ == '__main__':
             group = chart.get("group")
             size_field = chart.get("size")
             bins = chart.get("bins", 20)
+            sort_field = chart.get("sort")
+            sort_order = chart.get("sort_order", "asc")
             format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
             suffix = chart.get("suffix", "")          # metric: unit text
 
@@ -2284,10 +2311,22 @@ if __name__ == '__main__':
     }}''')
             elif chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
+                # Compute category order: sort x categories by aggregate y total
+                if sort_field == "y":
+                    ascending_js = "true" if sort_order == "asc" else "false"
+                    category_order_js = f"""
+      // Sort x categories by total y
+      const catTotals = {{}};
+      data.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (parseFloat(d.y) || 0); }});
+      const catOrder = Object.keys(catTotals).sort((a, b) => {ascending_js} ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);"""
+                    xaxis_js = f"title: '{x}', color: theme.text, gridcolor: theme.text + '20', categoryorder: 'array', categoryarray: catOrder"
+                else:
+                    category_order_js = ""
+                    xaxis_js = f"title: '{x}', color: theme.text, gridcolor: theme.text + '20'"
                 chart_functions.append(f'''
     window.render_{chart_id} = function(data) {{
       const groupValues = [...new Set(data.map(d => d.grp))];
-      const traces = [];
+      const traces = [];{category_order_js}
       groupValues.forEach((groupVal, idx) => {{
         const filtered = data.filter(d => d.grp === groupVal);
         traces.push({{
@@ -2300,7 +2339,7 @@ if __name__ == '__main__':
       }});
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
+        xaxis: {{ {xaxis_js} }},
         yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
         barmode: '{barmode}',
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},

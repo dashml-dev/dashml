@@ -9,7 +9,7 @@ CHART_QUERIES = {
     "avg_order_value_kpi": """SELECT AVG(total_amount) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause}""",
     "bar_sales_by_country": """SELECT shipping_address_country AS x, SUM(total_amount) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country""",
     "pie_orders_by_status": """SELECT status AS x, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY status""",
-    "grouped_bar_country_status": """SELECT shipping_address_country AS x, status AS grp, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country, status ORDER BY y DESC""",
+    "grouped_bar_country_status": """SELECT agg.x, agg.grp, agg.y FROM (SELECT shipping_address_country AS x, status AS grp, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country, status) agg JOIN (SELECT shipping_address_country AS x, COUNT(order_id) AS x_total FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country) totals ON agg.x = totals.x ORDER BY totals.x_total DESC, agg.x""",
     "stacked_bar_payment_status": """SELECT payment_method AS x, status AS grp, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY payment_method, status""",
     "geo_sales_by_country": """SELECT shipping_address_country AS x, SUM(total_amount) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country""",
     "line_orders_over_time": """SELECT order_date AS x, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY order_date ORDER BY x ASC""",
@@ -273,20 +273,21 @@ def main():
         # Chart: grouped_bar_country_status
         st.subheader("Orders by Country (Grouped by Status)")
         chart_data = run_query("grouped_bar_country_status", build_filter_clause("grouped_bar_country_status", _dashboard_filters))
-        chart_data = chart_data.rename(columns={'x': 'shipping_address_country', 'grp': 'status', 'y': 'order_id'})
+        chart_data = chart_data.rename(columns={'x': 'shipping_address_country', 'y': 'order_id', 'grp': 'status'})
+        chart_data = chart_data.sort_values("order_id", ascending=False)
         chart_df = chart_data
         effective_x_type = "None" if "None" != "None" else column_types.get("shipping_address_country")
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         # Grouped bar: group order_id by status
         theme_colors = ['#50fa7b', '#ffb86c', '#ff5555', '#8be9fd', '#f1fa8c']
         c = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X("shipping_address_country" + x_encoding_suffix, sort=None, title="Shipping Address Country"),
+            x=alt.X("shipping_address_country" + x_encoding_suffix, sort="-y", title="Shipping Address Country"),
             y=alt.Y("order_id:Q", title="Order Id"),
             color=alt.Color("status:N",
                 scale=alt.Scale(range=theme_colors),
                 legend=alt.Legend(title="Status")
             ),
-            xOffset="status:N",
+            xOffset=alt.XOffset("status:N", sort="-y"),
             tooltip=["shipping_address_country", "status", "order_id"]
         )
         st.altair_chart(c, use_container_width=True)
@@ -295,7 +296,7 @@ def main():
         # Chart: stacked_bar_payment_status
         st.subheader("Orders by Payment Method (Stacked by Status)")
         chart_data = run_query("stacked_bar_payment_status", build_filter_clause("stacked_bar_payment_status", _dashboard_filters))
-        chart_data = chart_data.rename(columns={'x': 'payment_method', 'grp': 'status', 'y': 'order_id'})
+        chart_data = chart_data.rename(columns={'x': 'payment_method', 'y': 'order_id', 'grp': 'status'})
         chart_df = chart_data
         effective_x_type = "None" if "None" != "None" else column_types.get("payment_method")
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
@@ -410,10 +411,10 @@ def main():
         chart_df = chart_data
         effective_x_type = "None" if "None" != "None" else column_types.get("total_amount")
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
-        # Scatter: aggregated data points
-        c = alt.Chart(chart_data).mark_circle(color="#bd93f9", size=60).encode(
-            x=alt.X("total_amount" + x_encoding_suffix, sort=None, title="Total Amount"),
-            y=alt.Y("tax_amount", title="Tax Amount"),
+        # Scatter: raw data points
+        c = alt.Chart(chart_df).mark_circle(color="#bd93f9", size=60).encode(
+            x=alt.X("total_amount:Q", title="Total Amount"),
+            y=alt.Y("tax_amount:Q", title="Tax Amount"),
             tooltip=["total_amount", "tax_amount"]
         )
         st.altair_chart(c, use_container_width=True)
@@ -454,7 +455,7 @@ def main():
         # Chart: bubble_region_sales
         st.subheader("Sales vs Tax by Region")
         chart_data = run_query("bubble_region_sales", build_filter_clause("bubble_region_sales", _dashboard_filters))
-        chart_data = chart_data.rename(columns={'grp': 'shipping_address_state', 'x': 'total_amount', 'y': 'tax_amount'})
+        chart_data = chart_data.rename(columns={'x': 'total_amount', 'y': 'tax_amount', 'grp': 'shipping_address_state'})
         chart_df = chart_data
         effective_x_type = "None" if "None" != "None" else column_types.get("total_amount")
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
@@ -472,7 +473,7 @@ def main():
         # Chart: heatmap_country_status
         st.subheader("Order Count by Country and Status")
         chart_data = run_query("heatmap_country_status", build_filter_clause("heatmap_country_status", _dashboard_filters))
-        chart_data = chart_data.rename(columns={'x': 'shipping_address_country', 'heatmap_y': 'status', 'y': 'order_id'})
+        chart_data = chart_data.rename(columns={'x': 'shipping_address_country', 'y': 'order_id', 'heatmap_y': 'status'})
         chart_df = chart_data
         effective_x_type = "None" if "None" != "None" else column_types.get("shipping_address_country")
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")

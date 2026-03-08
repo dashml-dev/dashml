@@ -592,7 +592,7 @@ class ObservablePlotTransformer(Transformer):
 
         # Generate Observable Plot mark based on chart type
         sequential_scheme = colors.get("sequential", "blues")
-        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field, sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"))
+        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field, sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"), sort_field=sort_field, sort_order=sort_order)
 
         # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
         # TODO: [Magic Values] Extract temporal field names to module-level constant
@@ -1021,7 +1021,7 @@ class ObservablePlotTransformer(Transformer):
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None) -> str:
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc") -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -1176,6 +1176,12 @@ class ObservablePlotTransformer(Transformer):
         elif chart_type == "stacked_bar":
             # Observable Plot stacks by default when using fill with categorical data
             color_scale_json = str(secondary_colors).replace("'", '"')
+            # Sort x categories by aggregate y total
+            if sort_field == "y":
+                sign = "" if sort_order == "asc" else "-"
+                x_domain = f"d3.groupSort(data_{data_var}, g => {sign}d3.sum(g, d => d.{y}), d => d.{x})"
+            else:
+                x_domain = f"[...new Set(data_{data_var}.map(d => d.{x}))]"
             return f"""marks: [
                     Plot.barY(data_{data_var}, {{
                         x: "{x}",
@@ -1185,6 +1191,9 @@ class ObservablePlotTransformer(Transformer):
                     }}),
                     Plot.ruleY([0])
                 ],
+                x: {{
+                    domain: {x_domain}
+                }},
                 color: {{
                     domain: [...new Set(data_{data_var}.map(d => d.{group}))],
                     range: {color_scale_json}
@@ -1194,13 +1203,20 @@ class ObservablePlotTransformer(Transformer):
             # Observable Plot groups bars using fx channel for faceting
             # fx creates separate facets (groups), x positions bars within each facet
             color_scale_json = str(secondary_colors).replace("'", '"')
+            # Sort x categories by aggregate y (total per category), not by individual row y
+            if sort_field == "y":
+                sign = "" if sort_order == "asc" else "-"
+                fx_domain = f"d3.groupSort(data_{data_var}, g => {sign}d3.sum(g, d => d.{y}), d => d.{x})"
+            else:
+                fx_domain = f"[...new Set(data_{data_var}.map(d => d.{x}))]"
+            sort_mark = f', sort: {{x: "-y"}}' if sort_field == "y" and sort_order == "desc" else (f', sort: {{x: "y"}}' if sort_field == "y" else "")
             return f"""marks: [
                     Plot.barY(data_{data_var}, {{
                         fx: "{x}",
                         x: "{group}",
                         y: "{y}",
                         fill: "{group}",
-                        tip: true
+                        tip: true{sort_mark}
                     }}),
                     Plot.ruleY([0])
                 ],
@@ -1209,6 +1225,7 @@ class ObservablePlotTransformer(Transformer):
                     axis: null
                 }},
                 fx: {{
+                    domain: {fx_domain},
                     padding: 0.2
                 }},
                 color: {{
@@ -1256,13 +1273,13 @@ class ObservablePlotTransformer(Transformer):
         from pathlib import Path
         output_path_obj = Path(output_path)
 
-        # If output is a directory (multi-file), run Flask
-        if output_path_obj.is_dir():
+        # If output is a directory with Flask app, run Flask
+        if output_path_obj.is_dir() and (output_path_obj / "app.py").exists():
             return f"cd {output_path} && {sys.executable} app.py"
 
-        # Otherwise run simple HTTP server for single HTML file
-        output_dir = output_path_obj.parent.resolve()
-        return f"cd {output_dir} && {sys.executable} -m http.server 8000"
+        # Otherwise serve directory with http.server (index.html served at /)
+        serve_dir = output_path_obj if output_path_obj.is_dir() else output_path_obj.parent
+        return f"cd {serve_dir} && echo Dashboard available at: http://localhost:5001 && {sys.executable} -m http.server 5001"
 
     def _generate_geo_js_helpers_inline(self) -> str:
         """Emit JS mapping tables + detectGeoEncoding + normalizeCountryToTopo for inline script blocks."""
@@ -2117,6 +2134,9 @@ if __name__ == '__main__':
         y = chart["y"]
         group = chart.get("group")
         size_field = chart.get("size")
+        x_type = chart.get("x_type")
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
         bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
         format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
         suffix = chart.get("suffix", "")          # metric: unit text
@@ -2253,7 +2273,12 @@ if __name__ == '__main__':
                 }},
                 y: {{ label: "{y}" }}"""
         elif chart_type == "line":
-            preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+            if x_type == "number":
+                preprocess = "data = data.filter(d => d.x != null && d.y != null);"
+                x_axis = f"""x: {{ label: "{x}" }}"""
+            else:
+                preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+                x_axis = f"""x: {{ type: "utc", tickRotate: -45, label: "{x}" }}"""
             margin_bottom = 100
             mark_code = f"""marks: [
                     Plot.line(data, {{
@@ -2271,7 +2296,7 @@ if __name__ == '__main__':
                     }}),
                     Plot.ruleY([0])
                 ],
-                x: {{ type: "utc", tickRotate: -45, label: "{x}" }},
+                {x_axis},
                 y: {{ label: "{y}" }}"""
         elif chart_type == "scatter":
             preprocess = "data = data.filter(d => d.x != null && d.y != null);"
@@ -2289,7 +2314,12 @@ if __name__ == '__main__':
                 x: {{ label: "{x}" }},
                 y: {{ label: "{y}" }}"""
         elif chart_type == "area":
-            preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+            if x_type == "number":
+                preprocess = "data = data.filter(d => d.x != null && d.y != null);"
+                x_axis = f"""x: {{ label: "{x}" }}"""
+            else:
+                preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+                x_axis = f"""x: {{ type: "utc", tickRotate: -45, label: "{x}" }}"""
             margin_bottom = 100
             mark_code = f"""marks: [
                     Plot.areaY(data, {{
@@ -2301,7 +2331,7 @@ if __name__ == '__main__':
                     }}),
                     Plot.ruleY([0])
                 ],
-                x: {{ type: "utc", tickRotate: -45, label: "{x}" }},
+                {x_axis},
                 y: {{ label: "{y}" }}"""
         elif chart_type == "histogram":
             preprocess = "data = data.filter(d => d.x != null).map(d => ({...d, x: +d.x}));"
@@ -2330,6 +2360,12 @@ if __name__ == '__main__':
                 y: {{ label: "{y}" }}"""
         elif chart_type in ("stacked_bar", "grouped_bar"):
             color_scale_json = str(secondary_colors).replace("'", '"')
+            # Sort x categories by aggregate y total for stacked/grouped bars
+            if sort_field == "y":
+                sign = "" if sort_order == "asc" else "-"
+                x_domain_sql = f"d3.groupSort(data, g => {sign}d3.sum(g, d => d.y), d => d.x)"
+            else:
+                x_domain_sql = "[...new Set(data.map(d => d.x))]"
             if chart_type == "stacked_bar":
                 mark_code = f"""marks: [
                     Plot.barY(data, {{
@@ -2342,7 +2378,7 @@ if __name__ == '__main__':
                     Plot.ruleY([0])
                 ],
                 x: {{
-                    domain: [...new Set(data.map(d => d.x))],
+                    domain: {x_domain_sql},
                     tickRotate: -45,
                     label: "{x}"
                 }},
@@ -2352,13 +2388,20 @@ if __name__ == '__main__':
                     range: {color_scale_json}
                 }}"""
             else:  # grouped_bar
+                # Sort x categories by aggregate y total, not individual row y
+                if sort_field == "y":
+                    sign = "" if sort_order == "asc" else "-"
+                    fx_domain = f"d3.groupSort(data, g => {sign}d3.sum(g, d => d.y), d => d.x)"
+                else:
+                    fx_domain = "[...new Set(data.map(d => d.x))]"
+                sort_mark = ', sort: {x: "-y"}' if sort_field == "y" and sort_order == "desc" else (', sort: {x: "y"}' if sort_field == "y" else "")
                 mark_code = f"""marks: [
                     Plot.barY(data, {{
                         fx: "x",
                         x: "grp",
                         y: "y",
                         fill: "grp",
-                        tip: true
+                        tip: true{sort_mark}
                     }}),
                     Plot.ruleY([0])
                 ],
@@ -2367,6 +2410,7 @@ if __name__ == '__main__':
                     axis: null
                 }},
                 fx: {{
+                    domain: {fx_domain},
                     padding: 0.2,
                     tickRotate: -45,
                     label: "{x}"

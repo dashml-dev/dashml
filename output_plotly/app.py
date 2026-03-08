@@ -30,7 +30,7 @@ CHART_QUERIES = {
     "avg_order_value_kpi": """SELECT AVG(total_amount) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause}""",
     "bar_sales_by_country": """SELECT shipping_address_country AS x, SUM(total_amount) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country""",
     "pie_orders_by_status": """SELECT status AS x, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY status""",
-    "grouped_bar_country_status": """SELECT shipping_address_country AS x, status AS grp, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country, status ORDER BY y DESC""",
+    "grouped_bar_country_status": """SELECT agg.x, agg.grp, agg.y FROM (SELECT shipping_address_country AS x, status AS grp, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country, status) agg JOIN (SELECT shipping_address_country AS x, COUNT(order_id) AS x_total FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country) totals ON agg.x = totals.x ORDER BY totals.x_total DESC, agg.x""",
     "stacked_bar_payment_status": """SELECT payment_method AS x, status AS grp, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY payment_method, status""",
     "geo_sales_by_country": """SELECT shipping_address_country AS x, SUM(total_amount) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY shipping_address_country""",
     "line_orders_over_time": """SELECT order_date AS x, COUNT(order_id) AS y FROM `big-data-project-sn.sales.orders` WHERE {filter_clause} GROUP BY order_date ORDER BY x ASC""",
@@ -180,5 +180,5 @@ if __name__ == '__main__':
     print(f"Project: {PROJECT_ID}")
     print(f"Dataset: {DATASET}")
     print(f"Table: {TABLE_NAME}")
-    print(f"Dashboard available at: http://localhost:5002")
-    app.run(debug=True, port=5002)
+    print(f"Dashboard available at: http://localhost:5001")
+    app.run(debug=True, port=5001)

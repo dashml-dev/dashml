@@ -103,6 +103,11 @@ class Transformer(ABC):
         """
         return True
 
+    @property
+    def output_filename(self) -> str:
+        """Default output filename when writing single-file output into a directory."""
+        return "index.html"
+
     @abstractmethod
     def get_run_command(self, output_path: str) -> str:
         """
