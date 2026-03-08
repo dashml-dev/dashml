@@ -1,10 +1,10 @@
 version: 0.1
-title: "SQL Definitive - All Chart Types"
+title: "BigQuery Definitive - All Chart Types"
 style: "dracula"
 
 data:
-  type: sql
-  path: "public.orders"
+  type: bigquery
+  path: "sales.orders"
 
 pages:
   - id: "categorical_charts"

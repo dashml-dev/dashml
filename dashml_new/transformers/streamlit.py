@@ -361,13 +361,14 @@ def load_data():
 
             # Build credentials loading code
             if credentials_path:
+                safe_path = credentials_path.replace(chr(92), '/')
                 credentials_code = f'''
         from google.oauth2 import service_account
         credentials = service_account.Credentials.from_service_account_file(
-            "{credentials_path}",
+            "{safe_path}",
             scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
-        client = bigquery.Client(project="{project}", credentials=credentials)'''
+        client = bigquery.Client(credentials=credentials)'''
             else:
                 credentials_code = f'''
         # Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
@@ -522,7 +523,10 @@ def load_data():
                 rename_dict = {"x": x, "heatmap_y": heatmap_y_col, "y": y}
             elif chart_type == "bubble":
                 size_field_col = chart.get("size", y)
-                rename_dict = {"grp": group, "x": x, "y": y, "size": size_field_col}
+                rename_dict = {"grp": group, "x": x, "y": y}
+                # Only rename size if it won't create a duplicate column name
+                if size_field_col not in (x, y):
+                    rename_dict["size"] = size_field_col
             elif chart_type == "histogram":
                 rename_dict = {"x": x}
             else:  # bar, line, area, pie, geo, scatter, box
@@ -660,6 +664,8 @@ def load_data():
 
         elif chart_type == "bubble":
             size_field = chart.get("size", y)  # Default to y if size not specified
+            # In SQL mode, if size overlaps with x or y, the column keeps its "size" alias
+            size_col = "size" if (sql_mode and size_field in (x, y)) else size_field
             size_label = self._humanize_column_name(size_field)
             if group:
                 group_label = self._humanize_column_name(group)
@@ -667,9 +673,9 @@ def load_data():
     c = alt.Chart(chart_data).mark_circle().encode(
         x=alt.X("{x}:Q", title="{x_label}"),
         y=alt.Y("{y}:Q", title="{y_label}"),
-        size=alt.Size("{size_field}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
+        size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
         color=alt.Color("{group}:N", legend=alt.Legend(title="{group_label}")),
-        tooltip=["{group}", "{x}", "{y}", "{size_field}"]
+        tooltip=["{group}", "{x}", "{y}", "{size_col}"]
     )
     st.altair_chart(c, use_container_width=True)''')
             else:
@@ -677,8 +683,8 @@ def load_data():
     c = alt.Chart(chart_data).mark_circle(color="{primary_color}").encode(
         x=alt.X("{x}:Q", title="{x_label}"),
         y=alt.Y("{y}", title="{y_label}"),
-        size=alt.Size("{size_field}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
-        tooltip=["{x}", "{y}", "{size_field}"]
+        size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
+        tooltip=["{x}", "{y}", "{size_col}"]
     )
     st.altair_chart(c, use_container_width=True)''')
 

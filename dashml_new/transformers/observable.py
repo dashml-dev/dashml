@@ -1469,13 +1469,15 @@ if __name__ == '__main__':
         allowed_fields_code = f"ALLOWED_FILTER_FIELDS = frozenset({repr(all_filter_fields)})"
 
         if credentials_path:
+            safe_path = credentials_path.replace(chr(92), '/')
             credentials_code = f'''
 from google.oauth2 import service_account
 credentials = service_account.Credentials.from_service_account_file(
-    "{credentials_path}",
+    "{safe_path}",
     scopes=["https://www.googleapis.com/auth/cloud-platform"]
 )
-client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
+# Use the service account\'s own project for billing; table refs use PROJECT_ID
+client = bigquery.Client(credentials=credentials)
 '''
         else:
             credentials_code = '''
@@ -1485,6 +1487,7 @@ client = bigquery.Client(project=PROJECT_ID)
         return f'''from flask import Flask, jsonify, send_from_directory, request
 from google.cloud import bigquery
 import json
+import traceback
 from datetime import date, datetime
 from decimal import Decimal
 import os
@@ -1576,6 +1579,7 @@ def get_chart_data(chart_id):
     try:
         filter_clause = build_filter_clause(chart_id, request.args)
         query = query_template.format(filter_clause=filter_clause)
+        print(f"[BQ] chart={{chart_id}} query={{query[:200]}}")
         query_job = client.query(query)
         results = query_job.result()
         data = [dict(row) for row in results]
@@ -1584,6 +1588,7 @@ def get_chart_data(chart_id):
             mimetype='application/json'
         )
     except Exception as e:
+        traceback.print_exc()
         return jsonify({{"error": str(e)}}), 500
 
 @app.route('/api/filter/<field>')
@@ -1592,11 +1597,13 @@ def get_filter_options(field):
         return jsonify({{"error": "Field not allowed"}}), 403
     try:
         query = "SELECT DISTINCT `" + field + "` FROM `{project}.{dataset}.{table_name}` WHERE `" + field + "` IS NOT NULL ORDER BY 1 LIMIT 500"
+        print(f"[BQ] filter={{field}} query={{query[:200]}}")
         query_job = client.query(query)
         results = query_job.result()
         values = [str(row[0]) for row in results if row[0] is not None]
         return jsonify(sorted(values))
     except Exception as e:
+        traceback.print_exc()
         return jsonify({{"error": str(e)}}), 500
 
 if __name__ == '__main__':
@@ -1810,7 +1817,10 @@ if __name__ == '__main__':
             try {
                 const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
                 const resp = await fetch(url);
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                if (!resp.ok) {
+                    const body = await resp.json().catch(() => ({}));
+                    throw new Error(body.error || 'HTTP ' + resp.status);
+                }
                 const data = await resp.json();
                 container.innerHTML = '';
                 renderFn(data);
@@ -1827,7 +1837,10 @@ if __name__ == '__main__':
             try {
                 const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
                 const resp = await fetch(url);
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                if (!resp.ok) {
+                    const body = await resp.json().catch(() => ({}));
+                    throw new Error(body.error || 'HTTP ' + resp.status);
+                }
                 const data = await resp.json();
                 renderFn(data);
             } catch (err) {
@@ -2053,7 +2066,7 @@ if __name__ == '__main__':
             for (const field of pageInfo.filter_fields) {{
                 const isSel = !!document.getElementById('filter-' + pageId + '-' + field);
                 fetch('/api/filter/' + field)
-                    .then(r => r.json())
+                    .then(r => {{ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }})
                     .then(values => {{
                         if (isSel) {{
                             const sel = document.getElementById('filter-' + pageId + '-' + field);
