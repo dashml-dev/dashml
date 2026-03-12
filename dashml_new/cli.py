@@ -16,6 +16,7 @@ from dashml_new.transformers.plotly import PlotlyTransformer
 from dashml_new.transformers.observable import ObservablePlotTransformer
 from dashml_new.transformers.superset import SupersetTransformer
 from dashml_new.transformers.grafana import GrafanaTransformer
+from dashml_new.transformers.vegalite import VegaLiteTransformer
 
 
 def register_builtin_transformers():
@@ -25,6 +26,7 @@ def register_builtin_transformers():
     TransformerRegistry.register(ObservablePlotTransformer)
     TransformerRegistry.register(SupersetTransformer)
     TransformerRegistry.register(GrafanaTransformer)
+    TransformerRegistry.register(VegaLiteTransformer)
 
 
 def _build_db_config(args, data_type: str, silent: bool = False):
@@ -140,6 +142,32 @@ def build_command(args):
                 datasource_uid=getattr(args, "grafana_datasource_uid", None),
                 csv_url=csv_url,
             )
+        elif target == "vegalite" and getattr(args, "embed_data", False):
+            from dashml_new.transformers.vegalite import VegaLiteTransformer
+            import csv as csv_mod
+            embedded_data = None
+            if data_type == "csv":
+                csv_path = spec.get("data", {}).get("csv_path")
+                if csv_path and Path(csv_path).exists():
+                    with open(csv_path, newline="", encoding="utf-8") as f:
+                        reader = csv_mod.DictReader(f)
+                        embedded_data = []
+                        for row in reader:
+                            converted = {}
+                            for k, v in row.items():
+                                if v is None or v == "":
+                                    converted[k] = None
+                                else:
+                                    try:
+                                        converted[k] = int(v)
+                                    except (ValueError, TypeError):
+                                        try:
+                                            converted[k] = float(v)
+                                        except (ValueError, TypeError):
+                                            converted[k] = v
+                            embedded_data.append(converted)
+                    print(f"\u2713 Embedded {len(embedded_data)} rows from CSV")
+            transformer = VegaLiteTransformer(embedded_data=embedded_data)
         else:
             transformer = TransformerRegistry.get(target)
     except ValueError as e:
@@ -480,6 +508,11 @@ Examples:
         default=None,
         metavar="PORT",
         help="Start a local HTTP server for the CSV file (default port: 8888, for grafana backend with Infinity plugin)"
+    )
+    build_parser.add_argument(
+        "--embed-data",
+        action="store_true",
+        help="Embed CSV data inline in the output (for vegalite backend — makes spec self-contained)"
     )
 
     # Database arguments (for SQL datasources)
