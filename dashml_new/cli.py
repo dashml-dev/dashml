@@ -142,11 +142,12 @@ def build_command(args):
                 datasource_uid=getattr(args, "grafana_datasource_uid", None),
                 csv_url=csv_url,
             )
-        elif target == "vegalite" and getattr(args, "embed_data", False):
+        elif target == "vegalite" and (getattr(args, "embed_data", False) or getattr(args, "bare", False)):
             from dashml_new.transformers.vegalite import VegaLiteTransformer
             import csv as csv_mod
             embedded_data = None
-            if data_type == "csv":
+            bare = getattr(args, "bare", False)
+            if getattr(args, "embed_data", False) and data_type == "csv":
                 csv_path = spec.get("data", {}).get("csv_path")
                 if csv_path and Path(csv_path).exists():
                     with open(csv_path, newline="", encoding="utf-8") as f:
@@ -167,7 +168,7 @@ def build_command(args):
                                             converted[k] = v
                             embedded_data.append(converted)
                     print(f"\u2713 Embedded {len(embedded_data)} rows from CSV")
-            transformer = VegaLiteTransformer(embedded_data=embedded_data)
+            transformer = VegaLiteTransformer(embedded_data=embedded_data, bare=bare)
         else:
             transformer = TransformerRegistry.get(target)
     except ValueError as e:
@@ -513,6 +514,11 @@ Examples:
         "--embed-data",
         action="store_true",
         help="Embed CSV data inline in the output (for vegalite backend — makes spec self-contained)"
+    )
+    build_parser.add_argument(
+        "--bare",
+        action="store_true",
+        help="Output bare VL objects [{mark, encoding, transform}] for benchmark evaluation (vegalite backend)"
     )
 
     # Database arguments (for SQL datasources)

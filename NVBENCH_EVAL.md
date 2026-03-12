@@ -13,7 +13,7 @@ Key property: **1-to-many mapping** — each NL query has multiple valid visuali
 ## The Pipeline
 
 ```
-NL query + table schema ──► LLM ──► .dashml YAML ──► Vega-Lite transformer ──► VL JSON ──► strip to {mark, encoding, transform} ──► compare with gold
+NL query + table schema ──► LLM ──► .dashml YAML ──► VL transformer (--bare) ──► [{mark, encoding, transform}] ──► compare with gold
 ```
 
 ### What the LLM receives (input)
@@ -34,7 +34,7 @@ NL Query: "I want to mark a pie chart for the name while filtering it to Hampden
 
 ### What the LLM must produce (DashML)
 
-A `.dashml` spec that, when compiled to Vega-Lite, matches the gold answer structure:
+A `.dashml` spec that, when compiled with `--bare`, matches the gold answer structure:
 
 ```yaml
 version: "1.0"
@@ -120,24 +120,6 @@ nvBench 2.0 uses 6 Vega-Lite mark types:
 | `rect` | Heatmap | `heatmap` | x + y + color |
 | `boxplot` | Box plot | `box` | x + y |
 
-### Critical differences from DashML's current Vega-Lite output
-
-Our transformer must produce specs that exactly match this format:
-
-| Property | nvBench format | Our current format | Gap |
-|----------|---------------|-------------------|-----|
-| `mark` | `"bar"` (string) | `"bar"` or `{"type": "bar", ...}` | Strip mark objects to strings |
-| Encoding `type` | **absent** | `"quantitative"`, `"nominal"`, etc. | Must strip `type` from encodings |
-| Encoding `title` | **absent** | Sometimes present | Must strip |
-| Encoding `scale` | **absent** | Sometimes present | Must strip |
-| Encoding `axis` | **absent** | Sometimes present | Must strip |
-| `aggregate` | Inside encoding: `{"aggregate": "mean"}` | Inside encoding | OK |
-| `bin` | `{"maxbins": 10}` | `{"maxbins": N}` | Check format |
-| `sort` | Channel ref: `"y"`, `"-y"` | May differ | Check format |
-| Pie encoding | `theta` + `color` | Needs verification | Ensure theta channel is used |
-| Filter format | `{"filter": {"field": "x", "oneOf": [...]}}` | Vega expressions | **Major gap** — must emit nvBench filter format |
-| `$schema`, `data`, `config`, `title`, `width`, `height` | **absent** | Present | Must strip in post-processing |
-
 ## The 6 Reasoning Steps
 
 Each nvBench entry includes a reasoning chain. These are used for training but the final answer (step 6 output) is what gets evaluated:
@@ -155,18 +137,26 @@ Step 5 is where the 1-to-many expansion happens — ambiguous column refs get ex
 
 ## Implementation Plan
 
-### Phase 1: Output Adapter (strip DashML VL output to nvBench format)
+### Phase 1: Output Adapter — DONE
 
-Write a post-processor that takes our Vega-Lite JSON and strips it to `{mark, encoding, transform}`:
-- Remove: `$schema`, `data`, `config`, `title`, `width`, `height`, `description`
-- From mark: if object like `{"type": "bar", "stroke": ...}`, extract just `"bar"`
-- From encodings: keep only `field`, `aggregate`, `bin`, `sort`, `timeUnit`; drop `type`, `title`, `scale`, `axis`
-- From transform/filter: convert DashML filter format to nvBench filter format
-- Map DashML chart types to nvBench marks: `pie` → `arc`, `heatmap` → mark `rect`, `scatter` → `point`, `box` → `boxplot`
+The `--bare` flag on the Vega-Lite transformer handles all stripping at build time:
 
-### Phase 2: LLM Prompt Engineering (colleague's part)
+```bash
+python -m dashml_new.cli build spec.dashml -t vegalite --bare --output out/
+```
 
-Design a prompt that takes nvBench's table schema + NL query and produces a valid `.dashml` YAML. Two approaches:
+This outputs a JSON array of `{mark, encoding, transform}` objects with:
+- Mark as plain string (not object) — `bar`, `line`, `arc`, `point`, `rect`, `boxplot`, `geoshape`, `text`, `area`
+- Encoding channels stripped to only: `field`, `aggregate`, `bin`, `sort`, `timeUnit`
+- No `type`, `scale`, `title`, `axis`, `tooltip`, `$schema`, `data`, `config`, `width`, `height`
+- Filters in nvBench object format: `{"field": "x", "oneOf": [...]}`, `{"field": "x", "gte": 5}`, etc.
+- Layered specs (geo) extract the data layer's encoding automatically
+
+No separate `nvbench_adapter.py` needed — it's built into the transformer.
+
+### Phase 2: LLM Prompt Engineering
+
+Design a prompt that takes nvBench's table schema + NL query and produces valid `.dashml` YAML.
 
 **A) Direct .dashml generation:**
 ```
@@ -177,17 +167,30 @@ Given this table schema and NL query, produce a .dashml YAML spec.
 ```
 
 **B) Multi-prediction generation:**
-Since nvBench expects 1-5 predictions and scores recall, the LLM should produce multiple .dashml specs covering different interpretations of the ambiguous query.
+Since nvBench expects 1-5 predictions and scores recall, the LLM should produce multiple .dashml specs covering different interpretations of the ambiguous query. Each spec = one chart with one interpretation.
+
+**Key prompt considerations:**
+- The LLM must pick the right DashML `type` (bar/line/pie/scatter/heatmap/box)
+- Must correctly map NL column references to `x`, `y`, `group` fields
+- Must infer `agg` (sum/mean/count) from context or enumerate alternatives
+- Must convert NL filter conditions to DashML `filter` syntax
+- Should generate multiple specs when the query is ambiguous (e.g., "chart for name" — count? sum of which column?)
 
 ### Phase 3: Evaluation Harness
 
-Script that:
+Script (`nvbench_eval.py`) that:
 1. Loads test split from HuggingFace (791 entries)
-2. For each entry: feeds table_schema + nl_query to LLM → gets 1-5 .dashml specs
-3. Runs each through `VegaLiteTransformer.transform()`
-4. Strips output to nvBench format (Phase 1 adapter)
-5. Compares against gold using nvBench's `deep_compare_charts()` + normalization
+2. For each entry: feeds `table_schema` + `nl_query` to LLM → gets 1-5 `.dashml` YAML strings
+3. For each `.dashml`: parses → validates → runs `VegaLiteTransformer(bare=True).build(spec)`
+4. Parses the JSON array output → list of `{mark, encoding, transform}` dicts
+5. Compares against `gold_answer` using nvBench's `deep_compare_charts()` + normalization
 6. Computes Hit@K, Recall@K, Precision@K, F1@K
+
+**Dependencies:**
+- `datasets` (HuggingFace) — for loading nvBench 2.0
+- An LLM API (Anthropic/OpenAI/local) — for NL → .dashml generation
+- nvBench evaluation code — `deep_compare_charts()` and `preprocess_charts()` from their repo
+- `nvbench_metadata.json` — column type metadata needed for axis normalization
 
 ### Phase 4: Iterate
 
@@ -205,15 +208,15 @@ Tune the LLM prompt, experiment with step-wise reasoning, try different models.
 
 ## Key Risks and Considerations
 
-1. **Filter format mismatch**: Our VL transformer emits standard Vega-Lite filter expressions (`"datum.x > 5"`), but nvBench expects `{"field": "x", "gt": 5}`. The adapter must convert, or we modify the transformer to emit nvBench-style filters.
+1. **Multiple predictions**: Getting good Recall@K requires generating multiple .dashml specs per query. The LLM needs to reason about ambiguity and enumerate alternatives.
 
-2. **Multiple predictions**: Getting good Recall@K requires generating multiple .dashml specs per query. The LLM needs to reason about ambiguity and enumerate alternatives.
+2. **Strict matching**: Even minor differences (extra property, different key name) cause a miss. The `--bare` adapter must be precise.
 
-3. **Strict matching**: Even minor differences (extra property, different key name) cause a miss. The adapter must be precise.
+3. **No data needed**: The benchmark only provides table metadata (column names, examples, cardinality). The LLM must infer the right visualization from schema alone — no CSV, no SQL, no actual data.
 
-4. **No data needed**: The benchmark only provides table metadata (column names, examples, cardinality). The LLM must infer the right visualization from schema alone — no CSV, no SQL, no actual data.
+4. **DashML as overhead or value-add?**: Going NL → DashML → VL adds an intermediate step vs NL → VL directly. The value is that DashML enforces structure and can target multiple backends. The cost is potential information loss in the DashML → VL translation. We need to verify that every nvBench gold answer is representable as a .dashml spec.
 
-5. **DashML as overhead or value-add?**: Going NL → DashML → VL adds an intermediate step vs NL → VL directly. The value is that DashML enforces structure and can target multiple backends. The cost is potential information loss in the DashML → VL translation. We need to verify that every nvBench gold answer is representable as a .dashml spec.
+5. **Sort format gap**: nvBench uses sort as channel references (`"y"`, `"-y"`) while DashML's `--bare` output uses `{"encoding": "y", "order": "ascending"}`. May need alignment.
 
 ## Quick Start
 
@@ -224,15 +227,20 @@ pip install datasets
 # Download and explore
 python nvbench_explore.py
 
-# Run evaluation (once pipeline is built)
-python nvbench_eval.py --model claude --predictions output/predictions/ --k 3
+# Build a .dashml in bare mode (test the adapter)
+python -m dashml_new.cli build my_spec.dashml -t vegalite --bare --output out/
+
+# Run evaluation (once Phase 2-3 are built)
+python nvbench_eval.py --model claude --k 3
 ```
 
-## Files to Create
+## Files
 
-| File | Purpose |
-|------|---------|
-| `nvbench_adapter.py` | Strip VL output to nvBench format |
-| `nvbench_eval.py` | Evaluation harness (load data, run pipeline, compute metrics) |
-| `nvbench_prompt.py` | LLM prompt template for NL → .dashml |
-| `nvbench_explore.py` | Dataset exploration (already exists) |
+| File | Status | Purpose |
+|------|--------|---------|
+| `dashml_new/transformers/vegalite.py` | DONE | `--bare` mode: `_build_bare_spec()`, `_build_bare_filters()`, `_filter_to_nvbench()` |
+| `dashml_new/cli.py` | DONE | `--bare` CLI flag wired to `VegaLiteTransformer(bare=True)` |
+| `nvbench_explore.py` | DONE | Dataset exploration |
+| `nvbench_eval.py` | TODO | Evaluation harness (load data, run pipeline, compute metrics) |
+| `nvbench_prompt.py` | TODO | LLM prompt template for NL → .dashml |
+| `NVBENCH_EVAL.md` | DONE | This document |

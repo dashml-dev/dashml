@@ -52,9 +52,10 @@ SEQUENTIAL_SCHEMES = {
 class VegaLiteTransformer(Transformer):
     """Generates Vega-Lite JSON specifications."""
 
-    def __init__(self, embedded_data: list | None = None):
+    def __init__(self, embedded_data: list | None = None, bare: bool = False):
         super().__init__()
         self._embedded_data = embedded_data
+        self._bare = bare
 
     @property
     def name(self) -> str:
@@ -86,6 +87,11 @@ class VegaLiteTransformer(Transformer):
         for page in pages:
             all_charts.extend(page.get("charts", []))
 
+        if self._bare:
+            # Bare mode: output JSON array of stripped {mark, encoding, transform} objects
+            result = [self._build_bare_spec(c, spec) for c in all_charts]
+            return json.dumps(result, indent=2)
+
         # Single chart → bare spec, multiple → composed layout
         if len(all_charts) == 1:
             result = self._build_chart_spec(all_charts[0], spec)
@@ -93,6 +99,85 @@ class VegaLiteTransformer(Transformer):
             result = self._build_dashboard(spec)
 
         return json.dumps(result, indent=2)
+
+    # ── Bare (nvBench-compatible) output ────────────────────────────
+
+    # Properties to keep in encoding channels for bare output
+    _BARE_CHANNEL_KEYS = {"field", "aggregate", "bin", "sort", "timeUnit"}
+
+    def _build_bare_spec(self, chart: dict, spec: "NormalizedSpec") -> dict:
+        """Build a stripped {mark, encoding, transform} spec for benchmark evaluation."""
+        chart_type = chart.get("type", "bar")
+
+        builder = getattr(self, f"_build_{chart_type}", None)
+        if builder:
+            vl = builder(chart, spec)
+        else:
+            vl = self._build_bar(chart, spec)
+
+        # For layered specs (geo), extract the data layer
+        if "layer" in vl and "encoding" not in vl:
+            # Use the last layer (data overlay) which has the encoding
+            for layer in reversed(vl["layer"]):
+                if "encoding" in layer:
+                    vl = layer
+                    break
+
+        # Extract mark as plain string
+        mark = vl.get("mark", "bar")
+        if isinstance(mark, dict):
+            mark = mark.get("type", "bar")
+
+        # Strip encoding channels to only benchmark-relevant properties
+        encoding = {}
+        for channel, props in vl.get("encoding", {}).items():
+            if channel in ("tooltip", "shape"):
+                continue  # not used in benchmarks
+            if isinstance(props, dict):
+                stripped = {k: v for k, v in props.items() if k in self._BARE_CHANNEL_KEYS}
+                if stripped:
+                    encoding[channel] = stripped
+
+        result: dict = {"mark": mark, "encoding": encoding}
+
+        # Convert DashML filters to nvBench filter format
+        bare_transforms = self._build_bare_filters(chart)
+        if bare_transforms:
+            result["transform"] = bare_transforms
+
+        return result
+
+    def _build_bare_filters(self, chart: dict) -> list:
+        """Convert chart.filters to nvBench-style filter transforms."""
+        filters = chart.get("filters", [])
+        transforms = []
+        for f in filters:
+            field = f.get("field", "")
+            op = f.get("op", "eq")
+            value = f.get("value")
+            filt = self._filter_to_nvbench(field, op, value)
+            if filt:
+                transforms.append({"filter": filt})
+        return transforms
+
+    @staticmethod
+    def _filter_to_nvbench(field: str, op: str, value) -> dict | None:
+        """Convert a DashML filter to nvBench filter object format."""
+        # nvBench uses: {field, equal/lt/lte/gt/gte/range/oneOf/valid}
+        nvbench_op_map = {
+            "eq": "equal",
+            "ne": None,  # not in nvBench
+            "gt": "gt",
+            "lt": "lt",
+            "gte": "gte",
+            "lte": "lte",
+        }
+        if op == "in" and isinstance(value, list):
+            return {"field": field, "oneOf": value}
+        mapped = nvbench_op_map.get(op)
+        if mapped:
+            return {"field": field, mapped: value}
+        return None
 
     # ── Dashboard composition ──────────────────────────────────────
 
