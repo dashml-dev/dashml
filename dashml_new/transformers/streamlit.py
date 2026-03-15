@@ -2,6 +2,7 @@
 Streamlit Transformer - Generates Streamlit Python code from DashML specs
 """
 import re
+import sys
 from typing import TYPE_CHECKING, Dict, Any, List
 from .base import Transformer, TransformerError
 from .constants import (
@@ -12,6 +13,7 @@ from .constants import (
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
     resolve_metric_format,
+    country_mapping_as_python,
 )
 
 if TYPE_CHECKING:
@@ -67,6 +69,16 @@ class StreamlitTransformer(Transformer):
             code_parts.append(self._generate_data_loading(spec["data"], spec.get("db_config"), derived_fields))
             code_parts.append("")
 
+            # Geo normalization helpers (emitted once if any chart is type "geo")
+            has_geo = any(
+                c.get("type") == "geo"
+                for p in spec["pages"]
+                for c in p.get("charts", [])
+            )
+            if has_geo:
+                code_parts.append(self._generate_geo_helpers())
+                code_parts.append("")
+
             # Main function
             code_parts.append("def main():")
 
@@ -117,6 +129,31 @@ import altair as alt"""
             imports += "\nfrom google.cloud import bigquery"
 
         return imports
+
+    def _generate_geo_helpers(self) -> str:
+        """Emit Python mapping dicts + detect/normalize functions for geo charts."""
+        mapping = country_mapping_as_python()
+        return f'''{mapping}
+
+def detect_geo_encoding(values):
+    """Auto-detect whether values are ISO-2, ISO-3, or country names."""
+    sample = [str(v).strip() for v in values.dropna().head(20)]
+    if all(len(v) == 2 and v.isalpha() and v.isupper() for v in sample if v):
+        return "iso2"
+    if all(len(v) == 3 and v.isalpha() and v.isupper() for v in sample if v):
+        return "iso3"
+    return "name"
+
+def normalize_country(value, encoding):
+    """Normalize a country value to its TopoJSON properties.name equivalent."""
+    v = str(value).strip()
+    if not v:
+        return v
+    if encoding == "iso2":
+        return _ISO2_TO_TOPO.get(v.upper(), v)
+    if encoding == "iso3":
+        return _ISO3_TO_TOPO.get(v.upper(), v)
+    return _ALIAS_TO_TOPO.get(v.lower(), v)'''
 
     def _humanize_column_name(self, name: str) -> str:
         """Convert snake_case column names to Title Case labels"""
@@ -212,7 +249,7 @@ import altair as alt"""
         derived_fields = derived_fields or []
 
         if data_type == "csv":
-            path = data_spec["path"]
+            path = data_spec.get("csv_path", data_spec["path"])
             # Build derived field computation lines (injected after CSV load)
             derived_lines = ""
             if derived_fields:
@@ -324,13 +361,14 @@ def load_data():
 
             # Build credentials loading code
             if credentials_path:
+                safe_path = credentials_path.replace(chr(92), '/')
                 credentials_code = f'''
         from google.oauth2 import service_account
         credentials = service_account.Credentials.from_service_account_file(
-            "{credentials_path}",
+            "{safe_path}",
             scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
-        client = bigquery.Client(project="{project}", credentials=credentials)'''
+        client = bigquery.Client(credentials=credentials)'''
             else:
                 credentials_code = f'''
         # Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
@@ -427,6 +465,7 @@ def load_data():
         group = chart.get("group")
         x_type = chart.get("x_type")
         y_type = chart.get("y_type")
+        geo_encoding = chart.get("geo_encoding")
         bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
         filters = chart.get("filters", [])
         sort_field = chart.get("sort")
@@ -492,19 +531,35 @@ def load_data():
             code_parts.append(f'    chart_data = run_query("{chart_id}", build_filter_clause("{chart_id}", _dashboard_filters))')
             # Build rename dict from generic SQL aliases → original column names
             if chart_type in ("stacked_bar", "grouped_bar"):
-                rename_dict = {"x": x, "grp": group, "y": y}
+                rename_dict = {"x": x, "y": y}
+                if group not in (x, y):
+                    rename_dict["grp"] = group
             elif chart_type == "heatmap":
                 heatmap_y_col = chart.get("group", y)
-                rename_dict = {"x": x, "heatmap_y": heatmap_y_col, "y": y}
+                rename_dict = {"x": x, "y": y}
+                if heatmap_y_col not in (x, y):
+                    rename_dict["heatmap_y"] = heatmap_y_col
             elif chart_type == "bubble":
                 size_field_col = chart.get("size", y)
-                rename_dict = {"grp": group, "x": x, "y": y, "size": size_field_col}
+                rename_dict = {"x": x, "y": y}
+                if group and group not in (x, y):
+                    rename_dict["grp"] = group
+                # Only rename size if it won't create a duplicate column name
+                if size_field_col not in (x, y):
+                    rename_dict["size"] = size_field_col
             elif chart_type == "histogram":
                 rename_dict = {"x": x}
             else:  # bar, line, area, pie, geo, scatter, box
-                rename_dict = {"x": x, "y": y}
+                rename_dict = {"x": x}
+                if y != x:
+                    rename_dict["y"] = y
             if rename_dict:
                 code_parts.append(f'    chart_data = chart_data.rename(columns={repr(rename_dict)})')
+            # Re-apply sort in Python (SQL ORDER BY may not survive driver/pandas roundtrip)
+            if sort_field:
+                actual_sort_col = x if sort_field == "x" else y
+                ascending = sort_order == "asc"
+                code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
             code_parts.append(f'    chart_df = chart_data')
             code_parts.append(f'    effective_x_type = "{x_type}" if "{x_type}" != "None" else column_types.get("{x}")')
             code_parts.append(f'    x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")')
@@ -608,34 +663,45 @@ def load_data():
             code_parts.append(f'    x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")')
         x_encoding_type = ""  # Will be added dynamically at runtime
 
+        # Compute Altair x-axis sort parameter based on chart spec sort field
+        # Altair sort accepts channel names ("-y", "y") not column names
+        if sort_field == "y":
+            x_sort = '"-y"' if sort_order == "desc" else '"y"'
+        elif sort_field == "x":
+            x_sort = '"ascending"' if sort_order == "asc" else '"descending"'
+        else:
+            x_sort = "None"
+
         # Altair Chart Generation
         if chart_type == "bar":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "line":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "scatter":
-            code_parts.append(f'''    # Scatter: aggregated data points
-    c = alt.Chart(chart_data).mark_circle(color="{primary_color}", size=60).encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+            code_parts.append(f'''    # Scatter: raw data points
+    c = alt.Chart(chart_df).mark_circle(color="{primary_color}", size=60).encode(
+        x=alt.X("{x}:Q", title="{x_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "bubble":
             size_field = chart.get("size", y)  # Default to y if size not specified
+            # In SQL mode, if size overlaps with x or y, the column keeps its "size" alias
+            size_col = "size" if (sql_mode and size_field in (x, y)) else size_field
             size_label = self._humanize_column_name(size_field)
             if group:
                 group_label = self._humanize_column_name(group)
@@ -643,18 +709,18 @@ def load_data():
     c = alt.Chart(chart_data).mark_circle().encode(
         x=alt.X("{x}:Q", title="{x_label}"),
         y=alt.Y("{y}:Q", title="{y_label}"),
-        size=alt.Size("{size_field}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
+        size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
         color=alt.Color("{group}:N", legend=alt.Legend(title="{group_label}")),
-        tooltip=["{group}", "{x}", "{y}", "{size_field}"]
+        tooltip=["{group}", "{x}", "{y}", "{size_col}"]
     )
     st.altair_chart(c, use_container_width=True)''')
             else:
                 code_parts.append(f'''    # Bubble: scatter with size encoding
     c = alt.Chart(chart_data).mark_circle(color="{primary_color}").encode(
         x=alt.X("{x}:Q", title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
-        size=alt.Size("{size_field}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
-        tooltip=["{x}", "{y}", "{size_field}"]
+        y=alt.Y("{y}:Q", title="{y_label}"),
+        size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
+        tooltip=["{x}", "{y}", "{size_col}"]
     )
     st.altair_chart(c, use_container_width=True)''')
 
@@ -670,10 +736,10 @@ def load_data():
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity (data pre-aggregated by SQL query)
     heatmap_data = chart_df
     c = alt.Chart(heatmap_data).mark_rect().encode(
-        x=alt.X("{x}:N", sort=None, title="{x_label}"),
+        x=alt.X("{x}:N", sort={x_sort}, title="{x_label}"),
         y=alt.Y("{heatmap_y}:N", title="{heatmap_y_label}"),
         color=alt.Color("{value_field}:Q",
-            scale=alt.Scale(scheme="blues"),
+            scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"),
             legend=alt.Legend(title="{value_label}")
         ),
         tooltip=["{x}", "{heatmap_y}", "{value_field}"]
@@ -688,10 +754,10 @@ def load_data():
     top_y = heatmap_data.groupby("{heatmap_y}")["{value_field}"].sum().nlargest(15).index
     heatmap_data = heatmap_data[heatmap_data["{x}"].isin(top_x) & heatmap_data["{heatmap_y}"].isin(top_y)]
     c = alt.Chart(heatmap_data).mark_rect().encode(
-        x=alt.X("{x}:N", sort=None, title="{x_label}"),
+        x=alt.X("{x}:N", sort={x_sort}, title="{x_label}"),
         y=alt.Y("{heatmap_y}:N", title="{heatmap_y_label}"),
         color=alt.Color("{value_field}:Q",
-            scale=alt.Scale(scheme="blues"),
+            scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"),
             legend=alt.Legend(title="{value_label}")
         ),
         tooltip=["{x}", "{heatmap_y}", "{value_field}"]
@@ -714,8 +780,8 @@ def load_data():
 
         elif chart_type == "area":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
-        y=alt.Y("{y}", title="{y_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
+        y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
@@ -746,7 +812,7 @@ def load_data():
             code_parts.append(f'''    # Stacked bar: stack {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
         y=alt.Y("{y}:Q", stack="zero", title="{y_label}"),
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),
@@ -759,27 +825,37 @@ def load_data():
         elif chart_type == "grouped_bar":
             # Use secondary colors from theme for grouped bars
             group_label = self._humanize_column_name(group) if group else group
+            # Sort bars within each group by y value
+            if sort_field == "y":
+                offset_sort = f'"-y"' if sort_order == "desc" else f'"y"'
+            else:
+                offset_sort = "None"
             code_parts.append(f'''    # Grouped bar: group {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort=None, title="{x_label}"),
+        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
         y=alt.Y("{y}:Q", title="{y_label}"),
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),
             legend=alt.Legend(title="{group_label}")
         ),
-        xOffset="{group}:N",
+        xOffset=alt.XOffset("{group}:N", sort={offset_sort}),
         tooltip=["{x}", "{group}", "{y}"]
     )
     st.altair_chart(c, use_container_width=True)''')
 
         elif chart_type == "geo":
             # Choropleth map using Altair with world topojson
+            if geo_encoding:
+                geo_enc_line = f'    geo_enc = "{geo_encoding}"'
+            else:
+                geo_enc_line = f'    geo_enc = detect_geo_encoding(geo_data["{x}"])'
             code_parts.append(f'''    # Geo chart: choropleth map colored by {y}
-    # Normalize country names: strip whitespace and convert to title case to match topojson
+    # Normalize country names to match topojson properties.name
     geo_data = chart_data.copy()
-    geo_data["{x}"] = geo_data["{x}"].fillna("").str.strip().str.title()
-    # Re-aggregate after normalization (merges any entries that differ only by case)
+{geo_enc_line}
+    geo_data["{x}"] = geo_data["{x}"].fillna("").apply(lambda v: normalize_country(v, geo_enc))
+    # Re-aggregate after normalization (merges entries that map to same country)
     geo_data = geo_data[geo_data["{x}"] != ""].groupby("{x}")["{y}"].sum().reset_index()
 
     # Load world countries topojson (has country names in properties.name)
@@ -802,7 +878,7 @@ def load_data():
         strokeWidth=0.5
     ).encode(
         color=alt.Color("{y}:Q",
-            scale=alt.Scale(scheme="blues"),
+            scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"),
             legend=alt.Legend(title="{y_label}")
         ),
         tooltip=["properties.name:N", "{y}:Q"]
@@ -950,5 +1026,13 @@ def load_data():
 
         return "\n".join(code_parts)
 
+    @property
+    def output_filename(self) -> str:
+        return "app.py"
+
     def get_run_command(self, output_path: str) -> str:
-        return f"python3 -m streamlit run {output_path}"
+        from pathlib import Path
+        output_path_obj = Path(output_path)
+        if output_path_obj.is_dir():
+            return f"{sys.executable} -m streamlit run {output_path_obj / 'app.py'}"
+        return f"{sys.executable} -m streamlit run {output_path}"

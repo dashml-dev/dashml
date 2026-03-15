@@ -1142,7 +1142,7 @@ class SupersetTransformer(Transformer):
                     "aggregate": agg.upper(),
                     "label": f"{agg.upper()}({y})"
                 }
-            params["linear_color_scheme"] = "blue_white_yellow"
+            params["linear_color_scheme"] = colors.get("sequential", "blue_white_yellow")
             params["normalize_across"] = "heatmap"
             # Apply sorting
             if sort_field == "y":
@@ -1176,10 +1176,11 @@ class SupersetTransformer(Transformer):
         elif chart_type == "geo":
             # World map choropleth
             # x = country column, y = metric column
-            # geo_format option: "name" (full names), "cca2" (2-letter), "cca3" (3-letter)
-            geo_format = chart.get("geo_format", "cca2")  # Default to 2-letter codes (US, GB, etc.)
+            # geo_encoding: "iso2", "iso3", or "name" → maps to Superset's country_fieldtype
+            geo_encoding = chart.get("geo_encoding", "iso2")
+            ENCODING_TO_SUPERSET = {"iso2": "cca2", "iso3": "cca3", "name": "name"}
             params["entity"] = x  # Column containing country names/codes
-            params["country_fieldtype"] = geo_format
+            params["country_fieldtype"] = ENCODING_TO_SUPERSET.get(geo_encoding, "cca2")
             # Build metric for the value to color by
             if agg.upper() == "COUNT":
                 params["metric"] = {
@@ -1436,6 +1437,10 @@ class SupersetTransformer(Transformer):
                 if update_response.status_code not in [200, 201]:
                     print(f"✗ Failed to update dashboard: {update_response.status_code}")
                     return None
+
+                # Associate new charts with dashboard (chart-side relationship)
+                for cid in chart_ids:
+                    self._associate_chart_with_dashboard(cid, existing_dashboard_id)
 
                 print(f"✓ Updated dashboard with {len(chart_ids)} charts")
                 return existing_dashboard_id

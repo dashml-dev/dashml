@@ -134,6 +134,11 @@
           "description": "Explicit type for Y axis",
           "enum": ["date", "number", "string"]
         },
+        "geo_encoding": {
+          "type": "string",
+          "description": "Country encoding for geo charts (auto-detected if omitted)",
+          "enum": ["iso2", "iso3", "name"]
+        },
         "bins": {
           "type": "integer",
           "description": "Number of bins (histogram only)",

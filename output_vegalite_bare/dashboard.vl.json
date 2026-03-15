@@ -1,0 +1,232 @@
+[
+  {
+    "mark": "text",
+    "encoding": {
+      "text": {
+        "field": "funding_amount",
+        "aggregate": "sum"
+      }
+    }
+  },
+  {
+    "mark": "text",
+    "encoding": {
+      "text": {
+        "aggregate": "count"
+      }
+    }
+  },
+  {
+    "mark": "text",
+    "encoding": {
+      "text": {
+        "field": "valuation",
+        "aggregate": "mean"
+      }
+    }
+  },
+  {
+    "mark": "line",
+    "encoding": {
+      "x": {
+        "field": "funding_date"
+      },
+      "y": {
+        "field": "funding_amount",
+        "aggregate": "sum"
+      }
+    }
+  },
+  {
+    "mark": "area",
+    "encoding": {
+      "x": {
+        "field": "funding_date"
+      },
+      "y": {
+        "aggregate": "count"
+      }
+    }
+  },
+  {
+    "mark": "arc",
+    "encoding": {
+      "theta": {
+        "aggregate": "count"
+      },
+      "color": {
+        "field": "stage"
+      }
+    }
+  },
+  {
+    "mark": "bar",
+    "encoding": {
+      "x": {
+        "field": "industry",
+        "sort": {
+          "encoding": "y",
+          "order": "ascending"
+        }
+      },
+      "y": {
+        "field": "funding_amount",
+        "aggregate": "sum"
+      }
+    }
+  },
+  {
+    "mark": "bar",
+    "encoding": {
+      "x": {
+        "field": "industry",
+        "sort": {
+          "encoding": "y",
+          "order": "ascending"
+        }
+      },
+      "y": {
+        "field": "funding_amount",
+        "aggregate": "sum"
+      },
+      "color": {
+        "field": "stage"
+      }
+    }
+  },
+  {
+    "mark": "bar",
+    "encoding": {
+      "x": {
+        "field": "industry",
+        "sort": {
+          "encoding": "y",
+          "order": "ascending"
+        }
+      },
+      "y": {
+        "aggregate": "count"
+      },
+      "xOffset": {
+        "field": "stage"
+      },
+      "color": {
+        "field": "stage"
+      }
+    }
+  },
+  {
+    "mark": "rect",
+    "encoding": {
+      "x": {
+        "field": "industry"
+      },
+      "y": {
+        "field": "country"
+      },
+      "color": {
+        "field": "funding_amount",
+        "aggregate": "sum"
+      }
+    }
+  },
+  {
+    "mark": "geoshape",
+    "encoding": {
+      "color": {
+        "field": "funding_amount",
+        "aggregate": "sum"
+      }
+    }
+  },
+  {
+    "mark": "bar",
+    "encoding": {
+      "x": {
+        "field": "country",
+        "sort": {
+          "encoding": "y",
+          "order": "ascending"
+        }
+      },
+      "y": {
+        "field": "funding_amount",
+        "aggregate": "sum"
+      }
+    }
+  },
+  {
+    "mark": "bar",
+    "encoding": {
+      "x": {
+        "field": "city",
+        "sort": {
+          "encoding": "y",
+          "order": "ascending"
+        }
+      },
+      "y": {
+        "aggregate": "count"
+      }
+    }
+  },
+  {
+    "mark": "point",
+    "encoding": {
+      "x": {
+        "field": "funding_amount"
+      },
+      "y": {
+        "field": "valuation"
+      }
+    }
+  },
+  {
+    "mark": "bar",
+    "encoding": {
+      "x": {
+        "bin": {
+          "maxbins": 30
+        },
+        "field": "funding_amount"
+      },
+      "y": {
+        "aggregate": "count"
+      }
+    }
+  },
+  {
+    "mark": "boxplot",
+    "encoding": {
+      "x": {
+        "field": "stage"
+      },
+      "y": {
+        "field": "funding_amount"
+      },
+      "color": {
+        "field": "stage"
+      }
+    }
+  },
+  {
+    "mark": "point",
+    "encoding": {
+      "x": {
+        "field": "funding_amount",
+        "aggregate": "mean"
+      },
+      "y": {
+        "field": "valuation",
+        "aggregate": "mean"
+      },
+      "color": {
+        "field": "industry"
+      },
+      "size": {
+        "field": "employees",
+        "aggregate": "mean"
+      }
+    }
+  }
+]

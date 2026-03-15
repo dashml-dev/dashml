@@ -2,6 +2,7 @@
 Plotly Transformer - Generates Plotly HTML/JavaScript from DashML specs
 """
 import re
+import sys
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import json
@@ -14,6 +15,8 @@ from .constants import (
     DEFAULT_SECONDARY_COLORS,
     DEFAULT_SORT_ORDER,
     resolve_metric_format,
+    resolve_plotly_colorscale,
+    country_mapping_as_js,
 )
 
 if TYPE_CHECKING:
@@ -73,8 +76,8 @@ class PlotlyTransformer(Transformer):
 
         for chart in all_charts:
             chart_type = chart.get("type")
-            if chart_type in ["stacked_bar", "grouped_bar"]:
-                self.warn(f"'{chart_type}' requires a grouping column - not yet fully supported")
+            if chart_type in ["stacked_bar", "grouped_bar"] and not chart.get("group"):
+                self.warn(f"'{chart_type}' chart '{chart.get('id')}' is missing a 'group' field")
 
         html_parts = []
 
@@ -190,14 +193,16 @@ class PlotlyTransformer(Transformer):
 
         # Build credentials loading code
         if credentials_path:
+            safe_path = credentials_path.replace(chr(92), '/')
             credentials_code = f'''
 # Load credentials from service account file
 from google.oauth2 import service_account
 credentials = service_account.Credentials.from_service_account_file(
-    "{credentials_path}",
+    "{safe_path}",
     scopes=["https://www.googleapis.com/auth/cloud-platform"]
 )
-client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
+# Use the service account\'s own project for billing; table refs use PROJECT_ID
+client = bigquery.Client(credentials=credentials)
 '''
         else:
             credentials_code = '''
@@ -208,6 +213,7 @@ client = bigquery.Client(project=PROJECT_ID)
         return f'''from flask import Flask, jsonify, send_from_directory
 from google.cloud import bigquery
 import json
+import traceback
 from datetime import date, datetime
 from decimal import Decimal
 import os
@@ -315,6 +321,7 @@ def get_chart_data(chart_id):
     try:
         filter_clause = build_filter_clause(chart_id, request.args)
         query = query_template.format(filter_clause=filter_clause)
+        print(f"[BQ] chart={{chart_id}} query={{query[:200]}}")
         query_job = client.query(query)
         results = query_job.result()
         data = [dict(row) for row in results]
@@ -323,6 +330,7 @@ def get_chart_data(chart_id):
             mimetype='application/json'
         )
     except Exception as e:
+        traceback.print_exc()
         return jsonify({{"error": str(e)}}), 500
 
 @app.route('/api/filter/<field>')
@@ -333,11 +341,13 @@ def get_filter_options(field):
         return jsonify({{"error": "Field not allowed"}}), 403
     try:
         query = DERIVED_CTE + " SELECT DISTINCT " + field + " FROM " + DERIVED_FILTER_SOURCE + " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT 500"
+        print(f"[BQ] filter={{field}} query={{query[:200]}}")
         query_job = client.query(query)
         results = query_job.result()
         values = [str(row[0]) for row in results if row[0] is not None]
         return jsonify(sorted(values))
     except Exception as e:
+        traceback.print_exc()
         return jsonify({{"error": str(e)}}), 500
 
 if __name__ == '__main__':
@@ -345,8 +355,8 @@ if __name__ == '__main__':
     print(f"Project: {{PROJECT_ID}}")
     print(f"Dataset: {{DATASET}}")
     print(f"Table: {{TABLE_NAME}}")
-    print(f"Dashboard available at: http://localhost:5002")
-    app.run(debug=True, port=5002)
+    print(f"Dashboard available at: http://localhost:5001")
+    app.run(debug=True, port=5001)
 '''
 
     def _generate_html_header(self, title: str, colors: Dict[str, str]) -> str:
@@ -667,6 +677,10 @@ if __name__ == '__main__':
         """Generate JavaScript code for data loading and rendering"""
         data_path = data_spec["path"]
 
+        # Resolve sequential colorscale at code-gen time
+        colors = dict(colors)
+        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
+
         # Pass theme colors to JS for Plotly layout
         theme_json = json.dumps(colors)
 
@@ -676,6 +690,12 @@ if __name__ == '__main__':
         js_parts.append("    // Chart definitions")
         js_parts.append(f"    const charts = {self._charts_to_json(charts)};")
         js_parts.append("")
+
+        # Geo normalization helpers (if any chart is geo)
+        if any(c.get("type") == "geo" for c in charts):
+            js_parts.append(self._generate_geo_js_helpers(target="plotly"))
+            js_parts.append("")
+
         js_parts.append(self._generate_csv_parser())
         js_parts.append(self._generate_aggregator())
         js_parts.append("")
@@ -706,6 +726,26 @@ if __name__ == '__main__':
     def _charts_to_json(self, charts: list) -> str:
         import json
         return json.dumps(charts, indent=6)
+
+    def _generate_geo_js_helpers(self, target: str = "plotly") -> str:
+        """Emit JS mapping tables + detectGeoEncoding + normalize function."""
+        mapping_js = country_mapping_as_js(target=target)
+        suffix = "Plotly" if target == "plotly" else "Topo"
+        return f'''    // Geo country normalization
+    {mapping_js.replace(chr(10), chr(10) + "    ")}
+    function detectGeoEncoding(values) {{
+      const sample = values.filter(v => v != null && v !== '').slice(0, 20);
+      if (sample.every(v => /^[A-Z]{{2}}$/.test(String(v)))) return 'iso2';
+      if (sample.every(v => /^[A-Z]{{3}}$/.test(String(v)))) return 'iso3';
+      return 'name';
+    }}
+    function normalizeCountryFor{suffix}(value, encoding) {{
+      const v = String(value).trim();
+      if (!v) return v;
+      if (encoding === 'iso2') return iso2To{suffix}[v.toUpperCase()] || v;
+      if (encoding === 'iso3') return iso3To{suffix}[v.toUpperCase()] || v;
+      return aliasTo{suffix}[v.toLowerCase()] || v;
+    }}'''
 
     def _generate_csv_parser(self) -> str:
         return '''    function parseCSV(csvText) {
@@ -1065,8 +1105,8 @@ if __name__ == '__main__':
 
         return f'''    function renderChart(chart) {{
       // Chart types that need aggregation vs raw data
-      const chartsNeedAggregation = new Set(['bar', 'line', 'area', 'pie', 'stacked_bar', 'grouped_bar', 'scatter']);
-      const chartsUseRawData = new Set(['histogram']);
+      const chartsNeedAggregation = new Set(['bar', 'line', 'area', 'pie', 'stacked_bar', 'grouped_bar']);
+      const chartsUseRawData = new Set(['histogram', 'scatter']);
 
       let traces = [];
       let barmode = undefined;
@@ -1097,7 +1137,7 @@ if __name__ == '__main__':
           textposition: 'top center',
           marker: {{
             size: normalizedSizes,
-            color: theme.secondary ? theme.secondary.slice(0, bubbleData.length) : theme.primary,
+            color: theme.secondary ? bubbleData.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
             sizemode: 'diameter'
           }},
           hovertemplate: bubbleData.map(d => `${{d.group}}<br>${{chart.x}}: ${{d.x}}<br>${{chart.y}}: ${{d.y}}<br>${{chart.size || chart.y}}: ${{d.size}}<extra></extra>`)
@@ -1117,6 +1157,14 @@ if __name__ == '__main__':
             marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
           }});
         }});
+
+        // Sort x categories by aggregate y total
+        if (aggOptions.sort === 'y') {{
+          const catTotals = {{}};
+          aggregated.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (d.y || 0); }});
+          const asc = aggOptions.sortOrder !== 'desc';
+          window.__catOrder = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
+        }}
 
         barmode = chart.type === 'stacked_bar' ? 'stack' : 'group';
       }} else {{
@@ -1157,7 +1205,7 @@ if __name__ == '__main__':
               return found ? found.y : 0;
             }})
           );
-          trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+          trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
           break;
         case 'pie':
           trace = {{ labels: xValues, values: yValues, type: 'pie', marker: {{ colors: theme.secondary }} }};
@@ -1182,14 +1230,27 @@ if __name__ == '__main__':
           }});
           break;
         case 'geo':
-          trace = {{
-            type: 'choropleth',
-            locations: xValues,
-            z: yValues,
-            locationmode: 'country names',
-            colorscale: 'Blues',
-            colorbar: {{ title: chart.y }}
-          }};
+          const geoEnc = chart.geo_encoding || detectGeoEncoding(xValues);
+          if (geoEnc === 'iso3') {{
+            trace = {{
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: chart.y }}
+            }};
+          }} else {{
+            const normalizedX = xValues.map(v => normalizeCountryForPlotly(v, geoEnc));
+            trace = {{
+              type: 'choropleth',
+              locations: normalizedX,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: chart.y }}
+            }};
+          }}
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -1239,6 +1300,13 @@ if __name__ == '__main__':
 
       if (barmode) {{
         layout.barmode = barmode;
+      }}
+
+      // Apply category order for sorted grouped/stacked bars
+      if (window.__catOrder) {{
+        layout.xaxis.categoryorder = 'array';
+        layout.xaxis.categoryarray = window.__catOrder;
+        delete window.__catOrder;
       }}
 
       Plotly.newPlot('chart', traces, layout, {{ responsive: true }});
@@ -1343,6 +1411,8 @@ if __name__ == '__main__':
     def _generate_javascript_pages(self, data_spec: Dict[str, Any], pages: list, colors: Dict[str, str], derived_fields: list = None) -> str:
         """Generate JavaScript for multi-page dashboard"""
         data_path = data_spec["path"]
+        colors = dict(colors)
+        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)
 
         # Collect all charts
@@ -1362,6 +1432,7 @@ if __name__ == '__main__':
             title = chart.get("title", chart_id)
             x_type = chart.get("x_type")  # Optional: "date", "number", "string"
             y_type = chart.get("y_type")  # Optional: "number", "string"
+            geo_encoding = chart.get("geo_encoding")  # Optional: "iso2", "iso3", "name"
             bins = chart.get("bins", 20)  # Number of bins for histogram
             filters = chart.get("filters", [])  # Optional: filter conditions
             sort_field = chart.get("sort")  # Optional: "x" or "y"
@@ -1426,6 +1497,15 @@ if __name__ == '__main__':
         plot_bgcolor: 'rgba(0,0,0,0)'
       }};
 
+      // Sort x categories by aggregate y total
+      if ('{sort_field}' === 'y') {{
+        const catTotals = {{}};
+        aggregated.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (d.y || 0); }});
+        const asc = '{sort_order}' !== 'desc';
+        layout.xaxis.categoryorder = 'array';
+        layout.xaxis.categoryarray = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
+      }}
+
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
             elif chart_type == "bubble" and group:
@@ -1447,7 +1527,7 @@ if __name__ == '__main__':
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: theme.secondary ? theme.secondary.slice(0, bubbleData.length) : theme.primary,
+          color: theme.secondary ? bubbleData.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
           sizemode: 'diameter'
         }},
         hovertemplate: bubbleData.map(d => d.group + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>{size_field or y}: ' + d.size + '<extra></extra>')
@@ -1480,7 +1560,7 @@ if __name__ == '__main__':
         }})
       );
 
-      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
 
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
@@ -1548,14 +1628,27 @@ if __name__ == '__main__':
           }});
           break;
         case 'geo':
-          trace = {{
-            type: 'choropleth',
-            locations: xValues,
-            z: yValues,
-            locationmode: 'country names',
-            colorscale: 'Blues',
-            colorbar: {{ title: '{y}' }}
-          }};
+          const geoEnc_{chart_id.replace('-', '_')} = '{geo_encoding}' !== 'None' ? '{geo_encoding}' : detectGeoEncoding(xValues);
+          if (geoEnc_{chart_id.replace('-', '_')} === 'iso3') {{
+            trace = {{
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: '{y}' }}
+            }};
+          }} else {{
+            const normalizedX_{chart_id.replace('-', '_')} = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_{chart_id.replace('-', '_')}));
+            trace = {{
+              type: 'choropleth',
+              locations: normalizedX_{chart_id.replace('-', '_')},
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: '{y}' }}
+            }};
+          }}
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -1615,10 +1708,15 @@ if __name__ == '__main__':
 {chr(10).join(render_pages)}
     }}'''
 
+        # Geo normalization helpers (if any chart is geo)
+        geo_js_block = ""
+        if any(c.get("type") == "geo" for c in all_charts):
+            geo_js_block = "\n    " + self._generate_geo_js_helpers(target="plotly").replace("\n", "\n    ") + "\n"
+
         # Use the same full-featured aggregation functions as single-page mode
         return f'''  <script>
     const theme = {theme_json};
-
+{geo_js_block}
     // Apply filters to data
     function applyFilters(data, filters) {{
       if (!filters || filters.length === 0) return data;
@@ -1906,13 +2004,13 @@ if __name__ == '__main__':
         from pathlib import Path
         output_path_obj = Path(output_path)
 
-        # If output is a directory (multi-file), run Flask
-        if output_path_obj.is_dir():
-            return f"cd {output_path} && python3 app.py"
+        # If output is a directory with Flask app, run Flask
+        if output_path_obj.is_dir() and (output_path_obj / "app.py").exists():
+            return f"cd {output_path} && {sys.executable} app.py"
 
-        # Otherwise run simple HTTP server for single HTML file
-        output_dir = output_path_obj.parent.resolve()
-        return f"cd {output_dir} && python3 -m http.server 8000"
+        # Otherwise serve directory with http.server (index.html served at /)
+        serve_dir = output_path_obj if output_path_obj.is_dir() else output_path_obj.parent
+        return f"cd {serve_dir} && echo Dashboard available at: http://localhost:5001 && {sys.executable} -m http.server 5001"
 
     def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -2102,8 +2200,8 @@ def get_filter_options(field):
 
 if __name__ == '__main__':
     print("Starting Flask server...")
-    print(f"Dashboard available at: http://localhost:5002")
-    app.run(debug=True, port=5002)
+    print(f"Dashboard available at: http://localhost:5001")
+    app.run(debug=True, port=5001)
 '''
 
     def _generate_sql_frontend(self, spec: "NormalizedSpec", title: str, colors: Dict[str, str]) -> str:
@@ -2130,7 +2228,11 @@ if __name__ == '__main__':
         return "\n".join(html_parts)
 
     def _generate_javascript_sql(self, charts: list, colors: Dict[str, str]) -> str:
-        """Generate JavaScript that fetches from Flask API instead of CSV"""
+        """DEPRECATED: Dead code — references non-existent /api/data endpoint.
+        Multi-page SQL mode uses _generate_javascript_pages instead.
+        Kept for reference only; do not call."""
+        colors = dict(colors)
+        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)
 
         js_parts = []
@@ -2141,6 +2243,12 @@ if __name__ == '__main__':
         js_parts.append("    // Column types from INFORMATION_SCHEMA (auto-detected)")
         js_parts.append("    let columnTypes = {};")
         js_parts.append("")
+
+        # Geo normalization helpers (if any chart is geo)
+        if any(c.get("type") == "geo" for c in charts):
+            js_parts.append(self._generate_geo_js_helpers(target="plotly"))
+            js_parts.append("")
+
         js_parts.append(self._generate_aggregator_with_schema())
         js_parts.append("")
         js_parts.append(self._generate_renderer(multi_page=False))
@@ -2170,7 +2278,6 @@ if __name__ == '__main__':
           return parsedRow;
         });
 
-        console.log('Column types from INFORMATION_SCHEMA:', columnTypes);
         renderChart(charts[0]);
       })
       .catch(error => {
@@ -2190,6 +2297,8 @@ if __name__ == '__main__':
 
     def _generate_javascript_pages_sql(self, pages: list, colors: Dict[str, str]) -> str:
         """Generate JavaScript for multi-page dashboard with per-chart async loading"""
+        colors = dict(colors)
+        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)
 
         all_charts = []
@@ -2219,6 +2328,8 @@ if __name__ == '__main__':
             group = chart.get("group")
             size_field = chart.get("size")
             bins = chart.get("bins", 20)
+            sort_field = chart.get("sort")
+            sort_order = chart.get("sort_order", "asc")
             format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
             suffix = chart.get("suffix", "")          # metric: unit text
 
@@ -2230,10 +2341,22 @@ if __name__ == '__main__':
     }}''')
             elif chart_type in ["stacked_bar", "grouped_bar"]:
                 barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
+                # Compute category order: sort x categories by aggregate y total
+                if sort_field == "y":
+                    ascending_js = "true" if sort_order == "asc" else "false"
+                    category_order_js = f"""
+      // Sort x categories by total y
+      const catTotals = {{}};
+      data.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (parseFloat(d.y) || 0); }});
+      const catOrder = Object.keys(catTotals).sort((a, b) => {ascending_js} ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);"""
+                    xaxis_js = f"title: '{x}', color: theme.text, gridcolor: theme.text + '20', categoryorder: 'array', categoryarray: catOrder"
+                else:
+                    category_order_js = ""
+                    xaxis_js = f"title: '{x}', color: theme.text, gridcolor: theme.text + '20'"
                 chart_functions.append(f'''
     window.render_{chart_id} = function(data) {{
       const groupValues = [...new Set(data.map(d => d.grp))];
-      const traces = [];
+      const traces = [];{category_order_js}
       groupValues.forEach((groupVal, idx) => {{
         const filtered = data.filter(d => d.grp === groupVal);
         traces.push({{
@@ -2246,7 +2369,7 @@ if __name__ == '__main__':
       }});
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
+        xaxis: {{ {xaxis_js} }},
         yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
         barmode: '{barmode}',
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},
@@ -2270,7 +2393,7 @@ if __name__ == '__main__':
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: theme.secondary ? theme.secondary.slice(0, data.length) : theme.primary,
+          color: theme.secondary ? data.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
           sizemode: 'diameter'
         }},
         hovertemplate: data.map(d => d.grp + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>size: ' + d.size + '<extra></extra>')
@@ -2296,7 +2419,7 @@ if __name__ == '__main__':
           return found ? found.y : 0;
         }})
       );
-      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: 'Blues' }};
+      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
         xaxis: {{ title: '{x}', color: theme.text }},
@@ -2309,6 +2432,7 @@ if __name__ == '__main__':
     }}''')
             else:
                 # Standard single-trace charts - data arrives pre-aggregated with x/y columns
+                geo_enc_val = chart.get("geo_encoding")
                 chart_functions.append(f'''
     window.render_{chart_id} = function(data) {{
       const xValues = data.map(d => d.x);
@@ -2343,14 +2467,27 @@ if __name__ == '__main__':
           }});
           break;
         case 'geo':
-          trace = {{
-            type: 'choropleth',
-            locations: xValues,
-            z: yValues,
-            locationmode: 'country names',
-            colorscale: 'Blues',
-            colorbar: {{ title: '{y}' }}
-          }};
+          const geoEnc = '{geo_enc_val}' !== 'None' ? '{geo_enc_val}' : detectGeoEncoding(xValues);
+          if (geoEnc === 'iso3') {{
+            trace = {{
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: '{y}' }}
+            }};
+          }} else {{
+            const normalizedX = xValues.map(v => normalizeCountryForPlotly(v, geoEnc));
+            trace = {{
+              type: 'choropleth',
+              locations: normalizedX,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: {{ title: '{y}' }}
+            }};
+          }}
           break;
         default:
           trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
@@ -2405,9 +2542,14 @@ if __name__ == '__main__':
       }
     }'''
 
+        # Geo normalization helpers (if any chart is geo)
+        geo_js_block_sql = ""
+        if any(c.get("type") == "geo" for c in all_charts):
+            geo_js_block_sql = "\n    " + self._generate_geo_js_helpers(target="plotly").replace("\n", "\n    ") + "\n"
+
         return f'''  <script>
     const theme = {theme_json};
-
+{geo_js_block_sql}
     // Format a metric scalar value
     function formatMetric(value, format, suffix) {{
       if (value === null || value === undefined || isNaN(value)) return 'N/A';
@@ -2425,7 +2567,10 @@ if __name__ == '__main__':
       try {{
         const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
         const resp = await fetch(url);
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (!resp.ok) {{
+          const body = await resp.json().catch(() => ({{}}));
+          throw new Error(body.error || 'HTTP ' + resp.status);
+        }}
         const data = await resp.json();
         container.innerHTML = '';
         renderFn(data);
@@ -2442,7 +2587,10 @@ if __name__ == '__main__':
       try {{
         const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
         const resp = await fetch(url);
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (!resp.ok) {{
+          const body = await resp.json().catch(() => ({{}}));
+          throw new Error(body.error || 'HTTP ' + resp.status);
+        }}
         const data = await resp.json();
         renderFn(data);
       }} catch (err) {{
@@ -2528,7 +2676,7 @@ if __name__ == '__main__':
       for (const field of pageInfo.filter_fields) {{
         const isSel = !!document.getElementById('filter-' + pageId + '-' + field);
         fetch('/api/filter/' + field)
-          .then(r => r.json())
+          .then(r => {{ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }})
           .then(values => {{
             if (isSel) {{
               const sel = document.getElementById('filter-' + pageId + '-' + field);

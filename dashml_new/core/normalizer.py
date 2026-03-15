@@ -141,6 +141,16 @@ class DashMLNormalizer:
         if chart_type in ("bar", "line", "area", "pie", "geo"):
             return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}{order}{limit_clause}"
         elif chart_type in ("stacked_bar", "grouped_bar"):
+            if sort_field == "y":
+                # Sort x categories by aggregate total across all groups
+                direction = 'ASC' if sort_order == 'asc' else 'DESC'
+                return (
+                    f"SELECT agg.x, agg.grp, agg.y FROM"
+                    f" (SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}, {group}) agg"
+                    f" JOIN (SELECT {x} AS x, {sql_agg}({y}) AS x_total FROM {T} WHERE {F} GROUP BY {x}) totals"
+                    f" ON agg.x = totals.x"
+                    f" ORDER BY totals.x_total {direction}, agg.x{limit_clause}"
+                )
             return f"SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}, {group}{order}{limit_clause}"
         elif chart_type == "heatmap":
             hy = group if group else y
@@ -152,15 +162,16 @@ class DashMLNormalizer:
                 f" GROUP BY {x}, {hy}{order}{limit_clause}"
             )
         elif chart_type == "scatter":
-            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL ORDER BY RAND() LIMIT 5000"
+            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL"
         elif chart_type == "bubble":
             size_ref = size_field or y
+            if not group:
+                return f"SELECT {x} AS x, {y} AS y, {size_ref} AS size FROM {T} WHERE {F}"
             return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {T} WHERE {F} GROUP BY {group}{order}{limit_clause}"
         elif chart_type == "histogram":
-            return f"SELECT {x} AS x FROM {T} WHERE {F} AND {x} IS NOT NULL ORDER BY RAND() LIMIT 50000"
+            return f"SELECT {x} AS x FROM {T} WHERE {F} AND {x} IS NOT NULL"
         elif chart_type == "box":
-            top_n = f"{x} IN (SELECT {x} FROM {T} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
-            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {top_n} AND {x} IS NOT NULL AND {y} IS NOT NULL ORDER BY RAND() LIMIT 50000"
+            return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL"
         elif chart_type == "metric":
             return f"SELECT {sql_agg}({y}) AS y FROM {T} WHERE {F}"
         else:
@@ -306,6 +317,7 @@ class DashMLNormalizer:
             "text": "#fafafa",
             "card": "#262730",
             "buttons": DEFAULT_PRIMARY_COLOR,
+            "sequential": "blues",
         }
 
         if not style_ref:

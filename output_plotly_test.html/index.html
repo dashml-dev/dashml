@@ -1,0 +1,1761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Global Startup Funding Dashboard</title>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #282a36;
+      color: #f8f8f2;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background-color: #282a36;
+      padding: 0;
+    }
+    .card {
+      background-color: #313343;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(255,255,255,0.1);
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin-top: 0;
+      color: #f8f8f2;
+    }
+    #chart {
+      margin-top: 20px;
+      min-height: 500px;
+    }
+    .chart-selector {
+      margin: 20px 0;
+    }
+    select {
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #313343;
+      color: #f8f8f2;
+    }
+    label {
+      margin-right: 10px;
+      font-weight: 500;
+      color: #f8f8f2;
+    }
+    .page-tabs {
+      display: flex;
+      gap: 10px;
+      margin: 20px 0;
+      border-bottom: 2px solid #f8f8f240; /* 40 = 25% opacity hex */
+      padding-bottom: 0;
+    }
+    .tab-button {
+      padding: 10px 20px;
+      background-color: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      color: #f8f8f2;
+      opacity: 0.7;
+      transition: all 0.2s;
+    }
+    .tab-button:hover {
+      opacity: 1;
+      background-color: #f8f8f210; /* 10 = ~6% opacity */
+    }
+    .tab-button.active {
+      color: #bd93f9;
+      border-bottom-color: #bd93f9;
+      opacity: 1;
+    }
+    .page-container {
+      margin-top: 20px;
+    }
+    .page-description {
+      color: #f8f8f2;
+      opacity: 0.8;
+      margin-bottom: 20px;
+    }
+    .chart-container {
+      margin: 20px 0;
+      min-height: 400px;
+    }
+    .chart-spinner {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 300px; gap: 12px;
+      color: #f8f8f2; opacity: 0.6;
+    }
+    .chart-spinner .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #f8f8f220;
+      border-top-color: #bd93f9;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .chart-error {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 300px; color: #e74c3c;
+    }
+    .metric-card {
+      text-align: center;
+      padding: 24px 20px;
+      min-width: 160px;
+      display: inline-block;
+    }
+    .metric-title {
+      font-size: 13px;
+      color: #f8f8f2;
+      opacity: 0.65;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .metric-value {
+      font-size: 2.6rem;
+      font-weight: 700;
+      color: #bd93f9;
+      line-height: 1.1;
+    }
+    .filter-bar {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      padding: 14px 18px;
+      background: #313343;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      border: 1px solid rgba(128,128,128,0.12);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }
+    .filter-bar-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      opacity: .4;
+      align-self: center;
+      padding-bottom: 2px;
+      white-space: nowrap;
+      margin-right: 4px;
+      color: #f8f8f2;
+    }
+    .filter-item {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .filter-item > label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      opacity: .55;
+      color: #f8f8f2;
+    }
+    .filter-select-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .filter-select-wrap select {
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(128,128,128,0.08);
+      color: #f8f8f2;
+      border: 1px solid rgba(128,128,128,0.22);
+      border-radius: 7px;
+      padding: 7px 32px 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 150px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      font-family: inherit;
+    }
+    .filter-select-wrap select:hover { border-color: rgba(128,128,128,0.45); }
+    .filter-select-wrap select:focus { border-color: #bd93f9; box-shadow: 0 0 0 2px #bd93f933; }
+    .filter-select-wrap .sel-arrow {
+      position: absolute;
+      right: 9px;
+      pointer-events: none;
+      opacity: .45;
+      flex-shrink: 0;
+      color: #f8f8f2;
+    }
+    .ms-wrap { position: relative; }
+    .ms-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(128,128,128,0.08);
+      color: #f8f8f2;
+      border: 1px solid rgba(128,128,128,0.22);
+      border-radius: 7px;
+      padding: 7px 10px 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 150px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+    .ms-btn:hover { border-color: rgba(128,128,128,0.45); }
+    .ms-btn.ms-open, .ms-btn:focus { border-color: #bd93f9; box-shadow: 0 0 0 2px #bd93f933; }
+    .ms-count {
+      background: #bd93f9;
+      color: #fff;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 600;
+      display: none;
+    }
+    .ms-count.visible { display: inline; }
+    .ms-arrow { opacity: .45; transition: transform 0.15s; flex-shrink: 0; }
+    .ms-btn.ms-open .ms-arrow { transform: rotate(180deg); }
+    .ms-panel {
+      position: absolute;
+      top: calc(100% + 5px);
+      left: 0;
+      z-index: 200;
+      background: #282a36;
+      border: 1px solid rgba(128,128,128,0.25);
+      border-radius: 9px;
+      padding: 6px;
+      min-width: 190px;
+      max-height: 230px;
+      overflow-y: auto;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+      display: none;
+    }
+    .ms-panel.ms-open { display: block; }
+    .ms-option {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 9px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      user-select: none;
+      transition: background 0.1s;
+      color: #f8f8f2;
+    }
+    .ms-option:hover { background: rgba(128,128,128,0.1); }
+    .ms-option input[type="checkbox"] {
+      accent-color: #bd93f9;
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .filter-reset {
+      align-self: flex-end;
+      background: none;
+      border: 1px solid rgba(128,128,128,0.2);
+      color: #f8f8f2;
+      padding: 7px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      cursor: pointer;
+      opacity: .55;
+      transition: opacity 0.15s, border-color 0.15s;
+      font-family: inherit;
+    }
+    .filter-reset:hover { opacity: 1; border-color: rgba(128,128,128,0.5); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Global Startup Funding Dashboard</h1>
+    <div class="page-tabs">
+      <button class="tab-button active" onclick="showPage('overview', this)">Overview</button>
+      <button class="tab-button" onclick="showPage('by_industry', this)">By Industry</button>
+      <button class="tab-button" onclick="showPage('geography', this)">Geography</button>
+      <button class="tab-button" onclick="showPage('deep_dive', this)">Deep Dive</button>
+    </div>
+    <div id="page-overview" class="page-container">
+      <p class="page-description"><em>Key metrics and high-level funding trends</em></p>
+      <div class="card metric-card">
+        <div class="metric-title">Total Funding ($M)</div>
+        <div class="metric-value" id="metric-metric_total_funding">—</div>
+      </div>
+      <div class="card metric-card">
+        <div class="metric-title">Total Deals</div>
+        <div class="metric-value" id="metric-metric_deal_count">—</div>
+      </div>
+      <div class="card metric-card">
+        <div class="metric-title">Avg Valuation ($M)</div>
+        <div class="metric-value" id="metric-metric_avg_valuation">—</div>
+      </div>
+      <div class="card">
+        <div id="chart-line_funding_over_time"></div>
+      </div>
+      <div class="card">
+        <div id="chart-area_deals_over_time"></div>
+      </div>
+      <div class="card">
+        <div id="chart-pie_by_stage"></div>
+      </div>
+    </div>
+    <div id="page-by_industry" class="page-container" style="display:none">
+      <p class="page-description"><em>Funding breakdown across industries</em></p>
+      <div class="card">
+        <div id="chart-bar_funding_by_industry"></div>
+      </div>
+      <div class="card">
+        <div id="chart-stacked_bar_industry_stage"></div>
+      </div>
+      <div class="card">
+        <div id="chart-grouped_bar_industry_stage"></div>
+      </div>
+      <div class="card">
+        <div id="chart-heatmap_industry_country"></div>
+      </div>
+    </div>
+    <div id="page-geography" class="page-container" style="display:none">
+      <p class="page-description"><em>Where startup funding flows globally</em></p>
+      <div class="card">
+        <div id="chart-geo_funding_by_country"></div>
+      </div>
+      <div class="card">
+        <div id="chart-bar_top_countries"></div>
+      </div>
+      <div class="card">
+        <div id="chart-bar_top_cities"></div>
+      </div>
+    </div>
+    <div id="page-deep_dive" class="page-container" style="display:none">
+      <p class="page-description"><em>Distributions and correlations</em></p>
+      <div class="card">
+        <div id="chart-scatter_funding_vs_valuation"></div>
+      </div>
+      <div class="card">
+        <div id="chart-histogram_funding"></div>
+      </div>
+      <div class="card">
+        <div id="chart-box_funding_by_stage"></div>
+      </div>
+      <div class="card">
+        <div id="chart-bubble_industry"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const theme = {"primary": "#bd93f9", "secondary": ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"], "background": "#282a36", "text": "#f8f8f2", "card": "#313343", "buttons": "#ff79c6", "sequential": [[0, "#fcfbfd"], [0.125, "#efedf5"], [0.25, "#dadaeb"], [0.375, "#bcbddc"], [0.5, "#9e9ac8"], [0.625, "#807dba"], [0.75, "#6a51a3"], [0.875, "#54278f"], [1, "#3f007d"]]};
+
+        // Geo country normalization
+        const iso2ToPlotly = {"AF":"Afghanistan", "AL":"Albania", "DZ":"Algeria", "AO":"Angola", "AR":"Argentina", "AM":"Armenia", "AU":"Australia", "AT":"Austria", "AZ":"Azerbaijan", "BS":"Bahamas", "BD":"Bangladesh", "BY":"Belarus", "BE":"Belgium", "BZ":"Belize", "BJ":"Benin", "BT":"Bhutan", "BO":"Bolivia", "BA":"Bosnia and Herzegovina", "BW":"Botswana", "BR":"Brazil", "BN":"Brunei", "BG":"Bulgaria", "BF":"Burkina Faso", "BI":"Burundi", "KH":"Cambodia", "CM":"Cameroon", "CA":"Canada", "CF":"Central African Republic", "TD":"Chad", "CL":"Chile", "CN":"China", "CO":"Colombia", "CG":"Congo", "CR":"Costa Rica", "CI":"Cote d'Ivoire", "HR":"Croatia", "CU":"Cuba", "CY":"Cyprus", "CZ":"Czech Republic", "CD":"Democratic Republic of the Congo", "DK":"Denmark", "DJ":"Djibouti", "DO":"Dominican Republic", "EC":"Ecuador", "EG":"Egypt", "SV":"El Salvador", "GQ":"Equatorial Guinea", "ER":"Eritrea", "EE":"Estonia", "SZ":"Eswatini", "ET":"Ethiopia", "FK":"Falkland Islands", "FJ":"Fiji", "FI":"Finland", "FR":"France", "GA":"Gabon", "GM":"Gambia", "GE":"Georgia", "DE":"Germany", "GH":"Ghana", "GR":"Greece", "GL":"Greenland", "GT":"Guatemala", "GN":"Guinea", "GW":"Guinea-Bissau", "GY":"Guyana", "HT":"Haiti", "HN":"Honduras", "HU":"Hungary", "IS":"Iceland", "IN":"India", "ID":"Indonesia", "IR":"Iran", "IQ":"Iraq", "IE":"Ireland", "IL":"Israel", "IT":"Italy", "JM":"Jamaica", "JP":"Japan", "JO":"Jordan", "KZ":"Kazakhstan", "KE":"Kenya", "KW":"Kuwait", "KG":"Kyrgyzstan", "LA":"Laos", "LV":"Latvia", "LB":"Lebanon", "LS":"Lesotho", "LR":"Liberia", "LY":"Libya", "LT":"Lithuania", "LU":"Luxembourg", "MK":"North Macedonia", "MG":"Madagascar", "MW":"Malawi", "MY":"Malaysia", "ML":"Mali", "MR":"Mauritania", "MX":"Mexico", "MD":"Moldova", "MN":"Mongolia", "ME":"Montenegro", "MA":"Morocco", "MZ":"Mozambique", "MM":"Myanmar", "NA":"Namibia", "NP":"Nepal", "NL":"Netherlands", "NC":"New Caledonia", "NZ":"New Zealand", "NI":"Nicaragua", "NE":"Niger", "NG":"Nigeria", "KP":"North Korea", "NO":"Norway", "OM":"Oman", "PK":"Pakistan", "PS":"Palestine", "PA":"Panama", "PG":"Papua New Guinea", "PY":"Paraguay", "PE":"Peru", "PH":"Philippines", "PL":"Poland", "PT":"Portugal", "PR":"Puerto Rico", "QA":"Qatar", "RO":"Romania", "RU":"Russia", "RW":"Rwanda", "SA":"Saudi Arabia", "SN":"Senegal", "RS":"Serbia", "SL":"Sierra Leone", "SI":"Slovenia", "SB":"Solomon Islands", "SO":"Somalia", "ZA":"South Africa", "KR":"South Korea", "SS":"South Sudan", "ES":"Spain", "LK":"Sri Lanka", "SD":"Sudan", "SR":"Suriname", "SE":"Sweden", "CH":"Switzerland", "SY":"Syria", "TW":"Taiwan", "TJ":"Tajikistan", "TZ":"Tanzania", "TH":"Thailand", "TL":"Timor-Leste", "TG":"Togo", "TT":"Trinidad and Tobago", "TN":"Tunisia", "TR":"Turkey", "TM":"Turkmenistan", "UG":"Uganda", "UA":"Ukraine", "AE":"United Arab Emirates", "GB":"United Kingdom", "US":"United States", "UY":"Uruguay", "UZ":"Uzbekistan", "VU":"Vanuatu", "VE":"Venezuela", "VN":"Vietnam", "EH":"Western Sahara", "YE":"Yemen", "ZM":"Zambia", "ZW":"Zimbabwe", "XK":"Kosovo"};
+        const iso3ToPlotly = {"AFG":"Afghanistan", "ALB":"Albania", "DZA":"Algeria", "AGO":"Angola", "ARG":"Argentina", "ARM":"Armenia", "AUS":"Australia", "AUT":"Austria", "AZE":"Azerbaijan", "BHS":"Bahamas", "BGD":"Bangladesh", "BLR":"Belarus", "BEL":"Belgium", "BLZ":"Belize", "BEN":"Benin", "BTN":"Bhutan", "BOL":"Bolivia", "BIH":"Bosnia and Herzegovina", "BWA":"Botswana", "BRA":"Brazil", "BRN":"Brunei", "BGR":"Bulgaria", "BFA":"Burkina Faso", "BDI":"Burundi", "KHM":"Cambodia", "CMR":"Cameroon", "CAN":"Canada", "CAF":"Central African Republic", "TCD":"Chad", "CHL":"Chile", "CHN":"China", "COL":"Colombia", "COG":"Congo", "CRI":"Costa Rica", "CIV":"Cote d'Ivoire", "HRV":"Croatia", "CUB":"Cuba", "CYP":"Cyprus", "CZE":"Czech Republic", "COD":"Democratic Republic of the Congo", "DNK":"Denmark", "DJI":"Djibouti", "DOM":"Dominican Republic", "ECU":"Ecuador", "EGY":"Egypt", "SLV":"El Salvador", "GNQ":"Equatorial Guinea", "ERI":"Eritrea", "EST":"Estonia", "SWZ":"Eswatini", "ETH":"Ethiopia", "FLK":"Falkland Islands", "FJI":"Fiji", "FIN":"Finland", "FRA":"France", "GAB":"Gabon", "GMB":"Gambia", "GEO":"Georgia", "DEU":"Germany", "GHA":"Ghana", "GRC":"Greece", "GRL":"Greenland", "GTM":"Guatemala", "GIN":"Guinea", "GNB":"Guinea-Bissau", "GUY":"Guyana", "HTI":"Haiti", "HND":"Honduras", "HUN":"Hungary", "ISL":"Iceland", "IND":"India", "IDN":"Indonesia", "IRN":"Iran", "IRQ":"Iraq", "IRL":"Ireland", "ISR":"Israel", "ITA":"Italy", "JAM":"Jamaica", "JPN":"Japan", "JOR":"Jordan", "KAZ":"Kazakhstan", "KEN":"Kenya", "KWT":"Kuwait", "KGZ":"Kyrgyzstan", "LAO":"Laos", "LVA":"Latvia", "LBN":"Lebanon", "LSO":"Lesotho", "LBR":"Liberia", "LBY":"Libya", "LTU":"Lithuania", "LUX":"Luxembourg", "MKD":"North Macedonia", "MDG":"Madagascar", "MWI":"Malawi", "MYS":"Malaysia", "MLI":"Mali", "MRT":"Mauritania", "MEX":"Mexico", "MDA":"Moldova", "MNG":"Mongolia", "MNE":"Montenegro", "MAR":"Morocco", "MOZ":"Mozambique", "MMR":"Myanmar", "NAM":"Namibia", "NPL":"Nepal", "NLD":"Netherlands", "NCL":"New Caledonia", "NZL":"New Zealand", "NIC":"Nicaragua", "NER":"Niger", "NGA":"Nigeria", "PRK":"North Korea", "NOR":"Norway", "OMN":"Oman", "PAK":"Pakistan", "PSE":"Palestine", "PAN":"Panama", "PNG":"Papua New Guinea", "PRY":"Paraguay", "PER":"Peru", "PHL":"Philippines", "POL":"Poland", "PRT":"Portugal", "PRI":"Puerto Rico", "QAT":"Qatar", "ROU":"Romania", "RUS":"Russia", "RWA":"Rwanda", "SAU":"Saudi Arabia", "SEN":"Senegal", "SRB":"Serbia", "SLE":"Sierra Leone", "SVN":"Slovenia", "SLB":"Solomon Islands", "SOM":"Somalia", "ZAF":"South Africa", "KOR":"South Korea", "SSD":"South Sudan", "ESP":"Spain", "LKA":"Sri Lanka", "SDN":"Sudan", "SUR":"Suriname", "SWE":"Sweden", "CHE":"Switzerland", "SYR":"Syria", "TWN":"Taiwan", "TJK":"Tajikistan", "TZA":"Tanzania", "THA":"Thailand", "TLS":"Timor-Leste", "TGO":"Togo", "TTO":"Trinidad and Tobago", "TUN":"Tunisia", "TUR":"Turkey", "TKM":"Turkmenistan", "UGA":"Uganda", "UKR":"Ukraine", "ARE":"United Arab Emirates", "GBR":"United Kingdom", "USA":"United States", "URY":"Uruguay", "UZB":"Uzbekistan", "VUT":"Vanuatu", "VEN":"Venezuela", "VNM":"Vietnam", "ESH":"Western Sahara", "YEM":"Yemen", "ZMB":"Zambia", "ZWE":"Zimbabwe", "XKX":"Kosovo"};
+        const aliasToPlotly = {"usa":"United States", "united states":"United States", "uk":"United Kingdom", "britain":"United Kingdom", "great britain":"United Kingdom", "england":"United Kingdom", "russian federation":"Russia", "republic of korea":"South Korea", "korea":"South Korea", "korea, republic of":"South Korea", "dprk":"North Korea", "korea, democratic people's republic of":"North Korea", "iran, islamic republic of":"Iran", "islamic republic of iran":"Iran", "syrian arab republic":"Syria", "viet nam":"Vietnam", "lao people's democratic republic":"Laos", "czech republic":"Czech Republic", "moldova, republic of":"Moldova", "republic of moldova":"Moldova", "taiwan, province of china":"Taiwan", "ivory coast":"Cote d'Ivoire", "cote d'ivoire":"Cote d'Ivoire", "burma":"Myanmar", "swaziland":"Eswatini", "the bahamas":"Bahamas", "north macedonia":"North Macedonia", "uae":"United Arab Emirates", "bosnia and herzegovina":"Bosnia and Herzegovina", "bosnia":"Bosnia and Herzegovina", "democratic republic of the congo":"Democratic Republic of the Congo", "drc":"Democratic Republic of the Congo", "dr congo":"Democratic Republic of the Congo", "republic of the congo":"Congo", "congo-brazzaville":"Congo", "dominican republic":"Dominican Republic", "central african republic":"Central African Republic", "equatorial guinea":"Equatorial Guinea", "falkland islands":"Falkland Islands", "solomon islands":"Solomon Islands", "south sudan":"South Sudan", "western sahara":"Western Sahara", "spain(canary is)":"Spain", "spain (canary is)":"Spain", "united kingdom":"United Kingdom", "venezuela, bolivarian republic of":"Venezuela", "bolivia, plurinational state of":"Bolivia", "tanzania, united republic of":"Tanzania", "united republic of tanzania":"Tanzania"};
+        function detectGeoEncoding(values) {
+          const sample = values.filter(v => v != null && v !== '').slice(0, 20);
+          if (sample.every(v => /^[A-Z]{2}$/.test(String(v)))) return 'iso2';
+          if (sample.every(v => /^[A-Z]{3}$/.test(String(v)))) return 'iso3';
+          return 'name';
+        }
+        function normalizeCountryForPlotly(value, encoding) {
+          const v = String(value).trim();
+          if (!v) return v;
+          if (encoding === 'iso2') return iso2ToPlotly[v.toUpperCase()] || v;
+          if (encoding === 'iso3') return iso3ToPlotly[v.toUpperCase()] || v;
+          return aliasToPlotly[v.toLowerCase()] || v;
+        }
+
+    // Apply filters to data
+    function applyFilters(data, filters) {
+      if (!filters || filters.length === 0) return data;
+      return data.filter(row => {
+        return filters.every(f => {
+          const val = row[f.field];
+          switch (f.op) {
+            case 'eq': return val === f.value;
+            case 'ne': return val !== f.value;
+            case 'gt': return val > f.value;
+            case 'lt': return val < f.value;
+            case 'gte': return val >= f.value;
+            case 'lte': return val <= f.value;
+            case 'in': return Array.isArray(f.value) && f.value.includes(val);
+            case 'contains': return String(val).includes(f.value);
+            default: return true;
+          }
+        });
+      });
+    }
+
+    // Cast y values based on y_type
+    function castYValues(data, y, yType) {
+      if (!yType) return data;
+      return data.map(row => {
+        const newRow = {...row};
+        if (yType === 'number') {
+          newRow[y] = parseFloat(row[y]) || 0;
+        } else if (yType === 'string') {
+          newRow[y] = String(row[y]);
+        }
+        return newRow;
+      });
+    }
+
+    // Sort aggregated data
+    function sortData(data, sortField, sortOrder, xType) {
+      const result = [...data];
+      const ascending = sortOrder !== 'desc';
+
+      if (sortField === 'y') {
+        result.sort((a, b) => ascending ? a.y - b.y : b.y - a.y);
+      } else if (sortField === 'x') {
+        if (xType === 'date') {
+          result.sort((a, b) => {
+            const diff = new Date(a.x) - new Date(b.x);
+            return ascending ? diff : -diff;
+          });
+        } else if (xType === 'number') {
+          result.sort((a, b) => ascending ? a.x - b.x : b.x - a.x);
+        } else {
+          result.sort((a, b) => {
+            const cmp = String(a.x).localeCompare(String(b.x));
+            return ascending ? cmp : -cmp;
+          });
+        }
+      } else if (xType === 'date') {
+        // Default: sort by date if x_type is date
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      } else {
+        // Default: sort strings alphabetically for consistency across transformers
+        result.sort((a, b) => String(a.x).localeCompare(String(b.x)));
+      }
+      return result;
+    }
+
+    function aggregateData(data, x, y, agg, options) {
+      options = options || {};
+      const xType = options.xType;
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+      const sizeField = options.sizeField;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const key = row[x];
+        if (!grouped[key]) grouped[key] = { values: [], count: 0, sizeValues: [] };
+        grouped[key].values.push(row[y]);
+        grouped[key].count++;
+        if (sizeField) grouped[key].sizeValues.push(parseFloat(row[sizeField]) || 0);
+      });
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const values = grouped[key].values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = grouped[key].count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        const entry = { x: key, y: aggregated };
+        if (sizeField) {
+          const sizeVals = grouped[key].sizeValues;
+          switch (agg) {
+            case 'sum': entry.size = sizeVals.reduce((a, b) => a + b, 0); break;
+            case 'mean': entry.size = sizeVals.reduce((a, b) => a + b, 0) / sizeVals.length; break;
+            case 'count': entry.size = grouped[key].count; break;
+            default: entry.size = sizeVals.reduce((a, b) => a + b, 0);
+          }
+        }
+        result.push(entry);
+      });
+
+      // Sort
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    function aggregateDataWithGroup(data, x, y, groupField, agg, options) {
+      options = options || {};
+      const xType = options.xType;
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const xKey = row[x];
+        const groupKey = row[groupField];
+        const compositeKey = xKey + '|||' + groupKey;
+        if (!grouped[compositeKey]) grouped[compositeKey] = { x: xKey, group: groupKey, values: [], count: 0 };
+        grouped[compositeKey].values.push(row[y]);
+        grouped[compositeKey].count++;
+      });
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const entry = grouped[key];
+        const values = entry.values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = entry.count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        result.push({ x: entry.x, group: entry.group, y: aggregated });
+      });
+
+      // Sort based on sortField or default x_type
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    // Aggregate data for bubble charts: group by groupField, aggregate x, y, size independently
+    function aggregateBubbleData(data, groupField, xMetric, yMetric, sizeMetric, agg, options) {
+      options = options || {};
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      let filtered = applyFilters(data, filters);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const key = row[groupField];
+        if (!grouped[key]) grouped[key] = { xValues: [], yValues: [], sizeValues: [], count: 0 };
+        grouped[key].xValues.push(parseFloat(row[xMetric]) || 0);
+        grouped[key].yValues.push(parseFloat(row[yMetric]) || 0);
+        grouped[key].sizeValues.push(parseFloat(row[sizeMetric]) || 0);
+        grouped[key].count++;
+      });
+
+      function aggArray(values, count) {
+        switch (agg) {
+          case 'sum': return values.reduce((a, b) => a + b, 0);
+          case 'mean': return values.reduce((a, b) => a + b, 0) / values.length;
+          case 'count': return count;
+          default: return values.reduce((a, b) => a + b, 0);
+        }
+      }
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const g = grouped[key];
+        result.push({
+          group: key,
+          x: aggArray(g.xValues, g.count),
+          y: aggArray(g.yValues, g.count),
+          size: aggArray(g.sizeValues, g.count)
+        });
+      });
+
+      if (sortField === 'y') {
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.y - b.y : b.y - a.y);
+      } else {
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.x - b.x : b.x - a.x);
+      }
+
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    // Format a metric scalar value using a format string and optional suffix
+    function formatMetric(value, format, suffix) {
+      if (value === null || value === undefined || isNaN(value)) return 'N/A';
+      const n = parseFloat(value);
+      const m = format.match(/,?\.(\d+)f/);
+      const decimals = m ? parseInt(m[1]) : 0;
+      const str = n.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+      return str + (suffix || '');
+    }
+
+    // Aggregate a column to a scalar metric value
+    function computeMetric(data, yField, agg, filters) {
+      let d = applyFilters(data, filters);
+      const vals = d.map(r => parseFloat(r[yField])).filter(v => !isNaN(v));
+      if (!vals.length) return null;
+      if (agg === 'sum') return vals.reduce((a, b) => a + b, 0);
+      if (agg === 'mean') return vals.reduce((a, b) => a + b, 0) / vals.length;
+      if (agg === 'count') return vals.length;
+      return null;
+    }
+
+
+    function render_metric_total_funding(data) {
+      const filters = [];
+      const value = computeMetric(data, 'funding_amount', 'sum', filters);
+      document.getElementById('metric-metric_total_funding').textContent = formatMetric(value, ',.1f', 'M');
+    }
+    function render_metric_deal_count(data) {
+      const filters = [];
+      const value = computeMetric(data, 'funding_amount', 'count', filters);
+      document.getElementById('metric-metric_deal_count').textContent = formatMetric(value, ',.0f', '');
+    }
+    function render_metric_avg_valuation(data) {
+      const filters = [];
+      const value = computeMetric(data, 'valuation', 'mean', filters);
+      document.getElementById('metric-metric_avg_valuation').textContent = formatMetric(value, ',.1f', 'M');
+    }
+    function render_line_funding_over_time(data) {
+      const options = {"xType": "date", "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null};
+      const grouped = aggregateData(data, 'funding_date', 'funding_amount', 'sum', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('line') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_line_funding_over_time = [...new Set(data.map(d => d['funding_date']))];
+          boxGroups_line_funding_over_time.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['funding_date'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_line_funding_over_time = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_line_funding_over_time === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_line_funding_over_time = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_line_funding_over_time));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_line_funding_over_time,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('line' === 'geo') {
+        layout = {
+          title: { text: 'Funding Over Time', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Funding Over Time', font: { color: theme.text } },
+          xaxis: { title: 'funding_date', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-line_funding_over_time', traces, layout, { responsive: true });
+    }
+    function render_area_deals_over_time(data) {
+      const options = {"xType": "date", "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null};
+      const grouped = aggregateData(data, 'funding_date', 'funding_amount', 'count', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('area') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_area_deals_over_time = [...new Set(data.map(d => d['funding_date']))];
+          boxGroups_area_deals_over_time.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['funding_date'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_area_deals_over_time = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_area_deals_over_time === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_area_deals_over_time = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_area_deals_over_time));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_area_deals_over_time,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('area' === 'geo') {
+        layout = {
+          title: { text: 'Deal Count Over Time', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Deal Count Over Time', font: { color: theme.text } },
+          xaxis: { title: 'funding_date', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-area_deals_over_time', traces, layout, { responsive: true });
+    }
+    function render_pie_by_stage(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null};
+      const grouped = aggregateData(data, 'stage', 'funding_amount', 'count', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('pie') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_pie_by_stage = [...new Set(data.map(d => d['stage']))];
+          boxGroups_pie_by_stage.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['stage'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_pie_by_stage = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_pie_by_stage === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_pie_by_stage = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_pie_by_stage));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_pie_by_stage,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('pie' === 'geo') {
+        layout = {
+          title: { text: 'Deals by Funding Stage', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Deals by Funding Stage', font: { color: theme.text } },
+          xaxis: { title: 'stage', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-pie_by_stage', traces, layout, { responsive: true });
+    }
+    function render_bar_funding_by_industry(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": null};
+      const grouped = aggregateData(data, 'industry', 'funding_amount', 'sum', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_bar_funding_by_industry = [...new Set(data.map(d => d['industry']))];
+          boxGroups_bar_funding_by_industry.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['industry'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_bar_funding_by_industry = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_bar_funding_by_industry === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_bar_funding_by_industry = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_bar_funding_by_industry));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_bar_funding_by_industry,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('bar' === 'geo') {
+        layout = {
+          title: { text: 'Total Funding by Industry', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Total Funding by Industry', font: { color: theme.text } },
+          xaxis: { title: 'industry', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-bar_funding_by_industry', traces, layout, { responsive: true });
+    }
+    function render_stacked_bar_industry_stage(data) {
+      // Stacked/grouped bars need multiple traces
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": null};
+      const aggregated = aggregateDataWithGroup(data, 'industry', 'funding_amount', 'stage', 'sum', options);
+      const groupValues = [...new Set(aggregated.map(d => d.group))];
+
+      const traces = [];
+      groupValues.forEach((groupVal, idx) => {
+        const filtered = aggregated.filter(d => d.group === groupVal);
+        traces.push({
+          x: filtered.map(d => d.x),
+          y: filtered.map(d => d.y),
+          name: groupVal,
+          type: 'bar',
+          marker: { color: theme.secondary[idx % theme.secondary.length] }
+        });
+      });
+
+      const layout = {
+        title: { text: 'Industry Funding by Stage', font: { color: theme.text } },
+        xaxis: { title: 'industry', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+        barmode: 'stack',
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      // Sort x categories by aggregate y total
+      if ('y' === 'y') {
+        const catTotals = {};
+        aggregated.forEach(d => { catTotals[d.x] = (catTotals[d.x] || 0) + (d.y || 0); });
+        const asc = 'asc' !== 'desc';
+        layout.xaxis.categoryorder = 'array';
+        layout.xaxis.categoryarray = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
+      }
+
+      Plotly.newPlot('chart-stacked_bar_industry_stage', traces, layout, { responsive: true });
+    }
+    function render_grouped_bar_industry_stage(data) {
+      // Stacked/grouped bars need multiple traces
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": null};
+      const aggregated = aggregateDataWithGroup(data, 'industry', 'funding_amount', 'stage', 'count', options);
+      const groupValues = [...new Set(aggregated.map(d => d.group))];
+
+      const traces = [];
+      groupValues.forEach((groupVal, idx) => {
+        const filtered = aggregated.filter(d => d.group === groupVal);
+        traces.push({
+          x: filtered.map(d => d.x),
+          y: filtered.map(d => d.y),
+          name: groupVal,
+          type: 'bar',
+          marker: { color: theme.secondary[idx % theme.secondary.length] }
+        });
+      });
+
+      const layout = {
+        title: { text: 'Industry Deal Count by Stage', font: { color: theme.text } },
+        xaxis: { title: 'industry', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+        barmode: 'group',
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      // Sort x categories by aggregate y total
+      if ('y' === 'y') {
+        const catTotals = {};
+        aggregated.forEach(d => { catTotals[d.x] = (catTotals[d.x] || 0) + (d.y || 0); });
+        const asc = 'asc' !== 'desc';
+        layout.xaxis.categoryorder = 'array';
+        layout.xaxis.categoryarray = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
+      }
+
+      Plotly.newPlot('chart-grouped_bar_industry_stage', traces, layout, { responsive: true });
+    }
+    function render_heatmap_industry_country(data) {
+      // Heatmap: 2D grid with color intensity
+      const options = {"xType": null, "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null};
+      const aggregated = aggregateDataWithGroup(data, 'industry', 'funding_amount', 'country', 'sum', options);
+      const heatmapX = [...new Set(aggregated.map(d => d.x))];
+      const heatmapY = [...new Set(aggregated.map(d => d.group))];
+      const heatmapZ = heatmapY.map(yVal =>
+        heatmapX.map(xVal => {
+          const found = aggregated.find(d => d.x === xVal && d.group === yVal);
+          return found ? found.y : 0;
+        })
+      );
+
+      const trace = { x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' };
+
+      const layout = {
+        title: { text: 'Funding Heatmap: Industry vs Country', font: { color: theme.text } },
+        xaxis: { title: 'industry', color: theme.text },
+        yaxis: { title: 'country', color: theme.text },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-heatmap_industry_country', [trace], layout, { responsive: true });
+    }
+    function render_geo_funding_by_country(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null};
+      const grouped = aggregateData(data, 'country', 'funding_amount', 'sum', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('geo') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_geo_funding_by_country = [...new Set(data.map(d => d['country']))];
+          boxGroups_geo_funding_by_country.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['country'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_geo_funding_by_country = 'name' !== 'None' ? 'name' : detectGeoEncoding(xValues);
+          if (geoEnc_geo_funding_by_country === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_geo_funding_by_country = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_geo_funding_by_country));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_geo_funding_by_country,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('geo' === 'geo') {
+        layout = {
+          title: { text: 'Total Funding by Country', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Total Funding by Country', font: { color: theme.text } },
+          xaxis: { title: 'country', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-geo_funding_by_country', traces, layout, { responsive: true });
+    }
+    function render_bar_top_countries(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 10};
+      const grouped = aggregateData(data, 'country', 'funding_amount', 'sum', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_bar_top_countries = [...new Set(data.map(d => d['country']))];
+          boxGroups_bar_top_countries.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['country'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_bar_top_countries = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_bar_top_countries === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_bar_top_countries = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_bar_top_countries));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_bar_top_countries,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('bar' === 'geo') {
+        layout = {
+          title: { text: 'Top 10 Countries by Funding', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Top 10 Countries by Funding', font: { color: theme.text } },
+          xaxis: { title: 'country', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-bar_top_countries', traces, layout, { responsive: true });
+    }
+    function render_bar_top_cities(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 10};
+      const grouped = aggregateData(data, 'city', 'funding_amount', 'count', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('bar') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_bar_top_cities = [...new Set(data.map(d => d['city']))];
+          boxGroups_bar_top_cities.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['city'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_bar_top_cities = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_bar_top_cities === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_bar_top_cities = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_bar_top_cities));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_bar_top_cities,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('bar' === 'geo') {
+        layout = {
+          title: { text: 'Top 10 Cities by Deal Count', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Top 10 Cities by Deal Count', font: { color: theme.text } },
+          xaxis: { title: 'city', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-bar_top_cities', traces, layout, { responsive: true });
+    }
+    function render_scatter_funding_vs_valuation(data) {
+      // Use raw data for scatter (with filters)
+      const filters = [];
+      const filteredData = applyFilters(data, filters);
+      const xValues = filteredData.map(d => d['funding_amount']);
+      const yValues = filteredData.map(d => d['valuation']);
+
+      let trace;
+      let traces = [];
+      switch ('scatter') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_scatter_funding_vs_valuation = [...new Set(data.map(d => d['funding_amount']))];
+          boxGroups_scatter_funding_vs_valuation.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['funding_amount'] === group).map(d => parseFloat(d['valuation'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_scatter_funding_vs_valuation = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_scatter_funding_vs_valuation === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'valuation' }
+            };
+          } else {
+            const normalizedX_scatter_funding_vs_valuation = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_scatter_funding_vs_valuation));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_scatter_funding_vs_valuation,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'valuation' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('scatter' === 'geo') {
+        layout = {
+          title: { text: 'Funding Amount vs Valuation', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Funding Amount vs Valuation', font: { color: theme.text } },
+          xaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'valuation', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-scatter_funding_vs_valuation', traces, layout, { responsive: true });
+    }
+    function render_histogram_funding(data) {
+      // Use raw data for histogram (with filters)
+      const filters = [];
+      const filteredData = applyFilters(data, filters);
+      const xValues = filteredData.map(d => d['funding_amount']);
+      const yValues = filteredData.map(d => d['funding_amount']);
+
+      let trace;
+      let traces = [];
+      switch ('histogram') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 30, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_histogram_funding = [...new Set(data.map(d => d['funding_amount']))];
+          boxGroups_histogram_funding.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['funding_amount'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_histogram_funding = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_histogram_funding === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_histogram_funding = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_histogram_funding));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_histogram_funding,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('histogram' === 'geo') {
+        layout = {
+          title: { text: 'Distribution of Funding Amounts', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Distribution of Funding Amounts', font: { color: theme.text } },
+          xaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-histogram_funding', traces, layout, { responsive: true });
+    }
+    function render_box_funding_by_stage(data) {
+      // Use raw data for box (with filters)
+      const filters = [];
+      const filteredData = applyFilters(data, filters);
+      const xValues = filteredData.map(d => d['stage']);
+      const yValues = filteredData.map(d => d['funding_amount']);
+
+      let trace;
+      let traces = [];
+      switch ('box') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_box_funding_by_stage = [...new Set(data.map(d => d['stage']))];
+          boxGroups_box_funding_by_stage.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['stage'] === group).map(d => parseFloat(d['funding_amount'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_box_funding_by_stage = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_box_funding_by_stage === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          } else {
+            const normalizedX_box_funding_by_stage = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_box_funding_by_stage));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_box_funding_by_stage,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'funding_amount' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('box' === 'geo') {
+        layout = {
+          title: { text: 'Funding Distribution by Stage', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Funding Distribution by Stage', font: { color: theme.text } },
+          xaxis: { title: 'stage', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-box_funding_by_stage', traces, layout, { responsive: true });
+    }
+    function render_bubble_industry(data) {
+      // Bubble chart: 4D visualization (group, x, y, size)
+      const options = {"xType": null, "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null, "sizeField": "employees"};
+      const bubbleData = aggregateBubbleData(data, 'industry', 'funding_amount', 'valuation', 'employees', 'mean', options);
+      const bubbleSizeVals = bubbleData.map(d => Math.abs(d.size));
+      const maxSize = Math.max(...bubbleSizeVals);
+      const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
+
+      const trace = {
+        x: bubbleData.map(d => d.x),
+        y: bubbleData.map(d => d.y),
+        text: bubbleData.map(d => d.group),
+        type: 'scatter',
+        mode: 'markers+text',
+        textposition: 'top center',
+        marker: {
+          size: normalizedSizes,
+          color: theme.secondary ? bubbleData.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
+          sizemode: 'diameter'
+        },
+        hovertemplate: bubbleData.map(d => d.group + '<br>funding_amount: ' + d.x + '<br>valuation: ' + d.y + '<br>employees: ' + d.size + '<extra></extra>')
+      };
+
+      const layout = {
+        title: { text: 'Industries: Funding vs Valuation (sized by Employees)', font: { color: theme.text } },
+        xaxis: { title: 'funding_amount', color: theme.text, gridcolor: theme.text + '20' },
+        yaxis: { title: 'valuation', color: theme.text, gridcolor: theme.text + '20' },
+        margin: { t: 60, r: 40, b: 60, l: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+      };
+
+      Plotly.newPlot('chart-bubble_industry', [trace], layout, { responsive: true });
+    }
+
+
+    function showPage(pageId, clickedButton) {
+      document.querySelectorAll('.page-container').forEach(page => {
+        page.style.display = 'none';
+      });
+      document.querySelectorAll('.tab-button').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.getElementById('page-' + pageId).style.display = 'block';
+      if (clickedButton) {
+        clickedButton.classList.add('active');
+      }
+    }
+
+
+    function renderAllPages(data) {
+      render_metric_total_funding(data);
+      render_metric_deal_count(data);
+      render_metric_avg_valuation(data);
+      render_line_funding_over_time(data);
+      render_area_deals_over_time(data);
+      render_pie_by_stage(data);
+      render_bar_funding_by_industry(data);
+      render_stacked_bar_industry_stage(data);
+      render_grouped_bar_industry_stage(data);
+      render_heatmap_industry_country(data);
+      render_geo_funding_by_country(data);
+      render_bar_top_countries(data);
+      render_bar_top_cities(data);
+      render_scatter_funding_vs_valuation(data);
+      render_histogram_funding(data);
+      render_box_funding_by_stage(data);
+      render_bubble_industry(data);
+    }
+
+    fetch('startup_funding.csv')
+      .then(response => response.text())
+      .then(csv => {
+        const lines = csv.trim().split('\n').filter(line => line.trim());
+        const headers = lines[0].split(',').map(h => h.trim());
+        const data = lines.slice(1)
+          .map(line => {
+            const values = line.split(',');
+            if (values.length !== headers.length) return null;
+            const row = {};
+            headers.forEach((header, i) => {
+              const val = values[i] ? values[i].trim() : '';
+              row[header] = (val !== '' && !isNaN(val)) ? parseFloat(val) : val;
+            });
+            return row;
+          })
+          .filter(row => row !== null);
+
+        renderAllPages(data);
+      })
+      .catch(error => console.error('Error loading data:', error));
+  </script>
+</body>
+</html>

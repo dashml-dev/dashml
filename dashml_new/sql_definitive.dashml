@@ -11,6 +11,27 @@ pages:
     title: "Categorical Charts"
     description: "Bar charts and pie charts for categorical data"
     charts:
+      - id: "total_revenue_kpi"
+        type: "metric"
+        title: "Total Revenue"
+        y: "total_amount"
+        agg: "sum"
+        format: "integer"
+
+      - id: "total_orders_kpi"
+        type: "metric"
+        title: "Total Orders"
+        y: "order_id"
+        agg: "count"
+        format: "integer"
+
+      - id: "avg_order_value_kpi"
+        type: "metric"
+        title: "Avg Order Value"
+        y: "total_amount"
+        agg: "mean"
+        format: "decimal:2"
+
       - id: "bar_sales_by_country"
         type: "bar"
         title: "Total Sales by Country"

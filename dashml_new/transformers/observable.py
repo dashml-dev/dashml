@@ -2,6 +2,7 @@
 Observable Plot Transformer - Generates Observable Plot HTML from DashML specs
 """
 import re
+import sys
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import json
@@ -15,6 +16,7 @@ from .constants import (
     TEMPORAL_FIELD_NAMES,
     DEFAULT_SORT_ORDER,
     resolve_metric_format,
+    country_mapping_as_js,
 )
 
 if TYPE_CHECKING:
@@ -462,6 +464,16 @@ class ObservablePlotTransformer(Transformer):
 {chr(10).join(tabs)}
     </div>"""
 
+        # Geo normalization helpers (if any chart is geo)
+        geo_helpers_js = ""
+        has_geo = any(
+            c.get("type") == "geo"
+            for p in pages
+            for c in p.get("charts", [])
+        )
+        if has_geo:
+            geo_helpers_js = "\n        " + self._generate_geo_js_helpers_inline()
+
         script = f"""
     <script>
         function showPage(pageId, buttonElement) {{
@@ -479,7 +491,7 @@ class ObservablePlotTransformer(Transformer):
             document.getElementById('page-' + pageId).classList.add('active');
             buttonElement.classList.add('active');
         }}
-
+{geo_helpers_js}
         function renderAllCharts() {{
 {chr(10).join(render_functions)}
         }}
@@ -579,7 +591,8 @@ class ObservablePlotTransformer(Transformer):
             return self._generate_d3_pie_chart(safe_var_name, x, y, data_code, container_id, colors)
 
         # Generate Observable Plot mark based on chart type
-        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field)
+        sequential_scheme = colors.get("sequential", "blues")
+        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field, sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"), sort_field=sort_field, sort_order=sort_order)
 
         # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
         # TODO: [Magic Values] Extract temporal field names to module-level constant
@@ -1008,7 +1021,7 @@ class ObservablePlotTransformer(Transformer):
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None) -> str:
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc") -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -1120,7 +1133,7 @@ class ObservablePlotTransformer(Transformer):
                 ],
                 color: {{
                     type: "linear",
-                    scheme: "blues",
+                    scheme: "{sequential}",
                     legend: true,
                     label: "{y}"
                 }}"""
@@ -1163,6 +1176,12 @@ class ObservablePlotTransformer(Transformer):
         elif chart_type == "stacked_bar":
             # Observable Plot stacks by default when using fill with categorical data
             color_scale_json = str(secondary_colors).replace("'", '"')
+            # Sort x categories by aggregate y total
+            if sort_field == "y":
+                sign = "" if sort_order == "asc" else "-"
+                x_domain = f"d3.groupSort(data_{data_var}, g => {sign}d3.sum(g, d => d.{y}), d => d.{x})"
+            else:
+                x_domain = f"[...new Set(data_{data_var}.map(d => d.{x}))]"
             return f"""marks: [
                     Plot.barY(data_{data_var}, {{
                         x: "{x}",
@@ -1172,6 +1191,9 @@ class ObservablePlotTransformer(Transformer):
                     }}),
                     Plot.ruleY([0])
                 ],
+                x: {{
+                    domain: {x_domain}
+                }},
                 color: {{
                     domain: [...new Set(data_{data_var}.map(d => d.{group}))],
                     range: {color_scale_json}
@@ -1181,13 +1203,20 @@ class ObservablePlotTransformer(Transformer):
             # Observable Plot groups bars using fx channel for faceting
             # fx creates separate facets (groups), x positions bars within each facet
             color_scale_json = str(secondary_colors).replace("'", '"')
+            # Sort x categories by aggregate y (total per category), not by individual row y
+            if sort_field == "y":
+                sign = "" if sort_order == "asc" else "-"
+                fx_domain = f"d3.groupSort(data_{data_var}, g => {sign}d3.sum(g, d => d.{y}), d => d.{x})"
+            else:
+                fx_domain = f"[...new Set(data_{data_var}.map(d => d.{x}))]"
+            sort_mark = f', sort: {{x: "-y"}}' if sort_field == "y" and sort_order == "desc" else (f', sort: {{x: "y"}}' if sort_field == "y" else "")
             return f"""marks: [
                     Plot.barY(data_{data_var}, {{
                         fx: "{x}",
                         x: "{group}",
                         y: "{y}",
                         fill: "{group}",
-                        tip: true
+                        tip: true{sort_mark}
                     }}),
                     Plot.ruleY([0])
                 ],
@@ -1196,6 +1225,7 @@ class ObservablePlotTransformer(Transformer):
                     axis: null
                 }},
                 fx: {{
+                    domain: {fx_domain},
                     padding: 0.2
                 }},
                 color: {{
@@ -1205,51 +1235,25 @@ class ObservablePlotTransformer(Transformer):
 
         elif chart_type == "geo":
             # Choropleth map using Observable Plot with world topojson
-            return f"""marks: [
-                    // Geo chart with country name normalization
-                    Plot.geo(window.worldTopojson, {{
+            geo_enc_js = f'"{geo_encoding}"' if geo_encoding else "null"
+            return f"""marks: (() => {{
+                    const enc = {geo_enc_js} || detectGeoEncoding(data_{data_var}.map(d => d.{x}));
+                    const geoLookup = new Map(data_{data_var}.map(d => [normalizeCountryToTopo(d.{x}, enc).toLowerCase(), d.{y}]));
+                    return [Plot.geo(window.worldTopojson, {{
                         fill: d => {{
-                            // Country name normalization map
-                            const countryNameMap = {{
-                                "USA": "United States of America",
-                                "US": "United States of America",
-                                "United States": "United States of America",
-                                "UK": "United Kingdom",
-                                "Britain": "United Kingdom",
-                                "Great Britain": "United Kingdom",
-                                "Russia": "Russian Federation",
-                                "South Korea": "Korea, Republic of",
-                                "Korea": "Korea, Republic of",
-                                "North Korea": "Korea, Democratic People's Republic of",
-                                "Iran": "Iran, Islamic Republic of",
-                                "Syria": "Syrian Arab Republic",
-                                "Venezuela": "Venezuela, Bolivarian Republic of",
-                                "Bolivia": "Bolivia, Plurinational State of",
-                                "Tanzania": "Tanzania, United Republic of",
-                                "Vietnam": "Viet Nam",
-                                "Laos": "Lao People's Democratic Republic",
-                                "Czech Republic": "Czechia",
-                                "Moldova": "Moldova, Republic of",
-                                "Taiwan": "Taiwan, Province of China"
-                            }};
                             const topoName = d.properties ? d.properties.name : null;
                             if (!topoName) return null;
-                            const countryData = data_{data_var}.find(row => {{
-                                if (!row.{x}) return false;
-                                const normalizedName = countryNameMap[row.{x}] || row.{x};
-                                return normalizedName.toLowerCase() === topoName.toLowerCase();
-                            }});
-                            return countryData ? countryData.{y} : null;
+                            return geoLookup.get(topoName.toLowerCase()) ?? null;
                         }},
                         stroke: "#ccc",
                         strokeWidth: 0.5,
                         tip: true
-                    }})
-                ],
+                    }})];
+                }})(),
                 projection: "equal-earth",
                 color: {{
                     type: "linear",
-                    scheme: "blues",
+                    scheme: "{sequential}",
                     unknown: "#f0f0f0",
                     legend: true,
                     label: "{y}"
@@ -1269,13 +1273,32 @@ class ObservablePlotTransformer(Transformer):
         from pathlib import Path
         output_path_obj = Path(output_path)
 
-        # If output is a directory (multi-file), run Flask
-        if output_path_obj.is_dir():
-            return f"cd {output_path} && python3 app.py"
+        # If output is a directory with Flask app, run Flask
+        if output_path_obj.is_dir() and (output_path_obj / "app.py").exists():
+            return f"cd {output_path} && {sys.executable} app.py"
 
-        # Otherwise run simple HTTP server for single HTML file
-        output_dir = output_path_obj.parent.resolve()
-        return f"cd {output_dir} && python3 -m http.server 8000"
+        # Otherwise serve directory with http.server (index.html served at /)
+        serve_dir = output_path_obj if output_path_obj.is_dir() else output_path_obj.parent
+        return f"cd {serve_dir} && echo Dashboard available at: http://localhost:5001 && {sys.executable} -m http.server 5001"
+
+    def _generate_geo_js_helpers_inline(self) -> str:
+        """Emit JS mapping tables + detectGeoEncoding + normalizeCountryToTopo for inline script blocks."""
+        mapping_js = country_mapping_as_js(target="topojson")
+        return f"""// Geo country normalization
+        {mapping_js.replace(chr(10), chr(10) + "        ")}
+        function detectGeoEncoding(values) {{
+            const sample = values.filter(v => v != null && v !== '').slice(0, 20);
+            if (sample.every(v => /^[A-Z]{{2}}$/.test(String(v)))) return 'iso2';
+            if (sample.every(v => /^[A-Z]{{3}}$/.test(String(v)))) return 'iso3';
+            return 'name';
+        }}
+        function normalizeCountryToTopo(value, encoding) {{
+            const v = String(value).trim();
+            if (!v) return v;
+            if (encoding === 'iso2') return iso2ToTopo[v.toUpperCase()] || v;
+            if (encoding === 'iso3') return iso3ToTopo[v.toUpperCase()] || v;
+            return aliasToTopo[v.toLowerCase()] || v;
+        }}"""
 
     def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any]) -> str:
         """Generate Flask backend that connects to SQL database"""
@@ -1489,13 +1512,15 @@ if __name__ == '__main__':
             derived_filter_source = table_ref
 
         if credentials_path:
+            safe_path = credentials_path.replace(chr(92), '/')
             credentials_code = f'''
 from google.oauth2 import service_account
 credentials = service_account.Credentials.from_service_account_file(
-    "{credentials_path}",
+    "{safe_path}",
     scopes=["https://www.googleapis.com/auth/cloud-platform"]
 )
-client = bigquery.Client(project=PROJECT_ID, credentials=credentials)
+# Use the service account\'s own project for billing; table refs use PROJECT_ID
+client = bigquery.Client(credentials=credentials)
 '''
         else:
             credentials_code = '''
@@ -1505,6 +1530,7 @@ client = bigquery.Client(project=PROJECT_ID)
         return f'''from flask import Flask, jsonify, send_from_directory, request
 from google.cloud import bigquery
 import json
+import traceback
 from datetime import date, datetime
 from decimal import Decimal
 import os
@@ -1600,6 +1626,7 @@ def get_chart_data(chart_id):
     try:
         filter_clause = build_filter_clause(chart_id, request.args)
         query = query_template.format(filter_clause=filter_clause)
+        print(f"[BQ] chart={{chart_id}} query={{query[:200]}}")
         query_job = client.query(query)
         results = query_job.result()
         data = [dict(row) for row in results]
@@ -1608,6 +1635,7 @@ def get_chart_data(chart_id):
             mimetype='application/json'
         )
     except Exception as e:
+        traceback.print_exc()
         return jsonify({{"error": str(e)}}), 500
 
 @app.route('/api/filter/<field>')
@@ -1616,11 +1644,13 @@ def get_filter_options(field):
         return jsonify({{"error": "Field not allowed"}}), 403
     try:
         query = DERIVED_CTE + " SELECT DISTINCT " + field + " FROM " + DERIVED_FILTER_SOURCE + " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT 500"
+        print(f"[BQ] filter={{field}} query={{query[:200]}}")
         query_job = client.query(query)
         results = query_job.result()
         values = [str(row[0]) for row in results if row[0] is not None]
         return jsonify(sorted(values))
     except Exception as e:
+        traceback.print_exc()
         return jsonify({{"error": str(e)}}), 500
 
 if __name__ == '__main__':
@@ -1834,7 +1864,10 @@ if __name__ == '__main__':
             try {
                 const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
                 const resp = await fetch(url);
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                if (!resp.ok) {
+                    const body = await resp.json().catch(() => ({}));
+                    throw new Error(body.error || 'HTTP ' + resp.status);
+                }
                 const data = await resp.json();
                 container.innerHTML = '';
                 renderFn(data);
@@ -1851,7 +1884,10 @@ if __name__ == '__main__':
             try {
                 const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
                 const resp = await fetch(url);
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                if (!resp.ok) {
+                    const body = await resp.json().catch(() => ({}));
+                    throw new Error(body.error || 'HTTP ' + resp.status);
+                }
                 const data = await resp.json();
                 renderFn(data);
             } catch (err) {
@@ -1971,6 +2007,16 @@ if __name__ == '__main__':
         render_fn_assignments_str = "\n".join(render_fn_assignments)
         load_calls_str = ",\n".join(load_calls)
 
+        # Geo normalization helpers (if any chart is geo)
+        geo_helpers_sql_js = ""
+        has_geo = any(
+            c.get("type") == "geo"
+            for p in pages
+            for c in p.get("charts", [])
+        )
+        if has_geo:
+            geo_helpers_sql_js = "\n        " + self._generate_geo_js_helpers_inline()
+
         script = f"""
     <script>
         function showPage(pageId, buttonElement) {{
@@ -1983,7 +2029,7 @@ if __name__ == '__main__':
             document.getElementById('page-' + pageId).classList.add('active');
             buttonElement.classList.add('active');
         }}
-
+{geo_helpers_sql_js}
         const PAGE_CHARTS = {page_charts_json};
 
         function toggleMs(btn, pageId, field) {{
@@ -2067,7 +2113,7 @@ if __name__ == '__main__':
             for (const field of pageInfo.filter_fields) {{
                 const isSel = !!document.getElementById('filter-' + pageId + '-' + field);
                 fetch('/api/filter/' + field)
-                    .then(r => r.json())
+                    .then(r => {{ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }})
                     .then(values => {{
                         if (isSel) {{
                             const sel = document.getElementById('filter-' + pageId + '-' + field);
@@ -2118,6 +2164,9 @@ if __name__ == '__main__':
         y = chart["y"]
         group = chart.get("group")
         size_field = chart.get("size")
+        x_type = chart.get("x_type")
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
         bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
         format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
         suffix = chart.get("suffix", "")          # metric: unit text
@@ -2197,7 +2246,11 @@ if __name__ == '__main__':
             sphere_color = "#1a1a2e" if self._is_dark_theme(bg_color) else "#f8f8f8"
             unknown_color = "#2a2a3e" if self._is_dark_theme(bg_color) else "#e0e0e0"
             border_color = "#555570" if self._is_dark_theme(bg_color) else "#ccc"
+            geo_enc = chart.get("geo_encoding")
+            geo_enc_js = f'"{geo_enc}"' if geo_enc else "null"
             return f"""function(data) {{
+            const enc = {geo_enc_js} || detectGeoEncoding(data.map(d => d.x));
+            const geoLookup = new Map(data.map(d => [normalizeCountryToTopo(d.x, enc).toLowerCase(), d.y]));
             const plot = Plot.plot({{
                 width: 928,
                 marks: [
@@ -2205,27 +2258,9 @@ if __name__ == '__main__':
                     Plot.graticule({{stroke: "{border_color}40", strokeWidth: 0.5}}),
                     Plot.geo(window.worldTopojson, {{
                         fill: d => {{
-                            const countryNameMap = {{
-                                "USA": "United States of America",
-                                "US": "United States of America",
-                                "United States": "United States of America",
-                                "UK": "United Kingdom",
-                                "UNITED KINGDOM": "United Kingdom",
-                                "Russia": "Russian Federation",
-                                "South Korea": "Korea, Republic of",
-                                "Iran": "Iran, Islamic Republic of",
-                                "Czech Republic": "Czechia",
-                                "SPAIN(CANARY IS)": "Spain",
-                                "SPAIN (CANARY IS)": "Spain"
-                            }};
                             const topoName = d.properties ? d.properties.name : null;
                             if (!topoName) return null;
-                            const countryData = data.find(row => {{
-                                if (!row.x) return false;
-                                const normalizedName = countryNameMap[row.x] || row.x;
-                                return normalizedName.toLowerCase() === topoName.toLowerCase();
-                            }});
-                            return countryData ? countryData.y : null;
+                            return geoLookup.get(topoName.toLowerCase()) ?? null;
                         }},
                         stroke: "{border_color}",
                         strokeWidth: 0.5,
@@ -2235,7 +2270,7 @@ if __name__ == '__main__':
                 projection: "equal-earth",
                 color: {{
                     type: "linear",
-                    scheme: "YlGnBu",
+                    scheme: "{colors.get("sequential", "blues")}",
                     unknown: "{unknown_color}",
                     legend: true,
                     label: "{y}"
@@ -2268,7 +2303,12 @@ if __name__ == '__main__':
                 }},
                 y: {{ label: "{y}" }}"""
         elif chart_type == "line":
-            preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+            if x_type == "number":
+                preprocess = "data = data.filter(d => d.x != null && d.y != null);"
+                x_axis = f"""x: {{ label: "{x}" }}"""
+            else:
+                preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+                x_axis = f"""x: {{ type: "utc", tickRotate: -45, label: "{x}" }}"""
             margin_bottom = 100
             mark_code = f"""marks: [
                     Plot.line(data, {{
@@ -2286,7 +2326,7 @@ if __name__ == '__main__':
                     }}),
                     Plot.ruleY([0])
                 ],
-                x: {{ type: "utc", tickRotate: -45, label: "{x}" }},
+                {x_axis},
                 y: {{ label: "{y}" }}"""
         elif chart_type == "scatter":
             preprocess = "data = data.filter(d => d.x != null && d.y != null);"
@@ -2304,7 +2344,12 @@ if __name__ == '__main__':
                 x: {{ label: "{x}" }},
                 y: {{ label: "{y}" }}"""
         elif chart_type == "area":
-            preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+            if x_type == "number":
+                preprocess = "data = data.filter(d => d.x != null && d.y != null);"
+                x_axis = f"""x: {{ label: "{x}" }}"""
+            else:
+                preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
+                x_axis = f"""x: {{ type: "utc", tickRotate: -45, label: "{x}" }}"""
             margin_bottom = 100
             mark_code = f"""marks: [
                     Plot.areaY(data, {{
@@ -2316,7 +2361,7 @@ if __name__ == '__main__':
                     }}),
                     Plot.ruleY([0])
                 ],
-                x: {{ type: "utc", tickRotate: -45, label: "{x}" }},
+                {x_axis},
                 y: {{ label: "{y}" }}"""
         elif chart_type == "histogram":
             preprocess = "data = data.filter(d => d.x != null).map(d => ({...d, x: +d.x}));"
@@ -2345,6 +2390,12 @@ if __name__ == '__main__':
                 y: {{ label: "{y}" }}"""
         elif chart_type in ("stacked_bar", "grouped_bar"):
             color_scale_json = str(secondary_colors).replace("'", '"')
+            # Sort x categories by aggregate y total for stacked/grouped bars
+            if sort_field == "y":
+                sign = "" if sort_order == "asc" else "-"
+                x_domain_sql = f"d3.groupSort(data, g => {sign}d3.sum(g, d => d.y), d => d.x)"
+            else:
+                x_domain_sql = "[...new Set(data.map(d => d.x))]"
             if chart_type == "stacked_bar":
                 mark_code = f"""marks: [
                     Plot.barY(data, {{
@@ -2357,7 +2408,7 @@ if __name__ == '__main__':
                     Plot.ruleY([0])
                 ],
                 x: {{
-                    domain: [...new Set(data.map(d => d.x))],
+                    domain: {x_domain_sql},
                     tickRotate: -45,
                     label: "{x}"
                 }},
@@ -2367,13 +2418,20 @@ if __name__ == '__main__':
                     range: {color_scale_json}
                 }}"""
             else:  # grouped_bar
+                # Sort x categories by aggregate y total, not individual row y
+                if sort_field == "y":
+                    sign = "" if sort_order == "asc" else "-"
+                    fx_domain = f"d3.groupSort(data, g => {sign}d3.sum(g, d => d.y), d => d.x)"
+                else:
+                    fx_domain = "[...new Set(data.map(d => d.x))]"
+                sort_mark = ', sort: {x: "-y"}' if sort_field == "y" and sort_order == "desc" else (', sort: {x: "y"}' if sort_field == "y" else "")
                 mark_code = f"""marks: [
                     Plot.barY(data, {{
                         fx: "x",
                         x: "grp",
                         y: "y",
                         fill: "grp",
-                        tip: true
+                        tip: true{sort_mark}
                     }}),
                     Plot.ruleY([0])
                 ],
@@ -2382,6 +2440,7 @@ if __name__ == '__main__':
                     axis: null
                 }},
                 fx: {{
+                    domain: {fx_domain},
                     padding: 0.2,
                     tickRotate: -45,
                     label: "{x}"
@@ -2411,7 +2470,7 @@ if __name__ == '__main__':
                 y: {{ label: "{heatmap_y_label}" }},
                 color: {{
                     type: "linear",
-                    scheme: "blues",
+                    scheme: "{colors.get("sequential", "blues")}",
                     legend: true,
                     label: "{y}"
                 }}"""
