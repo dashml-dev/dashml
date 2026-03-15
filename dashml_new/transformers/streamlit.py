@@ -374,7 +374,21 @@ def load_data():
         # Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
         client = bigquery.Client(project="{project}")'''
 
-            return f'''@st.cache_data(ttl=300)
+            # Build derived CTE for filter queries
+            from dashml_new.core.normalizer import DashMLNormalizer
+            table_ref_bq = f"`{project}.{dataset}.{table_name}`"
+            derived_cte_template = DashMLNormalizer._build_derived_cte(derived_fields or [])
+            if derived_cte_template:
+                derived_cte_resolved = derived_cte_template.replace("{table_ref}", table_ref_bq)
+                derived_filter_source = "__derived"
+            else:
+                derived_cte_resolved = ""
+                derived_filter_source = table_ref_bq
+
+            return f'''DERIVED_CTE = """{derived_cte_resolved}"""
+DERIVED_FILTER_SOURCE = "{derived_filter_source}"
+
+@st.cache_data(ttl=300)
 def run_query(query_name, filter_clause="1=1"):
     try:{credentials_code}
         query = CHART_QUERIES[query_name].format(filter_clause=filter_clause)
@@ -387,7 +401,7 @@ def run_query(query_name, filter_clause="1=1"):
 def get_filter_options(field):
     """Fetch DISTINCT values for a dashboard filter field."""
     try:{credentials_code}
-        query = "SELECT DISTINCT `" + field + "` FROM `{project}.{dataset}.{table_name}` WHERE `" + field + "` IS NOT NULL ORDER BY 1 LIMIT 500"
+        query = DERIVED_CTE + " SELECT DISTINCT " + field + " FROM " + DERIVED_FILTER_SOURCE + " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT 500"
         result = client.query(query).to_dataframe()
         return sorted(result.iloc[:, 0].dropna().astype(str).tolist())
     except Exception as e:

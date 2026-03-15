@@ -1345,6 +1345,17 @@ class ObservablePlotTransformer(Transformer):
                 all_filter_fields.add(f["field"])
         allowed_fields_code = f"ALLOWED_FILTER_FIELDS = frozenset({repr(all_filter_fields)})"
 
+        # Build derived CTE for filter queries
+        from dashml_new.core.normalizer import DashMLNormalizer
+        derived_fields = spec.get("derived_fields", [])
+        derived_cte_template = DashMLNormalizer._build_derived_cte(derived_fields)
+        if derived_cte_template:
+            derived_cte_resolved = derived_cte_template.replace("{table_ref}", table_ref)
+            derived_filter_source = "__derived"
+        else:
+            derived_cte_resolved = ""
+            derived_filter_source = table_ref
+
         return f'''from flask import Flask, jsonify, send_from_directory, Response, request
 from sqlalchemy import create_engine
 import pandas as pd
@@ -1363,6 +1374,10 @@ engine = create_engine(DATABASE_URL)
 {chart_static_code}
 
 {allowed_fields_code}
+
+# Derived CTE for filter queries (empty string if no derived fields)
+DERIVED_CTE = """{derived_cte_resolved}"""
+DERIVED_FILTER_SOURCE = "{derived_filter_source}"
 
 def build_filter_clause(chart_id, request_args):
     conditions = ["1=1"]
@@ -1440,7 +1455,7 @@ def get_filter_options(field):
     if field not in ALLOWED_FILTER_FIELDS:
         return jsonify({{"error": "Field not allowed"}}), 403
     try:
-        query = "SELECT DISTINCT " + field + " FROM {schema}.{table_name} WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT 500"
+        query = DERIVED_CTE + " SELECT DISTINCT " + field + " FROM " + DERIVED_FILTER_SOURCE + " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT 500"
         df = pd.read_sql(query, engine)
         values = sorted(df.iloc[:, 0].dropna().astype(str).tolist())
         return jsonify(values)
@@ -1485,6 +1500,17 @@ if __name__ == '__main__':
                 all_filter_fields.add(f["field"])
         allowed_fields_code = f"ALLOWED_FILTER_FIELDS = frozenset({repr(all_filter_fields)})"
 
+        # Build derived CTE for filter queries
+        from dashml_new.core.normalizer import DashMLNormalizer
+        derived_fields = spec.get("derived_fields", [])
+        derived_cte_template = DashMLNormalizer._build_derived_cte(derived_fields)
+        if derived_cte_template:
+            derived_cte_resolved = derived_cte_template.replace("{table_ref}", table_ref)
+            derived_filter_source = "__derived"
+        else:
+            derived_cte_resolved = ""
+            derived_filter_source = table_ref
+
         if credentials_path:
             safe_path = credentials_path.replace(chr(92), '/')
             credentials_code = f'''
@@ -1522,6 +1548,10 @@ TABLE_NAME = "{table_name}"
 {chart_static_code}
 
 {allowed_fields_code}
+
+# Derived CTE for filter queries (empty string if no derived fields)
+DERIVED_CTE = """{derived_cte_resolved}"""
+DERIVED_FILTER_SOURCE = "{derived_filter_source}"
 
 def build_filter_clause(chart_id, request_args):
     conditions = ["1=1"]
@@ -1613,7 +1643,7 @@ def get_filter_options(field):
     if field not in ALLOWED_FILTER_FIELDS:
         return jsonify({{"error": "Field not allowed"}}), 403
     try:
-        query = "SELECT DISTINCT `" + field + "` FROM `{project}.{dataset}.{table_name}` WHERE `" + field + "` IS NOT NULL ORDER BY 1 LIMIT 500"
+        query = DERIVED_CTE + " SELECT DISTINCT " + field + " FROM " + DERIVED_FILTER_SOURCE + " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT 500"
         print(f"[BQ] filter={{field}} query={{query[:200]}}")
         query_job = client.query(query)
         results = query_job.result()

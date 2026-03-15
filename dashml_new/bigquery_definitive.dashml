@@ -11,18 +11,20 @@ derived_fields:
     expression: "100 - {pct_delayed_15plus}"
   - name: "delay_index"
     expression: "({average_delay_mins} + {pct_delayed_15plus}) / 2"
+  - name: "reporting_year"
+    expression: "EXTRACT(YEAR FROM {reporting_month})"
 
 pages:
   - id: "airline_performance"
     title: "Airline Performance"
     description: "Delays and cancellations by airline and airport"
     filters:
-      - field: "scheduled_charter"
+      - field: "reporting_year"
         type: "select"
-        label: "Flight Type"
-      - field: "origin_destination_country"
+        label: "Year"
+      - field: "airline_name"
         type: "multiselect"
-        label: "Country"
+        label: "Airline"
     charts:
       - id: "total_flights_kpi"
         type: "metric"
