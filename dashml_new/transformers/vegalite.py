@@ -8,6 +8,8 @@ Generates Vega-Lite JSON specs viewable in:
 Single-chart specs produce a bare Vega-Lite spec.
 Multi-chart dashboards use vconcat/hconcat composition.
 """
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -105,6 +107,11 @@ class VegaLiteTransformer(Transformer):
     # Properties to keep in encoding channels for bare output
     _BARE_CHANNEL_KEYS = {"field", "aggregate", "bin", "sort", "timeUnit"}
 
+    # nvBench uses "pie" for arc marks — map VL mark names to nvBench equivalents
+    _BARE_MARK_MAP = {
+        "arc": "pie",
+    }
+
     def _build_bare_spec(self, chart: dict, spec: "NormalizedSpec") -> dict:
         """Build a stripped {mark, encoding, transform} spec for benchmark evaluation."""
         chart_type = chart.get("type", "bar")
@@ -123,35 +130,87 @@ class VegaLiteTransformer(Transformer):
                     vl = layer
                     break
 
-        # Extract mark as plain string
+        # Extract mark as plain string, mapped to nvBench names
         mark = vl.get("mark", "bar")
         if isinstance(mark, dict):
             mark = mark.get("type", "bar")
+        mark = self._BARE_MARK_MAP.get(mark, mark)
+
+        # Channels to strip per mark type (these are decorative, not in gold specs)
+        # boxplot gold specs never have color; it's added by _build_box for styling only
+        bare_strip_channels = {"tooltip", "shape"}
+        if mark == "boxplot":
+            bare_strip_channels.add("color")
 
         # Strip encoding channels to only benchmark-relevant properties
         encoding = {}
         for channel, props in vl.get("encoding", {}).items():
-            if channel in ("tooltip", "shape"):
-                continue  # not used in benchmarks
+            if channel in bare_strip_channels:
+                continue
             if isinstance(props, dict):
                 stripped = {k: v for k, v in props.items() if k in self._BARE_CHANNEL_KEYS}
+                # Normalize sort format: nvBench uses plain strings (e.g., "-y")
+                if "sort" in stripped:
+                    stripped["sort"] = self._normalize_bare_sort(stripped["sort"])
                 if stripped:
                     encoding[channel] = stripped
+
+        # If the chart has bin: true, add binning to x encoding
+        if chart.get("bin") and "x" in encoding:
+            encoding["x"]["bin"] = True
+
+        # In bare mode, inject color from group field if present
+        # (nvBench gold specs use color for grouped data; DashML uses chart type distinction)
+        group = chart.get("group")
+        if group and "color" not in encoding and mark not in ("boxplot",):
+            encoding["color"] = {"field": group}
+
+        # In bare mode, inject size from size field if present (for scatter/point)
+        size_field = chart.get("size")
+        if size_field and "size" not in encoding:
+            encoding["size"] = {"field": size_field}
 
         result: dict = {"mark": mark, "encoding": encoding}
 
         # Convert DashML filters to nvBench filter format
-        bare_transforms = self._build_bare_filters(chart)
+        # Include both chart-level and dashboard-level filters
+        bare_transforms = self._build_bare_filters(chart, spec)
         if bare_transforms:
             result["transform"] = bare_transforms
 
         return result
 
-    def _build_bare_filters(self, chart: dict) -> list:
-        """Convert chart.filters to nvBench-style filter transforms."""
-        filters = chart.get("filters", [])
+    @staticmethod
+    def _normalize_bare_sort(sort_val) -> str:
+        """Normalize sort to nvBench string format (e.g., '-y', 'ascending')."""
+        if isinstance(sort_val, str):
+            return sort_val
+        if isinstance(sort_val, dict):
+            # {"encoding": "y", "order": "descending"} → "-y"
+            enc = sort_val.get("encoding", "")
+            order = sort_val.get("order", "ascending")
+            if enc:
+                return f"-{enc}" if order == "descending" else enc
+            return order
+        return str(sort_val)
+
+    def _build_bare_filters(self, chart: dict, spec: "NormalizedSpec" = None) -> list:
+        """Convert chart.filters + dashboard-level filters to nvBench-style filter transforms."""
+        # Collect chart-level filters
+        all_filters = list(chart.get("filters", []))
+
+        # Also collect dashboard-level filters from the page/spec
+        # (LLMs sometimes put filters at the page/dashboard level instead of chart level)
+        if spec:
+            for page in spec.get("pages", []):
+                for f in page.get("filters", []):
+                    # Dashboard filters have field/type/label/values, not field/op/value
+                    # Only propagate if they look like chart filters (have op)
+                    if "op" in f:
+                        all_filters.append(f)
+
         transforms = []
-        for f in filters:
+        for f in all_filters:
             field = f.get("field", "")
             op = f.get("op", "eq")
             value = f.get("value")
@@ -174,6 +233,8 @@ class VegaLiteTransformer(Transformer):
         }
         if op == "in" and isinstance(value, list):
             return {"field": field, "oneOf": value}
+        if op == "range" and isinstance(value, list) and len(value) == 2:
+            return {"field": field, "range": value}
         mapped = nvbench_op_map.get(op)
         if mapped:
             return {"field": field, mapped: value}
@@ -329,6 +390,11 @@ class VegaLiteTransformer(Transformer):
                 f"'{v}'" if isinstance(v, str) else str(v) for v in value
             )
             return f"indexof([{items}], datum.{field}) >= 0"
+        if op == "range" and isinstance(value, list) and len(value) == 2:
+            lo, hi = value
+            lo_repr = f"'{lo}'" if isinstance(lo, str) else str(lo)
+            hi_repr = f"'{hi}'" if isinstance(hi, str) else str(hi)
+            return f"datum.{field} >= {lo_repr} && datum.{field} <= {hi_repr}"
         return op_map.get(op)
 
     # ── Encoding helpers ───────────────────────────────────────────

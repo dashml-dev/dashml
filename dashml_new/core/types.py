@@ -89,8 +89,8 @@ class FilterSpec(TypedDict, total=False):
             value: 100
     """
     field: str  # Column name to filter on
-    op: str     # Operator: eq, ne, gt, lt, gte, lte, in, contains
-    value: Any  # Value to compare against (type depends on op)
+    op: str     # Operator: eq, ne, gt, lt, gte, lte, in, contains, range
+    value: Any  # Value to compare against (type depends on op; list for in/range)
 
 
 class ChartSpec(TypedDict, total=False):
@@ -141,6 +141,7 @@ class ChartSpec(TypedDict, total=False):
     x_type: str  # Optional: "date", "number", or "string" - controls sorting/formatting
     y_type: str  # Optional: "number" or "string" - cast y values before aggregation
     bins: int  # Optional: Number of bins for histogram charts (default: 20)
+    bin: bool  # Optional: Enable binning on x-axis for non-histogram charts (default: false)
     # Data processing fields
     filters: List[FilterSpec]  # Optional: Filter conditions applied before aggregation
     sort: str                  # Optional: Field to sort by ("x" or "y") after aggregation

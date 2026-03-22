@@ -55,3 +55,9 @@ generated_streamlit_app.py
 # Test output directories
 output_test_*/
 
+# Benchmark cache and results
+benchmark/cache/
+benchmark/results/
+benchmark/nvbench_metadata.json
+benchmark/audit_results.json
+

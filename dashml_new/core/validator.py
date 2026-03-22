@@ -27,7 +27,7 @@ class DashMLValidator:
     SUPPORTED_DATA_TYPES = ["csv", "sql", "bigquery"]  # CSV, SQL, and BigQuery datasources
     SUPPORTED_AGGREGATIONS = ["sum", "mean", "count"]
     SUPPORTED_COLUMN_TYPES = ["date", "number", "string"]  # For x_type/y_type hints
-    SUPPORTED_FILTER_OPS = ["eq", "ne", "gt", "lt", "gte", "lte", "in", "contains"]
+    SUPPORTED_FILTER_OPS = ["eq", "ne", "gt", "lt", "gte", "lte", "in", "contains", "range"]
     SUPPORTED_SORT_ORDERS = ["asc", "desc"]
     SUPPORTED_SORT_FIELDS = ["x", "y"]  # Can sort by x or y field after aggregation
     SUPPORTED_DASHBOARD_FILTER_TYPES = ["select", "multiselect"]  # Dashboard-level filter widget types
@@ -187,9 +187,14 @@ class DashMLValidator:
         if not isinstance(chart, dict):
             raise ValidationError(f"Chart at index {index} must be an object, got {type(chart)}")
 
-        # Required fields (metric only needs id, type, y, agg — no x-axis)
+        # Required fields:
+        # - metric: id, type, y, agg (no x-axis)
+        # - count agg: id, type, x (y is optional — counting rows doesn't need a value field)
+        # - all others: id, type, x, y
         if chart.get("type") == "metric":
             required = ["id", "type", "y", "agg"]
+        elif chart.get("agg") == "count":
+            required = ["id", "type", "x"]
         else:
             required = ["id", "type", "x", "y"]
         for field in required:
@@ -441,3 +446,11 @@ class DashMLValidator:
                 raise ValidationError(
                     f"Chart '{chart_id}' filter at index {i} with op 'in' requires value to be a list"
                 )
+
+            # Validate 'range' operator requires list of exactly 2 values [low, high]
+            if op == "range":
+                val = filter_spec["value"]
+                if not isinstance(val, list) or len(val) != 2:
+                    raise ValidationError(
+                        f"Chart '{chart_id}' filter at index {i} with op 'range' requires value to be a list of 2 elements [low, high]"
+                    )

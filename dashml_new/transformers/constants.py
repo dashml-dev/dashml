@@ -31,6 +31,7 @@ SUPPORTED_FILTER_OPS = frozenset({
     "lte",      # Less than or equal: field <= value
     "in",       # In list: field in [value1, value2, ...]
     "contains", # Contains substring: value in field (for strings)
+    "range",    # Range: field between [low, high] (inclusive)
 })
 
 # Supported sort orders
@@ -112,7 +113,7 @@ D3_SEQUENTIAL_SCALES = {
 }
 
 
-def resolve_plotly_colorscale(scheme: str) -> str | list:
+def resolve_plotly_colorscale(scheme: str):
     """Resolve a D3/Vega scheme name to a Plotly-compatible colorscale.
     Returns capitalized name for Plotly built-ins, or array for custom schemes."""
     if scheme.lower() in PLOTLY_BUILTIN_SCALES:
