@@ -52,3 +52,6 @@ dashml_new/output/
 # Demo/scratch files
 generated_streamlit_app.py
 
+# Test output directories
+output_test_*/
+
