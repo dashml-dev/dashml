@@ -290,6 +290,17 @@ class DashMLNormalizer:
         if "sort" in result and "sort_order" not in result:
             result["sort_order"] = DEFAULT_SORT_ORDER
 
+        # Semantic normalization: for aggregation charts with count, y is meaningless
+        # (count counts rows, not a value column). If the user specified both x and y
+        # with different columns, the second column is a grouping dimension.
+        # Scoped to bar/line/heatmap where group→color is the correct interpretation.
+        _COUNT_GROUP_TYPES = {"bar", "line", "heatmap"}
+        if (result.get("agg") == "count"
+                and result.get("y") and not result.get("group")
+                and result.get("x") != result.get("y")
+                and chart_type in _COUNT_GROUP_TYPES):
+            result["group"] = result.pop("y")
+
         # Annotations
         result["needs_aggregation"] = chart_type in CHARTS_NEED_AGGREGATION
         result["uses_raw_data"] = chart_type in CHARTS_USE_RAW_DATA

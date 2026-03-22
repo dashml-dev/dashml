@@ -184,15 +184,6 @@ def compile_dashml_to_bare(spec: dict) -> Optional[List[dict]]:
         from dashml_new.core.normalizer import DashMLNormalizer
         from dashml_new.transformers.vegalite import VegaLiteTransformer
 
-        # Auto-normalize: when agg=count and y is present but group isn't,
-        # y is semantically a grouping column (count doesn't need a value field).
-        # Only apply when x != y (different columns = grouped; same = simple count).
-        for chart in spec.get("charts", []):
-            if (chart.get("agg") == "count"
-                    and chart.get("y") and not chart.get("group")
-                    and chart.get("x") != chart.get("y")):
-                chart["group"] = chart.pop("y")
-
         # Validate
         validator = DashMLValidator()
         validator.validate(spec)
