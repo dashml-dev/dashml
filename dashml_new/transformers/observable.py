@@ -504,7 +504,7 @@ class ObservablePlotTransformer(Transformer):
         chart_id = chart["id"]
         chart_type = chart["type"]
         x = chart.get("x", "")  # Not required for metric type
-        y = chart["y"]
+        y = chart.get("y", "")
         agg = chart.get("agg", "sum")
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
         x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
@@ -568,6 +568,8 @@ class ObservablePlotTransformer(Transformer):
                         filter_conditions.append(f"{value}.includes(d['{field}'])")
                     elif op == "contains":
                         filter_conditions.append(f"String(d['{field}']).includes({value})")
+                    elif op == "range" and isinstance(f["value"], list) and len(f["value"]) == 2:
+                        filter_conditions.append(f"d['{field}'] >= {f['value'][0]} && d['{field}'] <= {f['value'][1]}")
                 filter_code = " && ".join(filter_conditions)
                 data_code = f"dashmlData.filter(d => {filter_code})"
             else:
@@ -728,6 +730,8 @@ class ObservablePlotTransformer(Transformer):
                     filter_conditions.append(f"{value}.includes(d['{field}'])")
                 elif op == "contains":
                     filter_conditions.append(f"String(d['{field}']).includes({value})")
+                elif op == "range" and isinstance(f["value"], list) and len(f["value"]) == 2:
+                    filter_conditions.append(f"d['{field}'] >= {f['value'][0]} && d['{field}'] <= {f['value'][1]}")
 
         filter_code = " && ".join(filter_conditions) if filter_conditions else "true"
 
@@ -872,6 +876,8 @@ class ObservablePlotTransformer(Transformer):
                     filter_conditions.append(f"{value}.includes(d['{field}'])")
                 elif op == "contains":
                     filter_conditions.append(f"String(d['{field}']).includes({value})")
+                elif op == "range" and isinstance(f["value"], list) and len(f["value"]) == 2:
+                    filter_conditions.append(f"d['{field}'] >= {f['value'][0]} && d['{field}'] <= {f['value'][1]}")
 
         filter_code = " && ".join(filter_conditions) if filter_conditions else "true"
 
@@ -989,6 +995,8 @@ class ObservablePlotTransformer(Transformer):
                     filter_conditions.append(f"{value}.includes(d['{field}'])")
                 elif op == "contains":
                     filter_conditions.append(f"String(d['{field}']).includes({value})")
+                elif op == "range" and isinstance(f["value"], list) and len(f["value"]) == 2:
+                    filter_conditions.append(f"d['{field}'] >= {f['value'][0]} && d['{field}'] <= {f['value'][1]}")
 
         filter_code = " && ".join(filter_conditions) if filter_conditions else "true"
 
@@ -2161,7 +2169,7 @@ if __name__ == '__main__':
         chart_id = chart["id"]
         chart_type = chart["type"]
         x = chart.get("x", "")  # Not required for metric type
-        y = chart["y"]
+        y = chart.get("y", "")
         group = chart.get("group")
         size_field = chart.get("size")
         x_type = chart.get("x_type")

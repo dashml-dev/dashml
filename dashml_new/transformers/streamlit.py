@@ -460,7 +460,7 @@ def load_data():
         chart_type = chart["type"]
         title = chart["title"]
         x = chart.get("x", "")  # Not required for metric type
-        y = chart["y"]
+        y = chart.get("y", "")  # Optional when agg=count (count doesn't need a value column)
         agg = chart.get("agg", "sum")
         group = chart.get("group")
         x_type = chart.get("x_type")
@@ -504,6 +504,8 @@ def load_data():
                             code_parts.append(f'    _metric_df = _metric_df[_metric_df["{field}"].isin({repr(value)})]')
                         elif op == "contains":
                             code_parts.append(f'    _metric_df = _metric_df[_metric_df["{field}"].str.contains({repr(value)}, na=False)]')
+                        elif op == "range" and isinstance(value, list) and len(value) == 2:
+                            code_parts.append(f'    _metric_df = _metric_df[(_metric_df["{field}"] >= {repr(value[0])}) & (_metric_df["{field}"] <= {repr(value[1])})]')
                 else:
                     code_parts.append(f'    _metric_df = {base_df}')
                 agg_method = AGG_METHODS.get(agg, "sum")
@@ -603,6 +605,8 @@ def load_data():
                         code_parts.append(f'    chart_df = chart_df[chart_df["{field}"].isin({repr(value)})]')
                     elif op == "contains":
                         code_parts.append(f'    chart_df = chart_df[chart_df["{field}"].str.contains({repr(value)}, na=False)]')
+                    elif op == "range" and isinstance(value, list) and len(value) == 2:
+                        code_parts.append(f'    chart_df = chart_df[(chart_df["{field}"] >= {repr(value[0])}) & (chart_df["{field}"] <= {repr(value[1])})]')
 
             # Get effective x_type: explicit > schema-detected > None (used for sorting and encoding)
             code_parts.append(f'    effective_x_type = "{x_type}" if "{x_type}" != "None" else column_types.get("{x}")')

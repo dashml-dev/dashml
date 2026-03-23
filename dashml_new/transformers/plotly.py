@@ -783,6 +783,7 @@ if __name__ == '__main__':
             case 'lte': return val <= f.value;
             case 'in': return Array.isArray(f.value) && f.value.includes(val);
             case 'contains': return String(val).includes(f.value);
+            case 'range': return Array.isArray(f.value) && f.value.length === 2 && val >= f.value[0] && val <= f.value[1];
             default: return true;
           }
         });
@@ -1426,7 +1427,7 @@ if __name__ == '__main__':
             chart_id = chart["id"]
             chart_type = chart["type"]
             x = chart.get("x", "")  # Not required for metric type
-            y = chart["y"]
+            y = chart.get("y", "")
             agg = chart.get("agg", "sum")
             group = chart.get("group")
             title = chart.get("title", chart_id)
@@ -1732,6 +1733,7 @@ if __name__ == '__main__':
             case 'lte': return val <= f.value;
             case 'in': return Array.isArray(f.value) && f.value.includes(val);
             case 'contains': return String(val).includes(f.value);
+            case 'range': return Array.isArray(f.value) && f.value.length === 2 && val >= f.value[0] && val <= f.value[1];
             default: return true;
           }}
         }});
@@ -2324,7 +2326,7 @@ if __name__ == '__main__':
             chart_type = chart["type"]
             title = chart.get("title", chart_id)
             x = chart.get("x", "")  # Not required for metric type
-            y = chart["y"]
+            y = chart.get("y", "")
             group = chart.get("group")
             size_field = chart.get("size")
             bins = chart.get("bins", 20)

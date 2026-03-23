@@ -71,6 +71,10 @@ class DashMLNormalizer:
                 parts.append(f"{field} IN {DashMLNormalizer._sql_value(val)}")
             elif op == "contains":
                 parts.append(f"{field} LIKE '%{val}%'")
+            elif op == "range" and isinstance(val, list) and len(val) == 2:
+                parts.append(
+                    f"{field} BETWEEN {DashMLNormalizer._sql_value(val[0])} AND {DashMLNormalizer._sql_value(val[1])}"
+                )
         return parts
 
     @staticmethod
