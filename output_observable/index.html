@@ -969,10 +969,10 @@
                     filteredData,
                     v => v.length,
                     d => d['city']
-                ).map(([city, funding_amount]) => ({ city, funding_amount }));
+                ).map(([city, ]) => ({ city,  }));
 
                 // Sort
-                result.sort((a, b) => 1 * (a.funding_amount - b.funding_amount));
+                result.sort((a, b) => 1 * (a. - b.));
 
                 // Limit
                 result = result.slice(0, 10);
@@ -983,7 +983,7 @@
                 marks: [
                     Plot.barY(data_bar_top_cities, {
                         x: "city",
-                        y: "funding_amount",
+                        y: "",
                         fill: "#bd93f9",
                         sort: null,
                         tip: true

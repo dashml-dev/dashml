@@ -69,7 +69,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -164,7 +164,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -259,7 +259,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -354,7 +354,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -483,7 +483,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -600,7 +600,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -730,7 +730,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -872,7 +872,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1050,7 +1050,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1216,7 +1216,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1400,7 +1400,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1570,7 +1570,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1718,7 +1718,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1739,7 +1739,7 @@
             {
               "selector": "funding_amount",
               "text": "funding_amount",
-              "type": "number"
+              "type": "string"
             }
           ],
           "computed_columns": [],
@@ -1816,7 +1816,7 @@
             "fields": {},
             "sort": [
               {
-                "field": "funding_amount",
+                "field": "city (count)",
                 "desc": false
               }
             ]
@@ -1867,7 +1867,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1992,7 +1992,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -2115,7 +2115,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8887/startup_funding.csv",
+          "url": "http://host.docker.internal:8888/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],

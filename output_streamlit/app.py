@@ -172,7 +172,7 @@ def main():
             y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["funding_date", "funding_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: area_deals_over_time
@@ -198,7 +198,7 @@ def main():
             y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["funding_date", "funding_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: pie_by_stage
@@ -229,7 +229,7 @@ def main():
             ),
             tooltip=["stage", "funding_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
 
     with tab2:
         st.markdown("*Funding breakdown across industries*")
@@ -252,7 +252,7 @@ def main():
             y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["industry", "funding_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: stacked_bar_industry_stage
@@ -276,7 +276,7 @@ def main():
             ),
             tooltip=["industry", "stage", "funding_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: grouped_bar_industry_stage
@@ -301,7 +301,7 @@ def main():
             xOffset=alt.XOffset("stage:N", sort="y"),
             tooltip=["industry", "stage", "funding_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: heatmap_industry_country
@@ -338,7 +338,7 @@ def main():
             ),
             tooltip=["industry", "country", "funding_amount"]
         ).properties(width=600, height=400)
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
 
     with tab3:
         st.markdown("*Where startup funding flows globally*")
@@ -406,7 +406,7 @@ def main():
             height=450
         )
         c = background + foreground
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: bar_top_countries
@@ -426,27 +426,27 @@ def main():
             y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["country", "funding_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: bar_top_cities
         st.subheader("Top 10 Cities by Deal Count")
         chart_df = df
         effective_x_type = "None" if "None" != "None" else column_types.get("city")
-        # Aggregate: count(funding_amount) group by city
-        chart_data = chart_df.groupby("city")["funding_amount"].count().reset_index()
+        # Aggregate: count rows group by city
+        chart_data = chart_df.groupby("city").size().reset_index(name="count")
         # Sort by y field (asc)
-        chart_data = chart_data.sort_values("funding_amount", ascending=True)
+        chart_data = chart_data.sort_values("count", ascending=True)
         # Limit to top 10 rows
         chart_data = chart_data.head(10)
         # Determine Altair encoding type based on effective x_type
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_bar(color="#bd93f9").encode(
             x=alt.X("city" + x_encoding_suffix, sort="y", title="City"),
-            y=alt.Y("funding_amount:Q", title="Funding Amount"),
-            tooltip=["city", "funding_amount"]
+            y=alt.Y("count:Q", title="Count"),
+            tooltip=["city", "count"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
 
     with tab4:
         st.markdown("*Distributions and correlations*")
@@ -466,7 +466,7 @@ def main():
             y=alt.Y("valuation:Q", title="Valuation"),
             tooltip=["funding_amount", "valuation"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: histogram_funding
@@ -481,7 +481,7 @@ def main():
             y=alt.Y("count()", title="Count"),
             tooltip=["count()"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: box_funding_by_stage
@@ -496,7 +496,7 @@ def main():
             y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["stage"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: bubble_industry
@@ -528,7 +528,7 @@ def main():
             color=alt.Color("industry:N", legend=alt.Legend(title="Industry")),
             tooltip=["industry", "funding_amount", "valuation", "employees"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
 
 
 if __name__ == "__main__":

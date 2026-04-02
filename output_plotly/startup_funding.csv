@@ -1,0 +1,301 @@
+company_name,industry,country,city,stage,funding_date,funding_amount,valuation,employees,founded_year
+SageLink,CleanTech,Israel,Tel Aviv,Seed,2020-10-12,3.81,24.32,22,2011
+OpalLink,E-commerce,United States,San Francisco,Seed,2023-05-17,0.62,2.48,25,2021
+PrismHealth,CleanTech,United States,Seattle,Series C,2020-01-14,239.7,555.94,582,2015
+Jadeio,Fintech,United States,Austin,Seed,2020-07-17,2.12,10.01,13,2010
+BoltMind,Fintech,United States,Boston,Series A,2024-08-25,20.72,117.2,66,2019
+CrestPay,CleanTech,United States,New York,IPO,2024-10-17,619.02,1022.31,2777,2017
+ZephyrPay,CleanTech,United Kingdom,London,Series B,2023-10-31,71.84,289.0,93,2018
+CoreHub,E-commerce,Germany,Munich,Series B,2024-09-22,81.47,215.07,260,2010
+ForgeHealth,Biotech,United States,New York,Seed,2022-10-19,2.28,17.27,19,2012
+MesaWave,CleanTech,United States,Seattle,Series B,2022-05-27,91.83,321.27,106,2012
+Dunefy,Fintech,United States,San Francisco,Seed,2020-11-23,4.06,20.75,7,2016
+AtlasBio,AI,Nigeria,Lagos,Series B,2020-08-22,74.54,286.41,118,2020
+VibeX,Cybersecurity,United States,New York,Seed,2024-01-18,4.44,19.17,21,2022
+Novafy,E-commerce,Australia,Melbourne,Seed,2024-04-10,1.23,9.55,21,2024
+Zephyrly,Fintech,United Kingdom,London,IPO,2024-12-04,1973.58,5348.72,2461,2010
+AuraSecure,Cybersecurity,South Korea,Seoul,Series C,2024-04-06,183.18,412.43,636,2018
+CrestFlow,EdTech,India,Delhi,IPO,2023-01-09,1559.48,3952.97,3053,2016
+NimbusLabs,Fintech,Australia,Melbourne,Seed,2020-05-11,2.02,12.0,12,2019
+LoomLearn,E-commerce,United States,San Francisco,Seed,2020-03-05,4.37,14.66,12,2014
+GlowSys,Cybersecurity,India,Delhi,Seed,2022-08-26,4.13,16.32,8,2020
+PulseCloud,AI,Germany,Munich,Series B,2023-08-16,27.87,97.73,136,2022
+PikeBio,Cybersecurity,United States,Seattle,Seed,2021-01-10,1.75,7.44,7,2017
+SparkHub,AI,United States,Seattle,IPO,2024-03-23,1727.65,3022.47,4478,2017
+GlowMind,EdTech,Australia,Sydney,Seed,2022-03-10,1.69,11.7,19,2014
+CoreAI,Healthcare,Sweden,Stockholm,Seed,2021-03-21,4.86,28.65,22,2010
+ZephyrHub,Healthcare,United States,Boston,Seed,2022-11-06,0.86,3.38,24,2011
+NeonNet,E-commerce,United States,Seattle,Series A,2020-03-22,20.48,87.2,94,2019
+HelixLabs,Biotech,South Korea,Seoul,Seed,2022-03-21,1.09,6.79,19,2015
+CrestData,Fintech,Germany,Berlin,Series A,2022-11-02,11.63,67.45,28,2013
+DriftStack,CleanTech,United States,Seattle,Series B,2024-07-10,72.32,182.21,259,2018
+SparkMind,CleanTech,United States,New York,Seed,2020-08-07,3.84,14.5,14,2019
+GlowSecure,CleanTech,United Kingdom,Edinburgh,Series A,2021-05-29,27.63,153.02,31,2020
+PikeLabs,Healthcare,United States,Austin,Series B,2021-06-20,32.93,118.7,230,2016
+CrestAI,AI,United States,New York,Series C,2023-04-07,188.13,537.97,192,2014
+SynthCloud,E-commerce,Australia,Sydney,Series B,2021-12-25,82.41,388.18,154,2019
+ZephyrSecure,EdTech,Singapore,Singapore,Seed,2024-02-17,4.66,32.21,18,2022
+DriftCloud,EdTech,United States,San Francisco,Series C,2024-10-24,167.67,402.26,621,2015
+MesaHub,EdTech,United States,New York,Seed,2024-11-05,0.81,5.56,16,2020
+Pulsefy,Biotech,China,Shenzhen,IPO,2020-08-24,1778.67,3364.93,2674,2010
+ApexMind,EdTech,Germany,Munich,Series B,2022-11-13,29.25,138.9,98,2014
+DriftX,Biotech,Germany,Berlin,Series A,2023-09-22,28.02,136.44,35,2021
+Vibefy,Biotech,United Kingdom,Cambridge,Series A,2021-08-28,18.86,67.43,68,2020
+JadeFlow,AI,India,Mumbai,Seed,2021-03-06,2.43,14.34,25,2015
+ValeNet,Cybersecurity,Germany,Berlin,Series B,2024-06-18,78.88,327.13,122,2018
+HelixFlow,CleanTech,United States,New York,Seed,2021-02-11,1.16,3.75,20,2019
+NimbusPay,EdTech,Germany,Berlin,Series A,2021-05-14,8.69,44.0,33,2016
+Neonio,AI,Brazil,Rio de Janeiro,Series A,2024-10-03,8.03,27.3,79,2020
+ForgeCloud,EdTech,India,Mumbai,Series C,2023-01-27,161.48,374.36,636,2017
+AtlasNet,Cybersecurity,Japan,Osaka,Series B,2021-07-16,55.19,236.43,110,2014
+FuseNet,Healthcare,Australia,Sydney,Seed,2022-02-23,3.62,23.65,7,2016
+RiftHub,AI,India,Mumbai,Seed,2022-05-10,2.25,15.41,27,2010
+Opalfy,CleanTech,France,Lyon,Series B,2024-10-13,91.33,419.14,187,2021
+EmberOps,E-commerce,Australia,Melbourne,Seed,2022-09-21,0.63,2.95,26,2022
+GlowHealth,Healthcare,United States,Boston,IPO,2022-12-29,248.54,519.7,722,2011
+PrismLink,AI,Singapore,Singapore,Seed,2021-11-01,1.45,6.72,29,2016
+HelixGo,Cybersecurity,United States,San Francisco,Seed,2023-01-09,0.73,5.66,12,2020
+Fluxly,E-commerce,United States,San Francisco,Seed,2020-02-11,3.3,13.84,20,2020
+AuraData,CleanTech,South Korea,Seoul,Series B,2020-12-09,68.47,336.14,233,2011
+ZephyrBio,CleanTech,United States,San Francisco,Series A,2022-02-07,14.92,76.76,29,2019
+CrestTech,Fintech,China,Shanghai,Series B,2023-03-05,82.61,278.23,159,2020
+JadeMind,AI,France,Lyon,Series C,2024-08-11,172.55,494.71,520,2020
+SageSecure,CleanTech,United States,New York,Series B,2023-01-07,81.97,300.19,261,2021
+DuneNet,Fintech,United Kingdom,London,Seed,2022-07-12,1.6,8.52,24,2020
+Prismio,Healthcare,United States,Austin,Series A,2021-12-27,24.95,100.32,96,2021
+LoomFlow,Fintech,United States,New York,Seed,2022-04-12,2.7,18.34,27,2017
+PikeX,CleanTech,Brazil,São Paulo,Seed,2023-11-17,1.59,10.05,16,2017
+BoltNet,Biotech,United Kingdom,Edinburgh,Series A,2022-07-18,11.77,44.19,35,2021
+TideData,Healthcare,United States,Seattle,Seed,2024-02-21,2.68,17.75,29,2018
+ApexAI,CleanTech,Nigeria,Lagos,Seed,2021-01-02,1.86,12.16,9,2014
+KiteWave,Healthcare,India,Delhi,Series B,2024-03-21,59.27,277.49,196,2014
+Helixly,AI,Germany,Berlin,Seed,2024-10-30,2.65,18.84,17,2017
+PikeLink,Healthcare,Israel,Tel Aviv,Seed,2023-02-26,4.77,16.34,12,2011
+Riftfy,EdTech,Israel,Tel Aviv,Series A,2022-06-25,12.43,59.24,74,2014
+HelixPay,E-commerce,United States,San Francisco,Series B,2021-06-25,72.83,210.67,94,2018
+NimbusSecure,Cybersecurity,United States,Boston,Seed,2021-04-19,1.8,7.94,19,2011
+NebulaPay,EdTech,Canada,Toronto,Seed,2021-04-05,3.41,25.72,9,2011
+OpalWave,Cybersecurity,Brazil,Rio de Janeiro,Seed,2023-11-11,1.87,9.37,13,2018
+Riftly,EdTech,Germany,Berlin,Series B,2023-05-21,40.03,109.21,296,2020
+Vibely,AI,Sweden,Stockholm,Series B,2020-12-24,57.64,237.98,284,2014
+FuseMind,Fintech,Germany,Munich,Series A,2022-04-16,13.33,66.79,40,2015
+NovaStack,AI,France,Lyon,Series A,2021-10-06,11.31,37.86,71,2018
+NebulaLearn,EdTech,Singapore,Singapore,Seed,2022-11-27,2.13,14.45,25,2017
+ZephyrMind,CleanTech,United States,New York,Series A,2023-12-01,17.12,52.84,100,2019
+FluxGo,AI,United States,Seattle,Series A,2020-07-09,10.62,58.67,34,2017
+SynthHub,CleanTech,Japan,Osaka,Series A,2021-07-13,15.39,68.45,80,2013
+PrismLabs,Healthcare,United States,Seattle,Series C,2021-07-19,243.17,901.87,498,2018
+OpalHub,Cybersecurity,United States,Austin,Series C,2022-07-03,184.65,496.75,715,2022
+CoreOps,E-commerce,Germany,Munich,IPO,2021-05-04,1229.24,2274.52,3865,2010
+OrbitX,EdTech,France,Lyon,IPO,2024-06-10,1677.35,4983.79,4557,2010
+SynthLink,Fintech,Sweden,Stockholm,Series C,2022-06-20,74.93,286.3,165,2021
+CoreGo,Fintech,Singapore,Singapore,Series A,2021-06-26,13.46,68.35,30,2015
+VertexLink,AI,China,Shanghai,Series B,2021-04-25,70.49,338.52,108,2021
+EchoSys,Cybersecurity,Nigeria,Lagos,Seed,2021-09-05,4.57,14.76,30,2010
+ValeHub,E-commerce,United Kingdom,London,Series A,2023-03-05,22.05,78.06,42,2011
+NovaFlow,Cybersecurity,Israel,Tel Aviv,Series C,2020-10-20,108.05,353.95,620,2014
+ForgeFlow,Fintech,Australia,Sydney,Series A,2021-12-08,29.69,115.72,74,2021
+EchoLabs,EdTech,Japan,Tokyo,Series C,2020-08-06,109.3,343.62,738,2014
+TideOps,CleanTech,Nigeria,Lagos,Seed,2024-11-06,3.59,24.14,6,2024
+OrbitGo,E-commerce,France,Lyon,Series B,2021-12-22,37.52,111.63,114,2020
+FusePay,CleanTech,United States,San Francisco,Series B,2020-03-09,66.37,287.44,73,2014
+JadeTech,Biotech,United States,Seattle,Series A,2021-07-12,25.76,97.14,81,2014
+Forgeio,EdTech,United States,New York,IPO,2024-07-05,1203.16,1967.71,3732,2010
+Quantumfy,CleanTech,United States,Austin,Series A,2024-08-11,20.96,86.24,49,2017
+FuseBio,E-commerce,Singapore,Singapore,Series B,2023-07-25,85.91,410.09,127,2020
+JadeSys,CleanTech,United States,San Francisco,IPO,2020-08-25,374.95,1061.44,1611,2016
+Loomfy,EdTech,China,Shenzhen,Series A,2024-01-28,8.86,37.61,32,2023
+PulseStack,AI,Germany,Munich,Series B,2021-03-20,55.47,270.49,268,2015
+SparkGo,Biotech,United Kingdom,Edinburgh,Seed,2021-07-19,1.35,4.87,19,2011
+PikeLearn,AI,Israel,Tel Aviv,Series B,2021-05-13,99.11,442.77,102,2011
+Orbitio,Biotech,India,Bangalore,Series B,2024-06-03,92.04,230.75,269,2012
+SageNet,Fintech,United States,New York,Series B,2020-02-22,30.54,103.7,251,2013
+CrestX,AI,United States,Austin,Seed,2022-05-12,2.87,19.31,20,2017
+JadeGo,E-commerce,India,Mumbai,IPO,2020-03-29,1509.04,4320.57,4771,2014
+VertexNet,Cybersecurity,Sweden,Stockholm,Series C,2022-05-23,221.52,660.25,604,2011
+NeonData,Healthcare,Israel,Tel Aviv,Seed,2023-07-20,3.13,20.54,17,2019
+SparkLink,Fintech,Germany,Munich,Series B,2020-08-22,88.22,364.11,246,2018
+CoreStack,EdTech,Germany,Berlin,Seed,2022-07-17,2.29,15.22,15,2016
+CrestHealth,Cybersecurity,United States,New York,Seed,2024-08-30,0.88,4.54,28,2021
+NebulaData,Biotech,India,Delhi,Series B,2022-04-21,48.29,201.05,242,2016
+PikeSys,Fintech,Israel,Haifa,Series A,2021-03-11,8.87,39.44,33,2015
+TideStack,E-commerce,United States,Austin,Series C,2024-09-26,190.24,672.47,786,2019
+VibeHealth,AI,Japan,Osaka,Seed,2023-12-10,3.93,29.9,16,2010
+DuneLink,Fintech,India,Mumbai,Seed,2023-07-20,4.87,16.84,21,2013
+SynthPay,Biotech,Germany,Berlin,Seed,2021-10-26,4.0,23.35,7,2010
+SparkX,Fintech,Canada,Toronto,Seed,2023-09-17,2.41,14.55,18,2014
+NimbusHub,Fintech,United States,Boston,Seed,2023-10-21,3.17,17.86,14,2010
+FluxLabs,AI,Nigeria,Lagos,Seed,2021-03-08,3.95,26.94,14,2015
+BloomTech,Healthcare,France,Lyon,Seed,2022-12-26,3.67,20.19,26,2022
+FuseData,AI,United Kingdom,Edinburgh,Series A,2022-07-30,28.03,156.58,93,2016
+GlowBio,Biotech,United States,San Francisco,Seed,2023-06-19,2.57,16.57,16,2011
+AuraTech,EdTech,United States,Seattle,Series A,2022-03-21,26.76,140.15,48,2015
+PulseHealth,E-commerce,France,Paris,Series C,2021-12-16,137.77,539.57,301,2013
+Jadely,Healthcare,United States,New York,Series B,2023-09-04,26.03,126.98,210,2017
+DriftSecure,Biotech,Canada,Vancouver,Series C,2023-07-08,129.03,371.55,630,2017
+Vertexfy,Fintech,India,Mumbai,Seed,2022-07-14,0.67,3.25,14,2011
+TideWave,Cybersecurity,India,Mumbai,Series A,2024-06-09,23.47,73.3,93,2020
+VibeAI,Cybersecurity,France,Paris,Seed,2024-09-10,2.05,13.47,21,2020
+TideAI,Cybersecurity,United States,Boston,Series A,2023-06-02,8.97,36.94,56,2016
+TideHealth,Fintech,Canada,Vancouver,Seed,2023-02-16,3.55,15.69,28,2023
+TideMind,Healthcare,United Kingdom,Edinburgh,Series C,2021-09-27,291.92,991.64,551,2012
+NeonTech,EdTech,South Korea,Seoul,Series B,2021-11-03,85.05,355.11,262,2021
+BoltCloud,Biotech,Israel,Haifa,Seed,2021-09-24,1.31,5.33,29,2017
+NeonAI,Fintech,Nigeria,Lagos,Seed,2024-06-02,0.96,6.58,28,2024
+HaloAI,Healthcare,China,Shenzhen,Series A,2020-11-11,9.06,49.78,99,2012
+DriftWave,Cybersecurity,Germany,Berlin,Series B,2024-03-20,79.88,289.35,186,2013
+DuneX,Biotech,Australia,Sydney,Series B,2023-03-14,98.76,360.89,122,2022
+NeonBio,E-commerce,India,Bangalore,Series C,2020-10-10,268.25,564.49,642,2015
+BloomLabs,CleanTech,United States,New York,Series A,2022-11-17,8.68,37.43,48,2017
+AtlasHealth,Biotech,Germany,Munich,Seed,2020-06-16,2.19,6.88,8,2020
+VertexLabs,Cybersecurity,United States,Austin,Series B,2020-10-11,80.71,296.43,207,2010
+ValeFlow,EdTech,United States,New York,Seed,2021-08-13,1.57,5.67,12,2016
+ValeSys,AI,United States,Boston,Series B,2023-03-23,39.36,112.53,159,2010
+OpalX,Healthcare,United States,Boston,Series B,2020-06-24,61.88,210.49,294,2018
+BloomCloud,EdTech,Canada,Toronto,Series C,2020-03-30,208.92,827.76,409,2010
+AtlasGo,Fintech,China,Shenzhen,Series B,2024-02-14,80.53,228.18,140,2018
+ApexData,Cybersecurity,United States,Boston,Series B,2024-07-19,30.79,132.09,291,2017
+ForgeAI,AI,United States,New York,Seed,2021-09-27,2.82,22.41,22,2017
+CrestLink,CleanTech,Canada,Toronto,Series A,2024-05-18,6.2,30.8,54,2011
+PrismTech,EdTech,Singapore,Singapore,Seed,2021-01-17,2.73,14.98,30,2018
+EchoData,EdTech,China,Beijing,Series B,2024-08-11,34.44,111.39,76,2011
+ValeLink,Healthcare,Germany,Munich,Series B,2021-12-20,55.77,240.76,283,2015
+QuantumHealth,Fintech,United States,San Francisco,Series B,2022-04-11,49.06,220.9,223,2012
+Apexfy,AI,Japan,Osaka,Seed,2021-04-28,4.0,19.33,17,2019
+PrismCloud,Biotech,United States,Boston,Series A,2024-04-11,6.92,23.62,66,2016
+HaloLearn,Healthcare,Sweden,Stockholm,Series A,2022-03-03,27.84,93.36,53,2021
+VertexStack,Cybersecurity,Nigeria,Lagos,Seed,2020-10-04,4.34,22.83,27,2017
+VibeSys,Biotech,Sweden,Stockholm,Series B,2023-01-31,63.37,299.63,267,2012
+PikeHealth,E-commerce,France,Paris,Series B,2021-04-29,83.23,213.54,191,2019
+RiftTech,Fintech,Israel,Tel Aviv,Seed,2024-01-08,3.73,20.99,29,2016
+SagePay,Fintech,United States,Austin,Series A,2023-10-24,17.93,60.69,90,2020
+AuraPay,EdTech,Canada,Toronto,Series A,2024-11-13,6.39,21.55,39,2014
+PikeSecure,E-commerce,United Kingdom,Edinburgh,Seed,2022-11-28,4.53,32.75,13,2013
+ValeOps,Fintech,United States,Austin,Series A,2020-12-11,19.8,93.89,41,2020
+Sparkly,AI,Australia,Melbourne,Series C,2020-02-28,70.31,274.0,740,2014
+EmberData,Cybersecurity,Germany,Berlin,Series C,2023-01-22,122.42,479.07,644,2013
+BloomHub,Healthcare,Germany,Berlin,Series A,2022-09-18,16.61,66.78,38,2015
+FuseCloud,Fintech,United States,Austin,Seed,2022-08-13,1.05,5.51,9,2011
+JadeWave,Biotech,Sweden,Stockholm,IPO,2024-01-16,762.89,2017.6,4581,2018
+BloomAI,AI,Singapore,Singapore,Seed,2022-03-16,2.77,21.7,11,2019
+EmberSys,Cybersecurity,United States,Boston,Seed,2020-01-17,4.31,22.22,13,2015
+ValeStack,E-commerce,United States,San Francisco,Series A,2021-08-14,6.84,30.87,90,2014
+SynthLearn,Fintech,Israel,Tel Aviv,Series A,2024-06-15,29.67,138.66,66,2022
+Synthfy,AI,Israel,Haifa,Seed,2020-10-07,3.71,26.04,21,2017
+AtlasX,Biotech,Australia,Sydney,IPO,2021-10-14,492.5,1470.57,2951,2019
+DriftOps,CleanTech,Japan,Osaka,Series A,2020-02-04,14.21,71.35,73,2019
+Nebulaly,Cybersecurity,Singapore,Singapore,Seed,2023-09-04,4.02,27.66,23,2013
+QuantumFlow,Healthcare,France,Lyon,Series C,2021-05-11,57.89,225.56,262,2013
+NebulaMind,EdTech,United Kingdom,London,Series B,2022-04-20,60.15,242.33,170,2021
+OpalNet,Biotech,United States,New York,IPO,2022-09-06,1145.86,2258.06,1918,2017
+DriftData,CleanTech,India,Delhi,Series B,2021-01-28,96.59,308.85,126,2013
+EchoBio,Cybersecurity,China,Shenzhen,Seed,2021-12-15,3.02,23.17,28,2014
+VertexSys,EdTech,India,Delhi,Series C,2022-03-19,254.59,995.25,299,2014
+OrbitBio,Cybersecurity,South Korea,Seoul,Seed,2024-08-22,2.92,22.38,27,2014
+AtlasMind,E-commerce,Israel,Tel Aviv,Seed,2022-12-23,1.52,6.33,8,2016
+BoltData,AI,France,Paris,IPO,2020-11-19,932.43,2706.42,4396,2017
+ApexHub,AI,United Kingdom,Edinburgh,Series C,2020-07-02,213.07,525.1,188,2012
+LoomHealth,CleanTech,Canada,Toronto,Series C,2020-01-19,124.6,399.41,493,2014
+VibeLabs,CleanTech,Japan,Osaka,Seed,2020-08-18,1.99,13.24,25,2014
+CoreTech,E-commerce,China,Shanghai,Seed,2024-10-19,3.37,16.94,18,2018
+ZephyrFlow,Healthcare,Germany,Berlin,IPO,2022-09-04,782.48,1464.86,2636,2016
+FluxFlow,CleanTech,Canada,Vancouver,Series A,2023-03-19,5.29,26.24,50,2010
+NimbusHealth,CleanTech,United Kingdom,Cambridge,Series B,2023-08-01,93.29,302.04,207,2013
+ZephyrStack,Biotech,France,Lyon,Series A,2023-01-29,27.82,146.67,47,2022
+MesaLearn,Cybersecurity,Canada,Toronto,Series A,2022-01-10,6.95,32.61,27,2018
+LoomTech,Healthcare,India,Bangalore,Seed,2022-12-01,2.49,15.94,27,2019
+QuantumHub,AI,Australia,Melbourne,Series A,2022-11-17,15.39,72.21,91,2017
+HelixWave,E-commerce,United States,San Francisco,Series A,2020-04-02,15.59,79.53,89,2010
+CrestHub,Healthcare,United States,Boston,Series B,2024-04-17,71.32,308.33,296,2016
+Vibeio,EdTech,Germany,Munich,Seed,2023-09-17,4.44,16.27,16,2011
+NimbusCloud,E-commerce,United Kingdom,London,Series C,2024-03-28,55.68,144.59,707,2016
+Fusefy,CleanTech,Germany,Berlin,Seed,2024-11-27,3.76,13.4,30,2020
+ZephyrOps,E-commerce,Canada,Toronto,Seed,2020-07-25,3.17,16.59,26,2010
+NimbusOps,E-commerce,United States,Boston,Series A,2024-03-24,26.59,84.27,84,2014
+Nebulaio,Biotech,India,Delhi,Seed,2024-11-29,1.14,7.18,12,2016
+CoreMind,EdTech,South Korea,Seoul,Series A,2020-04-06,29.31,170.72,68,2018
+SynthFlow,CleanTech,Germany,Berlin,Series A,2024-03-25,18.45,68.69,48,2014
+VertexFlow,EdTech,Australia,Melbourne,Series A,2020-10-01,14.71,55.38,62,2020
+SageOps,E-commerce,Japan,Tokyo,Seed,2022-02-11,3.53,21.23,7,2013
+FluxOps,Cybersecurity,China,Beijing,Seed,2021-11-12,1.86,14.03,11,2013
+EchoHub,E-commerce,Nigeria,Lagos,Series B,2023-12-12,36.36,174.08,191,2015
+KiteNet,CleanTech,Germany,Munich,Seed,2022-11-16,4.47,23.83,30,2021
+Pikely,Biotech,Australia,Melbourne,Series A,2023-02-26,26.6,138.95,22,2014
+PikeGo,CleanTech,India,Mumbai,Seed,2021-11-06,1.54,9.01,12,2017
+AuraOps,CleanTech,South Korea,Seoul,Series B,2022-09-27,97.32,399.42,175,2017
+HelixStack,Healthcare,Brazil,São Paulo,Series B,2022-09-27,34.72,164.0,214,2010
+MesaFlow,EdTech,United States,San Francisco,Seed,2023-07-15,1.54,10.07,5,2013
+NeonOps,Cybersecurity,United Kingdom,Edinburgh,Series B,2020-02-02,20.53,79.64,53,2010
+PulseX,AI,United States,Austin,Series A,2023-11-30,21.85,118.39,42,2011
+RiftCloud,CleanTech,United States,New York,Series C,2021-07-01,248.73,536.77,565,2017
+ApexTech,CleanTech,Nigeria,Lagos,Series B,2024-10-02,26.45,131.7,216,2022
+Atlasly,Cybersecurity,Germany,Munich,Seed,2020-01-20,3.66,12.49,18,2020
+RiftStack,AI,Nigeria,Lagos,Seed,2024-11-12,3.62,21.12,13,2010
+DriftPay,AI,United States,Austin,IPO,2023-04-17,459.54,1255.02,3762,2011
+VertexX,EdTech,India,Delhi,Series B,2023-01-12,46.54,204.27,85,2022
+TideHub,AI,Canada,Vancouver,Seed,2021-04-20,4.27,20.08,29,2019
+VibeStack,AI,Sweden,Stockholm,Series B,2024-05-23,99.41,370.45,141,2018
+SynthOps,Fintech,India,Mumbai,Series B,2021-08-27,83.84,359.07,71,2014
+VertexPay,Fintech,United Kingdom,Cambridge,Seed,2021-09-23,2.5,17.02,8,2012
+DuneLabs,Fintech,Germany,Munich,Seed,2021-12-25,2.99,17.89,30,2015
+AuraStack,Fintech,United States,Boston,Series B,2023-02-19,92.42,457.06,196,2018
+HelixSys,CleanTech,United Kingdom,London,Seed,2022-10-06,1.16,4.45,13,2016
+Atlasfy,Cybersecurity,United States,New York,Series A,2021-02-04,16.45,56.04,20,2016
+DriftNet,Cybersecurity,United Kingdom,Cambridge,Seed,2024-07-28,4.21,26.33,24,2012
+Loomly,Cybersecurity,Israel,Tel Aviv,Seed,2022-03-26,4.86,21.66,27,2020
+Sageio,EdTech,Canada,Vancouver,Seed,2024-05-28,2.27,8.1,23,2013
+HelixLink,AI,United States,Seattle,IPO,2022-08-03,1897.35,3442.69,2886,2021
+Halofy,CleanTech,China,Beijing,Seed,2023-09-10,1.19,6.09,17,2011
+VertexBio,EdTech,France,Lyon,Series A,2024-06-07,29.21,149.11,88,2019
+AtlasLink,Healthcare,Canada,Vancouver,Series B,2020-03-31,65.06,267.56,215,2016
+HaloSys,CleanTech,United States,San Francisco,Seed,2024-03-09,2.83,16.7,23,2013
+SynthSys,Healthcare,United Kingdom,Edinburgh,Seed,2020-02-20,2.67,11.95,7,2011
+HelixData,E-commerce,United Kingdom,Cambridge,Series A,2021-12-14,16.9,72.92,77,2015
+AuraNet,AI,United States,San Francisco,Series C,2023-08-20,77.34,278.43,399,2018
+QuantumOps,E-commerce,India,Mumbai,Series B,2023-07-13,34.76,142.56,160,2016
+Pulseio,Cybersecurity,Israel,Tel Aviv,Series A,2022-03-07,5.11,18.62,55,2022
+Emberly,E-commerce,United States,Austin,Series A,2021-06-21,21.77,97.28,60,2019
+SageTech,Cybersecurity,United States,Austin,Series B,2024-07-24,73.89,332.62,285,2019
+Orbitly,Fintech,China,Shanghai,Seed,2020-08-27,1.32,8.54,21,2016
+AuraWave,Cybersecurity,United Kingdom,London,Series B,2023-11-21,93.53,451.44,94,2018
+OrbitLearn,Biotech,United States,New York,Series C,2023-06-22,63.4,172.33,159,2017
+RiftLabs,EdTech,Brazil,Rio de Janeiro,Series B,2022-05-01,76.81,277.26,92,2011
+Loomio,CleanTech,Brazil,São Paulo,Seed,2021-04-05,2.92,11.22,19,2019
+Haloio,CleanTech,France,Paris,Series B,2024-08-13,99.27,382.7,243,2010
+ForgeSys,Fintech,United States,Boston,Series B,2023-08-31,80.11,259.9,58,2017
+ValeGo,Cybersecurity,Singapore,Singapore,Series C,2020-08-28,243.91,603.41,752,2015
+OpalPay,E-commerce,Germany,Berlin,Series C,2024-07-07,64.84,175.17,437,2019
+OrbitLink,CleanTech,United Kingdom,Edinburgh,Seed,2021-07-01,4.79,26.69,26,2011
+EmberWave,Healthcare,Australia,Melbourne,Series B,2020-09-28,39.97,171.01,262,2013
+MesaOps,EdTech,United States,Austin,Series A,2020-06-03,20.84,117.55,31,2016
+SparkWave,Cybersecurity,United States,Austin,IPO,2021-11-01,1247.52,3497.25,1263,2021
+NebulaAI,Biotech,United States,Austin,Series A,2020-09-24,19.15,85.33,63,2020
+CrestSecure,AI,United States,Boston,Seed,2024-10-22,1.21,6.39,18,2013
+VertexMind,AI,United States,New York,Series A,2021-09-17,23.15,121.9,74,2020
+OrbitWave,Cybersecurity,United States,New York,Seed,2023-04-30,1.52,9.73,5,2010
+DuneHealth,Fintech,United States,Boston,Series B,2020-07-28,28.26,96.62,126,2012
+DuneSys,Fintech,Israel,Tel Aviv,Series A,2020-01-18,20.26,70.76,64,2013
+QuantumStack,Healthcare,Sweden,Stockholm,Seed,2023-08-13,0.88,5.07,24,2021
+LoomHub,E-commerce,Singapore,Singapore,Series B,2021-08-28,71.69,319.7,253,2013
+RiftLink,Fintech,United States,Boston,Series A,2020-01-25,29.67,172.14,36,2016
+SparkAI,Healthcare,United Kingdom,Edinburgh,Series B,2024-04-26,25.84,102.54,53,2014
+Opalio,CleanTech,South Korea,Seoul,Series B,2022-10-23,81.37,289.59,152,2011
+SageGo,Fintech,Israel,Haifa,Seed,2022-11-13,4.64,36.52,9,2018
+Jadefy,CleanTech,Canada,Toronto,Series B,2024-02-03,96.27,298.11,112,2011
+NeonX,Healthcare,Israel,Haifa,Seed,2023-12-20,1.12,3.42,20,2015
+QuantumNet,Healthcare,Canada,Vancouver,Series A,2024-03-15,24.53,93.37,35,2022
+NebulaWave,Fintech,Brazil,Rio de Janeiro,Seed,2023-03-26,3.32,18.2,21,2015
+MesaLabs,Biotech,Japan,Tokyo,Seed,2024-05-02,0.96,5.63,28,2011
+CoreCloud,E-commerce,United States,San Francisco,Seed,2022-01-15,2.22,8.33,6,2018
+NimbusX,CleanTech,Germany,Munich,Series C,2023-03-16,143.2,430.18,203,2012
+PikeFlow,Fintech,Nigeria,Lagos,Series C,2024-11-08,120.58,444.9,485,2011
+OpalCloud,CleanTech,United States,New York,Series A,2021-09-14,23.49,87.56,67,2019
+DuneOps,AI,United States,Boston,Seed,2021-12-10,3.36,21.73,5,2015
+ApexCloud,E-commerce,China,Beijing,Series A,2021-05-02,15.5,91.2,38,2021
+EmberTech,Biotech,Australia,Melbourne,Series A,2024-03-11,7.12,23.4,37,2020
+CoreNet,EdTech,India,Bangalore,Series B,2020-09-24,38.94,122.76,130,2016
+AuraFlow,Fintech,Germany,Berlin,IPO,2020-10-05,1603.89,3812.55,1773,2011
+FluxTech,Fintech,Germany,Munich,Series A,2024-04-26,10.19,39.99,53,2023
+EmberX,AI,United States,Austin,Seed,2024-10-20,1.98,6.84,12,2015
+PikeCloud,CleanTech,United States,Austin,Series C,2020-12-22,57.77,162.26,613,2018
+Vertexly,Healthcare,United States,San Francisco,Seed,2020-05-06,4.24,33.55,9,2013

@@ -601,12 +601,19 @@ class GrafanaTransformer(Transformer):
         sort = chart.get("sort")
         sort_order = chart.get("sort_order", "asc")
         x_field = chart.get("x", "x")
-        y_field = chart.get("y", "y")
+        y_field = chart.get("y", "")
+        agg = chart.get("agg")
 
         if sort == "x":
             sort_field = x_field
         elif sort == "y":
-            sort_field = y_field
+            if y_field:
+                sort_field = y_field
+            elif agg == "count":
+                # After groupBy count, the column is "x_field (count)"
+                sort_field = f"{x_field} (count)"
+            else:
+                sort_field = x_field
         else:
             sort_field = sort  # direct field name
 

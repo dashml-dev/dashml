@@ -460,8 +460,10 @@ def load_data():
         chart_type = chart["type"]
         title = chart["title"]
         x = chart.get("x", "")  # Not required for metric type
-        y = chart.get("y", "")  # Optional when agg=count (count doesn't need a value column)
+        y_raw = chart.get("y", "")  # Optional when agg=count (count doesn't need a value column)
         agg = chart.get("agg", "sum")
+        # When normalizer moved y→group for count agg, use "count" as the display column
+        y = y_raw if y_raw else ("count" if agg == "count" and chart.get("type") != "metric" else "")
         group = chart.get("group")
         x_type = chart.get("x_type")
         y_type = chart.get("y_type")
@@ -632,13 +634,18 @@ def load_data():
                     code_parts.append(f'    # Bubble: aggregate {x}, {y}, {size_field} group by {group}')
                     code_parts.append(f'    chart_data = chart_df.groupby("{group}").agg({{{agg_dict_str}}}).reset_index()')
                 else:
-                    code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
-                    code_parts.append(f'    chart_data = chart_df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
+                    if y_raw:
+                        code_parts.append(f'    # Aggregate: {agg}({y}) group by {x}')
+                        code_parts.append(f'    chart_data = chart_df.groupby("{x}")["{y}"].{agg_method}().reset_index()')
+                    else:
+                        # count agg with no y field — count rows per x value
+                        code_parts.append(f'    # Aggregate: count rows group by {x}')
+                        code_parts.append(f'    chart_data = chart_df.groupby("{x}").size().reset_index(name="count")')
 
                 # Handle sorting: explicit sort field > x_type-based sorting
                 if sort_field:
                     # Explicit sort field specified
-                    actual_sort_col = x if sort_field == "x" else y
+                    actual_sort_col = x if sort_field == "x" else (y if y else "count")
                     ascending = sort_order == "asc"
                     code_parts.append(f'    # Sort by {sort_field} field ({sort_order})')
                     code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
@@ -683,7 +690,7 @@ def load_data():
         y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "line":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
@@ -691,7 +698,7 @@ def load_data():
         y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "scatter":
             code_parts.append(f'''    # Scatter: raw data points
@@ -700,7 +707,7 @@ def load_data():
         y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "bubble":
             size_field = chart.get("size", y)  # Default to y if size not specified
@@ -717,7 +724,7 @@ def load_data():
         color=alt.Color("{group}:N", legend=alt.Legend(title="{group_label}")),
         tooltip=["{group}", "{x}", "{y}", "{size_col}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
             else:
                 code_parts.append(f'''    # Bubble: scatter with size encoding
     c = alt.Chart(chart_data).mark_circle(color="{primary_color}").encode(
@@ -726,7 +733,7 @@ def load_data():
         size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
         tooltip=["{x}", "{y}", "{size_col}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "heatmap":
             # Heatmap needs aggregation by both x and y (like grouped bars)
@@ -748,7 +755,7 @@ def load_data():
         ),
         tooltip=["{x}", "{heatmap_y}", "{value_field}"]
     ).properties(width=600, height=400)
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
             else:
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity
     # Re-aggregate for heatmap (group by both x and y)
@@ -766,7 +773,7 @@ def load_data():
         ),
         tooltip=["{x}", "{heatmap_y}", "{value_field}"]
     ).properties(width=600, height=400)
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "pie":
             # Use secondary colors from theme for categorical data
@@ -780,7 +787,7 @@ def load_data():
         ),
         tooltip=["{x}", "{y}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "area":
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
@@ -788,7 +795,7 @@ def load_data():
         y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}", "{y}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "histogram":
             # Histogram uses binning on x axis, no aggregation needed
@@ -798,7 +805,7 @@ def load_data():
         y=alt.Y("count()", title="Count"),
         tooltip=["count()"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "box":
             # Box plot: shows distribution (min, Q1, median, Q3, max)
@@ -808,7 +815,7 @@ def load_data():
         y=alt.Y("{y}:Q", title="{y_label}"),
         tooltip=["{x}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "stacked_bar":
             # Use secondary colors from theme for stacked segments
@@ -824,7 +831,7 @@ def load_data():
         ),
         tooltip=["{x}", "{group}", "{y}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "grouped_bar":
             # Use secondary colors from theme for grouped bars
@@ -846,7 +853,7 @@ def load_data():
         xOffset=alt.XOffset("{group}:N", sort={offset_sort}),
         tooltip=["{x}", "{group}", "{y}"]
     )
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         elif chart_type == "geo":
             # Choropleth map using Altair with world topojson
@@ -896,7 +903,7 @@ def load_data():
         height=450
     )
     c = background + foreground
-    st.altair_chart(c, use_container_width=True)''')
+    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')
