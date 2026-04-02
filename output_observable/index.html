@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BigQuery Definitive - All Chart Types</title>
+    <title>Global Startup Funding Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6"></script>
     <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
@@ -130,170 +130,84 @@
     </style>
 </head>
 <body>
-    <h1>BigQuery Definitive - All Chart Types</h1>
+    <h1>Global Startup Funding Dashboard</h1>
 
-    <style>
-        .filter-bar {
-            display: flex;
-            gap: 16px;
-            align-items: flex-end;
-            flex-wrap: wrap;
-            padding: 14px 18px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 10px;
-            margin-bottom: 20px;
-            border: 1px solid rgba(128,128,128,0.12);
-            box-shadow: 0 1px 4px rgba(0,0,0,0.12);
-        }
-        .filter-bar-title {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 10px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: .1em;
-            opacity: .4;
-            align-self: center;
-            padding-bottom: 2px;
-            white-space: nowrap;
-            margin-right: 4px;
-        }
-        .filter-item {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-        .filter-item > label {
-            font-size: 10px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: .07em;
-            opacity: .55;
-        }
-        .filter-select-wrap {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-        }
-        .filter-select-wrap select {
-            appearance: none;
-            -webkit-appearance: none;
-            background: rgba(128,128,128,0.08);
-            color: inherit;
-            border: 1px solid rgba(128,128,128,0.22);
-            border-radius: 7px;
-            padding: 7px 32px 7px 12px;
-            font-size: 13px;
-            cursor: pointer;
-            min-width: 150px;
-            outline: none;
-            transition: border-color 0.15s, box-shadow 0.15s;
-            font-family: inherit;
-        }
-        .filter-select-wrap select:hover { border-color: rgba(128,128,128,0.45); }
-        .filter-select-wrap select:focus { border-color: #6c63ff; box-shadow: 0 0 0 2px #6c63ff33; }
-        .filter-select-wrap .sel-arrow {
-            position: absolute;
-            right: 9px;
-            pointer-events: none;
-            opacity: .45;
-            flex-shrink: 0;
-        }
-        .ms-wrap { position: relative; }
-        .ms-btn {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            background: rgba(128,128,128,0.08);
-            color: inherit;
-            border: 1px solid rgba(128,128,128,0.22);
-            border-radius: 7px;
-            padding: 7px 10px 7px 12px;
-            font-size: 13px;
-            cursor: pointer;
-            min-width: 150px;
-            outline: none;
-            transition: border-color 0.15s, box-shadow 0.15s;
-            white-space: nowrap;
-            font-family: inherit;
-        }
-        .ms-btn:hover { border-color: rgba(128,128,128,0.45); }
-        .ms-btn.ms-open, .ms-btn:focus { border-color: #6c63ff; box-shadow: 0 0 0 2px #6c63ff33; }
-        .ms-count {
-            background: #6c63ff;
-            color: #fff;
-            border-radius: 10px;
-            padding: 1px 7px;
-            font-size: 11px;
-            font-weight: 600;
-            display: none;
-        }
-        .ms-count.visible { display: inline; }
-        .ms-arrow { opacity: .45; transition: transform 0.15s; flex-shrink: 0; }
-        .ms-btn.ms-open .ms-arrow { transform: rotate(180deg); }
-        .ms-panel {
-            position: absolute;
-            top: calc(100% + 5px);
-            left: 0;
-            z-index: 200;
-            background: #1e1e2e;
-            border: 1px solid rgba(128,128,128,0.25);
-            border-radius: 9px;
-            padding: 6px;
-            min-width: 190px;
-            max-height: 230px;
-            overflow-y: auto;
-            box-shadow: 0 8px 28px rgba(0,0,0,0.3);
-            display: none;
-        }
-        .ms-panel.ms-open { display: block; }
-        .ms-option {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            padding: 7px 9px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            user-select: none;
-            transition: background 0.1s;
-        }
-        .ms-option:hover { background: rgba(128,128,128,0.1); }
-        .ms-option input[type="checkbox"] {
-            accent-color: #6c63ff;
-            width: 14px;
-            height: 14px;
-            cursor: pointer;
-            flex-shrink: 0;
-        }
-        .filter-reset {
-            align-self: flex-end;
-            background: none;
-            border: 1px solid rgba(128,128,128,0.2);
-            color: inherit;
-            padding: 7px 14px;
-            border-radius: 7px;
-            font-size: 12px;
-            cursor: pointer;
-            opacity: .55;
-            transition: opacity 0.15s, border-color 0.15s;
-            font-family: inherit;
-        }
-        .filter-reset:hover { opacity: 1; border-color: rgba(128,128,128,0.5); }
-    </style>
     <script>
-        // World topojson for geo charts
+        // Load and parse CSV data
+        let dashmlData = [];
+        // World topojson for geo charts (loaded on demand)
         window.worldTopojson = null;
 
-        // Load world topojson once
-        fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
-            .then(r => r.json())
-            .then(worldData => {
+        // For CSV, getEffectiveType returns explicit type or detects from data
+        function getEffectiveType(column, explicitType) {
+            if (explicitType) return explicitType;
+            // For CSV, we don't have schema info, so return undefined
+            // The sorting logic will handle runtime type detection
+            return undefined;
+        }
+
+        // Load both data and world topojson in parallel
+        Promise.all([
+            fetch('startup_funding.csv').then(r => r.text()),
+            fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(r => r.json())
+        ])
+            .then(([csvText, worldData]) => {
+                dashmlData = parseCSV(csvText);
+
+                // Convert topojson to geojson features for Observable Plot
                 window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
+                renderAllCharts();
             })
-            .catch(err => console.warn('Could not load world topojson:', err));
+            .catch(error => {
+                console.error('Error loading data:', error);
+                document.body.innerHTML += '<p style="color: red;">Error loading data: ' + error.message + '</p>';
+            });
+
+        function parseCSV(csvText) {
+            const lines = csvText.trim().split('\n').filter(line => line.trim());
+            const headers = lines[0].split(',').map(h => h.trim());
+            const rows = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',');
+                if (values.length !== headers.length) continue;
+
+                const row = {};
+                headers.forEach((header, index) => {
+                    const value = values[index] ? values[index].trim() : '';
+                    // Try to parse as number first
+                    if (!isNaN(value) && value !== '') {
+                        row[header] = parseFloat(value);
+                    }
+                    // Keep dates as ISO strings and other strings as-is
+                    // Observable Plot handles ISO date strings natively with type: "utc"
+                    else {
+                        row[header] = value;
+                    }
+                });
+                rows.push(row);
+            }
+            return rows;
+        }
+
+        // Apply filter conditions to a dataset
+        function applyFilters(data, filters) {
+            if (!filters || filters.length === 0) return data;
+            return data.filter(row => filters.every(f => {
+                const val = row[f.field];
+                switch (f.op) {
+                    case 'eq': return val === f.value;
+                    case 'ne': return val !== f.value;
+                    case 'gt': return val > f.value;
+                    case 'lt': return val < f.value;
+                    case 'gte': return val >= f.value;
+                    case 'lte': return val <= f.value;
+                    case 'in': return Array.isArray(f.value) && f.value.includes(val);
+                    case 'contains': return String(val).includes(f.value);
+                    default: return true;
+                }
+            }));
+        }
 
         // Format a metric scalar value
         function formatMetric(value, format, suffix) {
@@ -304,128 +218,106 @@
             const str = n.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
             return str + (suffix || '');
         }
-
-        async function loadChart(containerId, chartId, renderFn, extraParams) {
-            const container = document.getElementById(containerId);
-            if (!container) return;
-            container.innerHTML = '<div class="chart-spinner"><div class="spinner"></div><span>Loading...</span></div>';
-            try {
-                const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
-                const resp = await fetch(url);
-                if (!resp.ok) {
-                    const body = await resp.json().catch(() => ({}));
-                    throw new Error(body.error || 'HTTP ' + resp.status);
-                }
-                const data = await resp.json();
-                container.innerHTML = '';
-                renderFn(data);
-            } catch (err) {
-                container.innerHTML = '<div class="chart-error">Error loading chart: ' + err.message + '</div>';
-                console.error('Chart ' + chartId + ' failed:', err);
-            }
-        }
-
-        async function loadMetric(containerId, chartId, renderFn, extraParams) {
-            const el = document.getElementById(containerId);
-            if (!el) return;
-            el.textContent = '…';
-            try {
-                const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
-                const resp = await fetch(url);
-                if (!resp.ok) {
-                    const body = await resp.json().catch(() => ({}));
-                    throw new Error(body.error || 'HTTP ' + resp.status);
-                }
-                const data = await resp.json();
-                renderFn(data);
-            } catch (err) {
-                if (el) el.textContent = 'Error';
-                console.error('Metric ' + chartId + ' failed:', err);
-            }
-        }
     </script>
     <div class="page-tabs">
-        <button class="tab-button active" onclick="showPage('categorical_charts', this)">Categorical Charts</button>
-        <button class="tab-button" onclick="showPage('time_series', this)">Time Series Charts</button>
-        <button class="tab-button" onclick="showPage('distribution', this)">Distribution & Relationships</button>
+        <button class="tab-button active" onclick="showPage('overview', this)">Overview</button>
+        <button class="tab-button" onclick="showPage('by_industry', this)">By Industry</button>
+        <button class="tab-button" onclick="showPage('geography', this)">Geography</button>
+        <button class="tab-button" onclick="showPage('deep_dive', this)">Deep Dive</button>
     </div>
-    <div id="page-categorical_charts" class="page-content active">
-        <p class="page-description">Bar charts and pie charts for categorical data</p>
+    <div id="page-overview" class="page-content active">
+        <p class="page-description">Key metrics and high-level funding trends</p>
         <div class="card metric-card">
-            <div class="metric-title">Total Revenue</div>
-            <div id="chart-categorical_charts-total_revenue_kpi" class="metric-value">—</div>
-        </div>
-        <div class="card metric-card">
-            <div class="metric-title">Total Orders</div>
-            <div id="chart-categorical_charts-total_orders_kpi" class="metric-value">—</div>
+            <div class="metric-title">Total Funding ($M)</div>
+            <div id="chart-overview-metric_total_funding" class="metric-value">—</div>
         </div>
         <div class="card metric-card">
-            <div class="metric-title">Avg Order Value</div>
-            <div id="chart-categorical_charts-avg_order_value_kpi" class="metric-value">—</div>
+            <div class="metric-title">Total Deals</div>
+            <div id="chart-overview-metric_deal_count" class="metric-value">—</div>
+        </div>
+        <div class="card metric-card">
+            <div class="metric-title">Avg Valuation ($M)</div>
+            <div id="chart-overview-metric_avg_valuation" class="metric-value">—</div>
         </div>
         <div class="card">
-            <h2>Total Sales by Country</h2>
-            <div id="chart-categorical_charts-bar_sales_by_country"></div>
+            <h2>Funding Over Time</h2>
+            <div id="chart-overview-line_funding_over_time"></div>
         </div>
         <div class="card">
-            <h2>Orders by Status</h2>
-            <div id="chart-categorical_charts-pie_orders_by_status"></div>
+            <h2>Deal Count Over Time</h2>
+            <div id="chart-overview-area_deals_over_time"></div>
         </div>
         <div class="card">
-            <h2>Orders by Country (Grouped by Status)</h2>
-            <div id="chart-categorical_charts-grouped_bar_country_status"></div>
-        </div>
-        <div class="card">
-            <h2>Orders by Payment Method (Stacked by Status)</h2>
-            <div id="chart-categorical_charts-stacked_bar_payment_status"></div>
-        </div>
-        <div class="card">
-            <h2>Sales by Country (Map)</h2>
-            <div id="chart-categorical_charts-geo_sales_by_country"></div>
+            <h2>Deals by Funding Stage</h2>
+            <div id="chart-overview-pie_by_stage"></div>
         </div>
     </div>
-    <div id="page-time_series" class="page-content">
-        <p class="page-description">Line and area charts for temporal trends</p>
+    <div id="page-by_industry" class="page-content">
+        <p class="page-description">Funding breakdown across industries</p>
         <div class="card">
-            <h2>Orders Over Time</h2>
-            <div id="chart-time_series-line_orders_over_time"></div>
+            <h2>Total Funding by Industry</h2>
+            <div id="chart-by_industry-bar_funding_by_industry"></div>
         </div>
         <div class="card">
-            <h2>Revenue Over Time</h2>
-            <div id="chart-time_series-area_revenue_over_time"></div>
+            <h2>Industry Funding by Stage</h2>
+            <div id="chart-by_industry-stacked_bar_industry_stage"></div>
+        </div>
+        <div class="card">
+            <h2>Industry Deal Count by Stage</h2>
+            <div id="chart-by_industry-grouped_bar_industry_stage"></div>
+        </div>
+        <div class="card">
+            <h2>Funding Heatmap: Industry vs Country</h2>
+            <div id="chart-by_industry-heatmap_industry_country"></div>
         </div>
     </div>
-    <div id="page-distribution" class="page-content">
-        <p class="page-description">Scatter plots, histograms, box plots, bubble charts, and heatmaps</p>
+    <div id="page-geography" class="page-content">
+        <p class="page-description">Where startup funding flows globally</p>
         <div class="card">
-            <h2>Order Amount vs Tax Amount</h2>
-            <div id="chart-distribution-scatter_amount_vs_tax"></div>
+            <h2>Total Funding by Country</h2>
+            <div id="chart-geography-geo_funding_by_country"></div>
         </div>
         <div class="card">
-            <h2>Distribution of Order Amounts</h2>
-            <div id="chart-distribution-histogram_order_amounts"></div>
+            <h2>Top 10 Countries by Funding</h2>
+            <div id="chart-geography-bar_top_countries"></div>
         </div>
         <div class="card">
-            <h2>Order Amount Distribution by Status</h2>
-            <div id="chart-distribution-box_amount_by_status"></div>
+            <h2>Top 10 Cities by Deal Count</h2>
+            <div id="chart-geography-bar_top_cities"></div>
+        </div>
+    </div>
+    <div id="page-deep_dive" class="page-content">
+        <p class="page-description">Distributions and correlations</p>
+        <div class="card">
+            <h2>Funding Amount vs Valuation</h2>
+            <div id="chart-deep_dive-scatter_funding_vs_valuation"></div>
         </div>
         <div class="card">
-            <h2>Sales vs Tax by Region</h2>
-            <div id="chart-distribution-bubble_region_sales"></div>
+            <h2>Distribution of Funding Amounts</h2>
+            <div id="chart-deep_dive-histogram_funding"></div>
         </div>
         <div class="card">
-            <h2>Order Count by Country and Status</h2>
-            <div id="chart-distribution-heatmap_country_status"></div>
+            <h2>Funding Distribution by Stage</h2>
+            <div id="chart-deep_dive-box_funding_by_stage"></div>
+        </div>
+        <div class="card">
+            <h2>Industries: Funding vs Valuation (sized by Employees)</h2>
+            <div id="chart-deep_dive-bubble_industry"></div>
         </div>
     </div>
     <script>
         function showPage(pageId, buttonElement) {
+            // Hide all pages
             document.querySelectorAll('.page-content').forEach(page => {
                 page.classList.remove('active');
             });
+
+            // Remove active from all buttons
             document.querySelectorAll('.tab-button').forEach(btn => {
                 btn.classList.remove('active');
             });
+
+            // Show selected page
             document.getElementById('page-' + pageId).classList.add('active');
             buttonElement.classList.add('active');
         }
@@ -447,133 +339,294 @@
             if (encoding === 'iso3') return iso3ToTopo[v.toUpperCase()] || v;
             return aliasToTopo[v.toLowerCase()] || v;
         }
-        const PAGE_CHARTS = {};
+        function renderAllCharts() {
+            // Metric: metric_total_funding
+            {
+              const filters = [];
+              let d = applyFilters(dashmlData, filters);
+              const vals = d.map(r => parseFloat(r['funding_amount'])).filter(v => !isNaN(v));
+              const value = vals.length === 0 ? null :
+                'sum' === 'sum' ? vals.reduce((a, b) => a + b, 0) :
+                'sum' === 'mean' ? vals.reduce((a, b) => a + b, 0) / vals.length :
+                vals.length;
+              document.getElementById('chart-overview-metric_total_funding').textContent = formatMetric(value, ',.1f', 'M');
+            }
+            // Metric: metric_deal_count
+            {
+              const filters = [];
+              let d = applyFilters(dashmlData, filters);
+              const vals = d.map(r => parseFloat(r['funding_amount'])).filter(v => !isNaN(v));
+              const value = vals.length === 0 ? null :
+                'count' === 'sum' ? vals.reduce((a, b) => a + b, 0) :
+                'count' === 'mean' ? vals.reduce((a, b) => a + b, 0) / vals.length :
+                vals.length;
+              document.getElementById('chart-overview-metric_deal_count').textContent = formatMetric(value, ',.0f', '');
+            }
+            // Metric: metric_avg_valuation
+            {
+              const filters = [];
+              let d = applyFilters(dashmlData, filters);
+              const vals = d.map(r => parseFloat(r['valuation'])).filter(v => !isNaN(v));
+              const value = vals.length === 0 ? null :
+                'mean' === 'sum' ? vals.reduce((a, b) => a + b, 0) :
+                'mean' === 'mean' ? vals.reduce((a, b) => a + b, 0) / vals.length :
+                vals.length;
+              document.getElementById('chart-overview-metric_avg_valuation').textContent = formatMetric(value, ',.1f', 'M');
+            }
+            // Chart: line_funding_over_time
+            const data_line_funding_over_time = (() => {
+                const effectiveXType = getEffectiveType('funding_date', 'date');
 
-        function toggleMs(btn, pageId, field) {
-            const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
-            const isOpen = panel.classList.contains('ms-open');
-            closeAllMs();
-            if (!isOpen) { panel.classList.add('ms-open'); btn.classList.add('ms-open'); }
-        }
-        function closeAllMs() {
-            document.querySelectorAll('.ms-panel.ms-open').forEach(p => p.classList.remove('ms-open'));
-            document.querySelectorAll('.ms-btn.ms-open').forEach(b => b.classList.remove('ms-open'));
-        }
-        document.addEventListener('click', function(e) {
-            if (!e.target.closest('.ms-wrap')) closeAllMs();
-        });
-        function updateMsLabel(pageId, field) {
-            const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
-            const countEl = document.getElementById('ms-count-' + pageId + '-' + field);
-            const textEl = document.querySelector('#ms-' + pageId + '-' + field + ' .ms-text');
-            if (!panel || !countEl || !textEl) return;
-            const checked = Array.from(panel.querySelectorAll('input[type="checkbox"]:checked'));
-            const n = checked.length;
-            if (n === 0) {
-                textEl.textContent = 'All';
-                countEl.textContent = ''; countEl.classList.remove('visible');
-            } else if (n === 1) {
-                textEl.textContent = checked[0].value;
-                countEl.textContent = ''; countEl.classList.remove('visible');
-            } else {
-                textEl.textContent = checked[0].value;
-                countEl.textContent = '+' + (n - 1); countEl.classList.add('visible');
-            }
-        }
-        function collectFilterParams(pageId) {
-            const pageInfo = PAGE_CHARTS[pageId];
-            if (!pageInfo) return '';
-            const params = new URLSearchParams();
-            for (const field of pageInfo.filter_fields) {
-                const sel = document.getElementById('filter-' + pageId + '-' + field);
-                if (sel) {
-                    if (sel.value) params.append(field, sel.value);
-                } else {
-                    const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
-                    if (panel) panel.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => params.append(field, cb.value));
-                }
-            }
-            return params.toString();
-        }
-        function applyDashboardFilter(pageId) {
-            const pageInfo = PAGE_CHARTS[pageId];
-            if (!pageInfo) return;
-            const params = collectFilterParams(pageId);
-            pageInfo.charts.forEach(chartId => {
-                const containerId = 'chart-' + pageId + '-' + chartId;
-                if (window['renderFn_' + chartId]) {
-                    loadChart(containerId, chartId, window['renderFn_' + chartId], params);
-                }
-            });
-            pageInfo.metrics.forEach(chartId => {
-                const containerId = 'chart-' + pageId + '-' + chartId;
-                if (window['renderFn_' + chartId]) {
-                    loadMetric(containerId, chartId, window['renderFn_' + chartId], params);
-                }
-            });
-        }
-        function resetFilters(pageId) {
-            const pageInfo = PAGE_CHARTS[pageId];
-            if (!pageInfo) return;
-            for (const field of pageInfo.filter_fields) {
-                const sel = document.getElementById('filter-' + pageId + '-' + field);
-                if (sel) { sel.value = ''; } else {
-                    const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
-                    if (panel) { panel.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false); updateMsLabel(pageId, field); }
-                }
-            }
-            applyDashboardFilter(pageId);
-        }
-        function loadFilterOptions(pageId) {
-            const pageInfo = PAGE_CHARTS[pageId];
-            if (!pageInfo) return;
-            for (const field of pageInfo.filter_fields) {
-                const isSel = !!document.getElementById('filter-' + pageId + '-' + field);
-                fetch('/api/filter/' + field)
-                    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-                    .then(values => {
-                        if (isSel) {
-                            const sel = document.getElementById('filter-' + pageId + '-' + field);
-                            if (!sel) return;
-                            values.forEach(v => {
-                                const opt = document.createElement('option');
-                                opt.value = v; opt.textContent = v; sel.appendChild(opt);
-                            });
-                        } else {
-                            const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
-                            if (!panel) return;
-                            panel.innerHTML = values.map(v =>
-                                `<label class="ms-option"><input type="checkbox" value="${v}" onchange="updateMsLabel('${pageId}','${field}');applyDashboardFilter('${pageId}')"> ${v}</label>`
-                            ).join('');
-                        }
-                    })
-                    .catch(err => console.warn('Could not load options for ' + field + ':', err));
-            }
-        }
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
 
-        // Store render functions on window so applyDashboardFilter can re-invoke them
-        window['renderFn_total_revenue_kpi'] = function(data) {
-            const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;
-            const el = document.getElementById('chart-categorical_charts-total_revenue_kpi');
-            if (el) el.textContent = formatMetric(value, ',.0f', '');
-        };
-        window['renderFn_total_orders_kpi'] = function(data) {
-            const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;
-            const el = document.getElementById('chart-categorical_charts-total_orders_kpi');
-            if (el) el.textContent = formatMetric(value, ',.0f', '');
-        };
-        window['renderFn_avg_order_value_kpi'] = function(data) {
-            const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;
-            const el = document.getElementById('chart-categorical_charts-avg_order_value_kpi');
-            if (el) el.textContent = formatMetric(value, ',.2f', '');
-        };
-        window['renderFn_bar_sales_by_country'] = function(data) {
-            
-            const plot = Plot.plot({
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['funding_amount']),
+                    d => d['funding_date']
+                ).map(([funding_date, funding_amount]) => ({ funding_date, funding_amount }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.funding_date) - new Date(b.funding_date));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.funding_date - b.funding_date);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].funding_date;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.funding_date - b.funding_date);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.funding_date - b.funding_date);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.funding_date).localeCompare(String(b.funding_date)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_line_funding_over_time = Plot.plot({
                 marks: [
-                    Plot.barY(data, {
-                        x: "x",
-                        y: "y",
+                    Plot.line(data_line_funding_over_time, {
+                        x: "funding_date",
+                        y: "funding_amount",
+                        stroke: "#bd93f9",
+                        strokeWidth: 2,
+                        sort: "funding_date",
+                        tip: true
+                    }),
+                    Plot.dot(data_line_funding_over_time, {
+                        x: "funding_date",
+                        y: "funding_amount",
+                        fill: "#bd93f9",
+                        r: 4
+                    }),
+                    Plot.ruleY([0])
+                ],
+                x: { type: "utc" },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-overview-line_funding_over_time').appendChild(plot_line_funding_over_time);
+            // Chart: area_deals_over_time
+            const data_area_deals_over_time = (() => {
+                const effectiveXType = getEffectiveType('funding_date', 'date');
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['funding_date']
+                ).map(([funding_date, funding_amount]) => ({ funding_date, funding_amount }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.funding_date) - new Date(b.funding_date));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.funding_date - b.funding_date);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].funding_date;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.funding_date - b.funding_date);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.funding_date - b.funding_date);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.funding_date).localeCompare(String(b.funding_date)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_area_deals_over_time = Plot.plot({
+                marks: [
+                    Plot.areaY(data_area_deals_over_time, {
+                        x: "funding_date",
+                        y: "funding_amount",
+                        fill: "#bd93f9",
+                        fillOpacity: 0.7,
+                        sort: "funding_date",
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                x: { type: "utc" },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-overview-area_deals_over_time').appendChild(plot_area_deals_over_time);
+            // D3 Pie Chart
+            const data_pie_by_stage = (() => {
+                const effectiveXType = getEffectiveType('stage', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['stage']
+                ).map(([stage, funding_amount]) => ({ stage, funding_amount }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.stage) - new Date(b.stage));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.stage - b.stage);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].stage;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.stage - b.stage);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.stage - b.stage);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.stage).localeCompare(String(b.stage)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const pieWidth = 400;
+            const pieHeight = 400;
+            const legendWidth = 150;
+            const totalWidth = pieWidth + legendWidth;
+            const radius = Math.min(pieWidth, pieHeight) / 2 - 10;
+
+            const pie = d3.pie().value(d => d.funding_amount);
+            const arc = d3.arc().innerRadius(0).outerRadius(radius);
+
+            // Use theme secondary colors for categorical data
+            const themeColors = ['#50fa7b', '#ffb86c', '#ff5555', '#8be9fd', '#f1fa8c'];
+            const color = d3.scaleOrdinal()
+                .domain(data_pie_by_stage.map(d => d.stage))
+                .range(themeColors);
+
+            const svg = d3.create("svg")
+                .attr("width", totalWidth)
+                .attr("height", pieHeight)
+                .attr("viewBox", [0, 0, totalWidth, pieHeight])
+                .attr("style", "max-width: 100%; height: auto;");
+
+            // Pie chart group (centered in left portion)
+            const pieGroup = svg.append("g")
+                .attr("transform", `translate(${pieWidth / 2}, ${pieHeight / 2})`);
+
+            pieGroup.selectAll("path")
+                .data(pie(data_pie_by_stage))
+                .join("path")
+                .attr("fill", d => color(d.data.stage))
+                .attr("d", arc)
+                .attr("stroke", "white")
+                .attr("stroke-width", 2)
+                .append("title")
+                .text(d => `${d.data.stage}: ${d.data.funding_amount}`);
+
+            // Legend (positioned on the right)
+            const legend = svg.append("g")
+                .attr("transform", `translate(${pieWidth + 10}, 20)`);
+
+            data_pie_by_stage.forEach((d, i) => {
+                const legendRow = legend.append("g")
+                    .attr("transform", `translate(0, ${i * 25})`);
+
+                legendRow.append("rect")
+                    .attr("width", 15)
+                    .attr("height", 15)
+                    .attr("fill", color(d.stage))
+                    .attr("rx", 2);
+
+                legendRow.append("text")
+                    .attr("x", 22)
+                    .attr("y", 12)
+                    .attr("fill", "#f8f8f2")
+                    .style("font-size", "13px")
+                    .text(d.stage);
+            });
+
+            document.getElementById('chart-overview-pie_by_stage').appendChild(svg.node());
+            // Chart: bar_funding_by_industry
+            const data_bar_funding_by_industry = (() => {
+                const effectiveXType = getEffectiveType('industry', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['funding_amount']),
+                    d => d['industry']
+                ).map(([industry, funding_amount]) => ({ industry, funding_amount }));
+
+                // Sort
+                result.sort((a, b) => 1 * (a.funding_amount - b.funding_amount));
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_bar_funding_by_industry = Plot.plot({
+                marks: [
+                    Plot.barY(data_bar_funding_by_industry, {
+                        x: "industry",
+                        y: "funding_amount",
                         fill: "#bd93f9",
                         sort: null,
                         tip: true
@@ -581,11 +634,9 @@
                     Plot.ruleY([0])
                 ],
                 x: {
-                    domain: data.map(d => d.x),
-                    tickRotate: -45,
-                    label: "shipping_address_country"
+                    domain: data_bar_funding_by_industry.map(d => d.industry),
+                    tickRotate: -45
                 },
-                y: { label: "total_amount" },
                 marginLeft: 60,
                 marginBottom: 100,
                 grid: true,
@@ -594,65 +645,103 @@
                     color: "#f8f8f2"
                 }
             });
-            document.getElementById('chart-categorical_charts-bar_sales_by_country').appendChild(plot);
-        };
-        window['renderFn_pie_orders_by_status'] = function(data) {
-            const pieWidth = 400;
-            const pieHeight = 400;
-            const legendWidth = 150;
-            const totalWidth = pieWidth + legendWidth;
-            const radius = Math.min(pieWidth, pieHeight) / 2 - 10;
-            const pie = d3.pie().value(d => d.y);
-            const arc = d3.arc().innerRadius(0).outerRadius(radius);
-            const themeColors = ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"];
-            const color = d3.scaleOrdinal()
-                .domain(data.map(d => d.x))
-                .range(themeColors);
-            const svg = d3.create("svg")
-                .attr("width", totalWidth)
-                .attr("height", pieHeight)
-                .attr("viewBox", [0, 0, totalWidth, pieHeight])
-                .attr("style", "max-width: 100%; height: auto;");
-            const pieGroup = svg.append("g")
-                .attr("transform", `translate(${pieWidth / 2}, ${pieHeight / 2})`);
-            pieGroup.selectAll("path")
-                .data(pie(data))
-                .join("path")
-                .attr("fill", d => color(d.data.x))
-                .attr("d", arc)
-                .attr("stroke", "white")
-                .attr("stroke-width", 2)
-                .append("title")
-                .text(d => `${d.data.x}: ${d.data.y}`);
-            const legend = svg.append("g")
-                .attr("transform", `translate(${pieWidth + 10}, 20)`);
-            data.forEach((d, i) => {
-                const legendRow = legend.append("g")
-                    .attr("transform", `translate(0, ${i * 25})`);
-                legendRow.append("rect")
-                    .attr("width", 15)
-                    .attr("height", 15)
-                    .attr("fill", color(d.x))
-                    .attr("rx", 2);
-                legendRow.append("text")
-                    .attr("x", 22)
-                    .attr("y", 12)
-                    .attr("fill", "#f8f8f2")
-                    .style("font-size", "13px")
-                    .text(d.x);
-            });
-            document.getElementById('chart-categorical_charts-pie_orders_by_status').appendChild(svg.node());
-        };
-        window['renderFn_grouped_bar_country_status'] = function(data) {
-            
-            const plot = Plot.plot({
+            document.getElementById('chart-by_industry-bar_funding_by_industry').appendChild(plot_bar_funding_by_industry);
+            // Chart: stacked_bar_industry_stage
+            const data_stacked_bar_industry_stage = (() => {
+                const effectiveXType = getEffectiveType('industry', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['funding_amount']),
+                    d => d['industry'],
+                    d => d['stage']
+                ).flatMap(([industryVal, groupData]) =>
+                    groupData.map(([stageVal, funding_amountVal]) => ({
+                        industry: industryVal,
+                        stage: stageVal,
+                        funding_amount: funding_amountVal
+                    }))
+                );
+
+                // Sort
+                result.sort((a, b) => 1 * (a.funding_amount - b.funding_amount));
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_stacked_bar_industry_stage = Plot.plot({
                 marks: [
-                    Plot.barY(data, {
-                        fx: "x",
-                        x: "grp",
-                        y: "y",
-                        fill: "grp",
-                        tip: true, sort: {x: "-y"}
+                    Plot.barY(data_stacked_bar_industry_stage, {
+                        x: "industry",
+                        y: "funding_amount",
+                        fill: "stage",
+                        tip: true
+                    }),
+                    Plot.ruleY([0])
+                ],
+                x: {
+                    domain: d3.groupSort(data_stacked_bar_industry_stage, g => d3.sum(g, d => d.funding_amount), d => d.industry)
+                },
+                color: {
+                    domain: [...new Set(data_stacked_bar_industry_stage.map(d => d.stage))],
+                    range: ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]
+                },
+                marginLeft: 60,
+                marginBottom: 100,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-by_industry-stacked_bar_industry_stage').appendChild(plot_stacked_bar_industry_stage);
+            // Chart: grouped_bar_industry_stage
+            const data_grouped_bar_industry_stage = (() => {
+                const effectiveXType = getEffectiveType('industry', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['industry'],
+                    d => d['stage']
+                ).flatMap(([industryVal, groupData]) =>
+                    groupData.map(([stageVal, funding_amountVal]) => ({
+                        industry: industryVal,
+                        stage: stageVal,
+                        funding_amount: funding_amountVal
+                    }))
+                );
+
+                // Sort
+                result.sort((a, b) => 1 * (a.funding_amount - b.funding_amount));
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_grouped_bar_industry_stage = Plot.plot({
+                marks: [
+                    Plot.barY(data_grouped_bar_industry_stage, {
+                        fx: "industry",
+                        x: "stage",
+                        y: "funding_amount",
+                        fill: "stage",
+                        tip: true, sort: {x: "y"}
                     }),
                     Plot.ruleY([0])
                 ],
@@ -661,14 +750,11 @@
                     axis: null
                 },
                 fx: {
-                    domain: d3.groupSort(data, g => -d3.sum(g, d => d.y), d => d.x),
-                    padding: 0.2,
-                    tickRotate: -45,
-                    label: "shipping_address_country"
+                    domain: d3.groupSort(data_grouped_bar_industry_stage, g => d3.sum(g, d => d.funding_amount), d => d.industry),
+                    padding: 0.2
                 },
-                y: { label: "order_id" },
                 color: {
-                    domain: [...new Set(data.map(d => d.grp))],
+                    domain: [...new Set(data_grouped_bar_industry_stage.map(d => d.stage))],
                     range: ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]
                 },
                 marginLeft: 60,
@@ -679,30 +765,186 @@
                     color: "#f8f8f2"
                 }
             });
-            document.getElementById('chart-categorical_charts-grouped_bar_country_status').appendChild(plot);
-        };
-        window['renderFn_stacked_bar_payment_status'] = function(data) {
-            
-            const plot = Plot.plot({
+            document.getElementById('chart-by_industry-grouped_bar_industry_stage').appendChild(plot_grouped_bar_industry_stage);
+            // Chart: heatmap_industry_country
+            const data_heatmap_industry_country = (() => {
+                const effectiveXType = getEffectiveType('industry', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['funding_amount']),
+                    d => d['industry'],
+                    d => d['country']
+                ).flatMap(([industryVal, groupData]) =>
+                    groupData.map(([countryVal, funding_amountVal]) => ({
+                        industry: industryVal,
+                        country: countryVal,
+                        funding_amount: funding_amountVal
+                    }))
+                );
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.industry) - new Date(b.industry));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.industry - b.industry);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].industry;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.industry - b.industry);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.industry - b.industry);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.industry).localeCompare(String(b.industry)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_heatmap_industry_country = Plot.plot({
                 marks: [
-                    Plot.barY(data, {
-                        x: "x",
-                        y: "y",
-                        fill: "grp",
+                    Plot.cell(data_heatmap_industry_country, {
+                        x: "industry",
+                        y: "country",
+                        fill: "funding_amount",
+                        tip: true
+                    })
+                ],
+                color: {
+                    type: "linear",
+                    scheme: "purples",
+                    legend: true,
+                    label: "funding_amount"
+                },
+                marginLeft: 60,
+                marginBottom: 100,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-by_industry-heatmap_industry_country').appendChild(plot_heatmap_industry_country);
+            // Chart: geo_funding_by_country
+            const data_geo_funding_by_country = (() => {
+                const effectiveXType = getEffectiveType('country', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['funding_amount']),
+                    d => d['country']
+                ).map(([country, funding_amount]) => ({ country, funding_amount }));
+
+                // Sort
+                
+                if (effectiveXType === 'date') {
+                    result.sort((a, b) => new Date(a.country) - new Date(b.country));
+                } else if (effectiveXType === 'number') {
+                    result.sort((a, b) => a.country - b.country);
+                } else if (result.length > 0) {
+                    const firstVal = result[0].country;
+                    if (firstVal instanceof Date) {
+                        result.sort((a, b) => a.country - b.country);
+                    } else if (typeof firstVal === 'number') {
+                        result.sort((a, b) => a.country - b.country);
+                    } else {
+                        // Sort strings alphabetically for consistency across transformers
+                        result.sort((a, b) => String(a.country).localeCompare(String(b.country)));
+                    }
+                }
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_geo_funding_by_country = Plot.plot({
+                marks: (() => {
+                    const enc = "name" || detectGeoEncoding(data_geo_funding_by_country.map(d => d.country));
+                    const geoLookup = new Map(data_geo_funding_by_country.map(d => [normalizeCountryToTopo(d.country, enc).toLowerCase(), d.funding_amount]));
+                    return [Plot.geo(window.worldTopojson, {
+                        fill: d => {
+                            const topoName = d.properties ? d.properties.name : null;
+                            if (!topoName) return null;
+                            return geoLookup.get(topoName.toLowerCase()) ?? null;
+                        },
+                        stroke: "#ccc",
+                        strokeWidth: 0.5,
+                        tip: true
+                    })];
+                })(),
+                projection: "equal-earth",
+                color: {
+                    type: "linear",
+                    scheme: "purples",
+                    unknown: "#f0f0f0",
+                    legend: true,
+                    label: "funding_amount"
+                },
+                marginLeft: 60,
+                marginBottom: 40,
+                grid: true,
+                style: {
+                    background: "transparent",
+                    color: "#f8f8f2"
+                }
+            });
+            document.getElementById('chart-geography-geo_funding_by_country').appendChild(plot_geo_funding_by_country);
+            // Chart: bar_top_countries
+            const data_bar_top_countries = (() => {
+                const effectiveXType = getEffectiveType('country', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => d3.sum(v, d => d['funding_amount']),
+                    d => d['country']
+                ).map(([country, funding_amount]) => ({ country, funding_amount }));
+
+                // Sort
+                result.sort((a, b) => 1 * (a.funding_amount - b.funding_amount));
+
+                // Limit
+                result = result.slice(0, 10);
+
+                return result;
+            })();
+            const plot_bar_top_countries = Plot.plot({
+                marks: [
+                    Plot.barY(data_bar_top_countries, {
+                        x: "country",
+                        y: "funding_amount",
+                        fill: "#bd93f9",
                         sort: null,
                         tip: true
                     }),
                     Plot.ruleY([0])
                 ],
                 x: {
-                    domain: [...new Set(data.map(d => d.x))],
-                    tickRotate: -45,
-                    label: "payment_method"
-                },
-                y: { label: "order_id" },
-                color: {
-                    domain: [...new Set(data.map(d => d.grp))],
-                    range: ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]
+                    domain: data_bar_top_countries.map(d => d.country),
+                    tickRotate: -45
                 },
                 marginLeft: 60,
                 marginBottom: 100,
@@ -712,64 +954,46 @@
                     color: "#f8f8f2"
                 }
             });
-            document.getElementById('chart-categorical_charts-stacked_bar_payment_status').appendChild(plot);
-        };
-        window['renderFn_geo_sales_by_country'] = function(data) {
-            const enc = null || detectGeoEncoding(data.map(d => d.x));
-            const geoLookup = new Map(data.map(d => [normalizeCountryToTopo(d.x, enc).toLowerCase(), d.y]));
-            const plot = Plot.plot({
-                width: 928,
+            document.getElementById('chart-geography-bar_top_countries').appendChild(plot_bar_top_countries);
+            // Chart: bar_top_cities
+            const data_bar_top_cities = (() => {
+                const effectiveXType = getEffectiveType('city', undefined);
+
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                // Cast y values if y_type specified
+                
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => v.length,
+                    d => d['city']
+                ).map(([city, funding_amount]) => ({ city, funding_amount }));
+
+                // Sort
+                result.sort((a, b) => 1 * (a.funding_amount - b.funding_amount));
+
+                // Limit
+                result = result.slice(0, 10);
+
+                return result;
+            })();
+            const plot_bar_top_cities = Plot.plot({
                 marks: [
-                    Plot.sphere({fill: "#1a1a2e", stroke: "#555570"}),
-                    Plot.graticule({stroke: "#55557040", strokeWidth: 0.5}),
-                    Plot.geo(window.worldTopojson, {
-                        fill: d => {
-                            const topoName = d.properties ? d.properties.name : null;
-                            if (!topoName) return null;
-                            return geoLookup.get(topoName.toLowerCase()) ?? null;
-                        },
-                        stroke: "#555570",
-                        strokeWidth: 0.5,
+                    Plot.barY(data_bar_top_cities, {
+                        x: "city",
+                        y: "funding_amount",
+                        fill: "#bd93f9",
+                        sort: null,
                         tip: true
-                    })
+                    }),
+                    Plot.ruleY([0])
                 ],
-                projection: "equal-earth",
-                color: {
-                    type: "linear",
-                    scheme: "purples",
-                    unknown: "#2a2a3e",
-                    legend: true,
-                    label: "total_amount"
+                x: {
+                    domain: data_bar_top_cities.map(d => d.city),
+                    tickRotate: -45
                 },
-                margin: 2,
-                style: {
-                    background: "transparent",
-                    color: "#f8f8f2"
-                }
-            });
-            document.getElementById('chart-categorical_charts-geo_sales_by_country').appendChild(plot);
-        };
-        window['renderFn_line_orders_over_time'] = function(data) {
-            data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));
-            const plot = Plot.plot({
-                marks: [
-                    Plot.line(data, {
-                        x: "x",
-                        y: "y",
-                        stroke: "#bd93f9",
-                        strokeWidth: 2,
-                        tip: true
-                    }),
-                    Plot.dot(data, {
-                        x: "x",
-                        y: "y",
-                        fill: "#bd93f9",
-                        r: 4
-                    }),
-                    Plot.ruleY([0])
-                ],
-                x: { type: "utc", tickRotate: -45, label: "order_date" },
-                y: { label: "order_id" },
                 marginLeft: 60,
                 marginBottom: 100,
                 grid: true,
@@ -778,49 +1002,20 @@
                     color: "#f8f8f2"
                 }
             });
-            document.getElementById('chart-time_series-line_orders_over_time').appendChild(plot);
-        };
-        window['renderFn_area_revenue_over_time'] = function(data) {
-            data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));
-            const plot = Plot.plot({
+            document.getElementById('chart-geography-bar_top_cities').appendChild(plot_bar_top_cities);
+            // Chart: scatter_funding_vs_valuation
+            const data_scatter_funding_vs_valuation = dashmlData;
+            const plot_scatter_funding_vs_valuation = Plot.plot({
                 marks: [
-                    Plot.areaY(data, {
-                        x: "x",
-                        y: "y",
+                    Plot.dot(data_scatter_funding_vs_valuation, {
+                        x: "funding_amount",
+                        y: "valuation",
                         fill: "#bd93f9",
-                        fillOpacity: 0.7,
+                        r: 5,
                         tip: true
                     }),
                     Plot.ruleY([0])
                 ],
-                x: { type: "utc", tickRotate: -45, label: "order_date" },
-                y: { label: "total_amount" },
-                marginLeft: 60,
-                marginBottom: 100,
-                grid: true,
-                style: {
-                    background: "transparent",
-                    color: "#f8f8f2"
-                }
-            });
-            document.getElementById('chart-time_series-area_revenue_over_time').appendChild(plot);
-        };
-        window['renderFn_scatter_amount_vs_tax'] = function(data) {
-            data = data.filter(d => d.x != null && d.y != null);
-            const plot = Plot.plot({
-                marks: [
-                    Plot.dot(data, {
-                        x: "x",
-                        y: "y",
-                        fill: "#bd93f9",
-                        r: 3,
-                        opacity: 0.3,
-                        tip: true
-                    }),
-                    Plot.ruleY([0])
-                ],
-                x: { label: "total_amount" },
-                y: { label: "tax_amount" },
                 marginLeft: 60,
                 marginBottom: 40,
                 grid: true,
@@ -829,20 +1024,18 @@
                     color: "#f8f8f2"
                 }
             });
-            document.getElementById('chart-distribution-scatter_amount_vs_tax').appendChild(plot);
-        };
-        window['renderFn_histogram_order_amounts'] = function(data) {
-            data = data.filter(d => d.x != null).map(d => ({...d, x: +d.x}));
-            const plot = Plot.plot({
+            document.getElementById('chart-deep_dive-scatter_funding_vs_valuation').appendChild(plot_scatter_funding_vs_valuation);
+            // Chart: histogram_funding
+            const data_histogram_funding = dashmlData;
+            const plot_histogram_funding = Plot.plot({
                 marks: [
-                    Plot.rectY(data, Plot.binX({y: "count", thresholds: 20}, {
-                        x: "x",
+                    Plot.rectY(data_histogram_funding, Plot.binX({y: "count", thresholds: 30}, {
+                        x: "funding_amount",
                         fill: "#bd93f9",
                         tip: true
                     })),
                     Plot.ruleY([0])
                 ],
-                x: { label: "total_amount" },
                 marginLeft: 60,
                 marginBottom: 40,
                 grid: true,
@@ -851,59 +1044,70 @@
                     color: "#f8f8f2"
                 }
             });
-            document.getElementById('chart-distribution-histogram_order_amounts').appendChild(plot);
-        };
-        window['renderFn_box_amount_by_status'] = function(data) {
-            data = data.filter(d => d.x != null && d.y != null);
-            const plot = Plot.plot({
+            document.getElementById('chart-deep_dive-histogram_funding').appendChild(plot_histogram_funding);
+            // Chart: box_funding_by_stage
+            const data_box_funding_by_stage = dashmlData;
+            const plot_box_funding_by_stage = Plot.plot({
                 marks: [
-                    Plot.boxY(data, {
-                        x: "x",
-                        y: "y",
+                    Plot.boxY(data_box_funding_by_stage, {
+                        x: "stage",
+                        y: "funding_amount",
                         fill: "#bd93f9",
                         tip: true
                     }),
                     Plot.ruleY([0])
                 ],
-                x: { tickRotate: -45, label: "status" },
-                y: { label: "total_amount" },
                 marginLeft: 60,
-                marginBottom: 100,
+                marginBottom: 40,
                 grid: true,
                 style: {
                     background: "transparent",
                     color: "#f8f8f2"
                 }
             });
-            document.getElementById('chart-distribution-box_amount_by_status').appendChild(plot);
-        };
-        window['renderFn_bubble_region_sales'] = function(data) {
-            
-            const plot = Plot.plot({
+            document.getElementById('chart-deep_dive-box_funding_by_stage').appendChild(plot_box_funding_by_stage);
+            // Chart: bubble_industry
+            const data_bubble_industry = (() => {
+                // Filter data
+                let filteredData = dashmlData.filter(d => true);
+
+                let result = d3.rollups(
+                    filteredData,
+                    v => ({ funding_amount: d3.mean(v, d => d['funding_amount']), valuation: d3.mean(v, d => d['valuation']), employees: d3.mean(v, d => d['employees']) }),
+                    d => d['industry']
+                ).map(([industry, vals]) => ({ industry, funding_amount: vals.funding_amount, valuation: vals.valuation, employees: vals.employees }));
+
+                // Sort
+                result.sort((a, b) => 1 * (a.funding_amount - b.funding_amount));
+
+                // Limit
+                
+
+                return result;
+            })();
+            const plot_bubble_industry = Plot.plot({
                 marks: [
-                    Plot.dot(data, {
-                        x: "x",
-                        y: "y",
-                        fill: "grp",
+                    Plot.dot(data_bubble_industry, {
+                        x: "funding_amount",
+                        y: "valuation",
+                        fill: "industry",
                         r: d => {
-                            const maxVal = d3.max(data, dd => Math.abs(dd.size));
-                            return 5 + (Math.abs(d.size) / maxVal) * 25;
+                            const maxVal = d3.max(data_bubble_industry, d => Math.abs(d["employees"]));
+                            return 5 + (Math.abs(d["employees"]) / maxVal) * 25;
                         },
                         tip: true
                     }),
-                    Plot.text(data, {
-                        x: "x",
-                        y: "y",
-                        text: "grp",
+                    Plot.text(data_bubble_industry, {
+                        x: "funding_amount",
+                        y: "valuation",
+                        text: "industry",
                         dy: -12,
                         fontSize: 10
                     }),
                     Plot.ruleY([0])
                 ],
-                x: { label: "total_amount" },
-                y: { label: "tax_amount" },
                 color: {
-                    domain: [...new Set(data.map(d => d.grp))],
+                    domain: [...new Set(data_bubble_industry.map(d => d.industry))],
                     range: ["#50fa7b", "#ffb86c", "#ff5555", "#8be9fd", "#f1fa8c"]
                 },
                 marginLeft: 60,
@@ -914,63 +1118,8 @@
                     color: "#f8f8f2"
                 }
             });
-            document.getElementById('chart-distribution-bubble_region_sales').appendChild(plot);
-        };
-        window['renderFn_heatmap_country_status'] = function(data) {
-            data = data.filter(d => d.x != null && d.heatmap_y != null);
-            const plot = Plot.plot({
-                marks: [
-                    Plot.cell(data, {
-                        x: "x",
-                        y: "heatmap_y",
-                        fill: "y",
-                        tip: true
-                    })
-                ],
-                height: Math.max(400, [...new Set(data.map(d => d.heatmap_y))].length * 20),
-                x: {
-                    tickRotate: -45,
-                    label: "shipping_address_country"
-                },
-                y: { label: "status" },
-                color: {
-                    type: "linear",
-                    scheme: "purples",
-                    legend: true,
-                    label: "order_id"
-                },
-                marginLeft: 200,
-                marginBottom: 100,
-                grid: true,
-                style: {
-                    background: "transparent",
-                    color: "#f8f8f2"
-                }
-            });
-            document.getElementById('chart-distribution-heatmap_country_status').appendChild(plot);
-        };
-
-        // Initialize filter dropdowns
-        Object.keys(PAGE_CHARTS).forEach(pageId => loadFilterOptions(pageId));
-
-        // Load all charts independently
-        Promise.allSettled([
-        loadMetric('chart-categorical_charts-total_revenue_kpi', 'total_revenue_kpi', window['renderFn_total_revenue_kpi']),
-        loadMetric('chart-categorical_charts-total_orders_kpi', 'total_orders_kpi', window['renderFn_total_orders_kpi']),
-        loadMetric('chart-categorical_charts-avg_order_value_kpi', 'avg_order_value_kpi', window['renderFn_avg_order_value_kpi']),
-        loadChart('chart-categorical_charts-bar_sales_by_country', 'bar_sales_by_country', window['renderFn_bar_sales_by_country']),
-        loadChart('chart-categorical_charts-pie_orders_by_status', 'pie_orders_by_status', window['renderFn_pie_orders_by_status']),
-        loadChart('chart-categorical_charts-grouped_bar_country_status', 'grouped_bar_country_status', window['renderFn_grouped_bar_country_status']),
-        loadChart('chart-categorical_charts-stacked_bar_payment_status', 'stacked_bar_payment_status', window['renderFn_stacked_bar_payment_status']),
-        loadChart('chart-categorical_charts-geo_sales_by_country', 'geo_sales_by_country', window['renderFn_geo_sales_by_country']),
-        loadChart('chart-time_series-line_orders_over_time', 'line_orders_over_time', window['renderFn_line_orders_over_time']),
-        loadChart('chart-time_series-area_revenue_over_time', 'area_revenue_over_time', window['renderFn_area_revenue_over_time']),
-        loadChart('chart-distribution-scatter_amount_vs_tax', 'scatter_amount_vs_tax', window['renderFn_scatter_amount_vs_tax']),
-        loadChart('chart-distribution-histogram_order_amounts', 'histogram_order_amounts', window['renderFn_histogram_order_amounts']),
-        loadChart('chart-distribution-box_amount_by_status', 'box_amount_by_status', window['renderFn_box_amount_by_status']),
-        loadChart('chart-distribution-bubble_region_sales', 'bubble_region_sales', window['renderFn_bubble_region_sales']),
-        loadChart('chart-distribution-heatmap_country_status', 'heatmap_country_status', window['renderFn_heatmap_country_status'])
-        ]);
+            document.getElementById('chart-deep_dive-bubble_industry').appendChild(plot_bubble_industry);
+        }
     </script>
 </body>
 </html>

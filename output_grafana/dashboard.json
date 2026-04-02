@@ -48,6 +48,7 @@
     {
       "id": 2,
       "type": "stat",
+      "pluginVersion": "12.4.0",
       "title": "Total Funding ($M)",
       "gridPos": {
         "h": 4,
@@ -68,7 +69,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -142,6 +143,7 @@
     {
       "id": 3,
       "type": "stat",
+      "pluginVersion": "12.4.0",
       "title": "Total Deals",
       "gridPos": {
         "h": 4,
@@ -162,7 +164,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -236,6 +238,7 @@
     {
       "id": 4,
       "type": "stat",
+      "pluginVersion": "12.4.0",
       "title": "Avg Valuation ($M)",
       "gridPos": {
         "h": 4,
@@ -256,7 +259,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -330,6 +333,7 @@
     {
       "id": 5,
       "type": "timeseries",
+      "pluginVersion": "12.4.0",
       "title": "Funding Over Time",
       "gridPos": {
         "h": 8,
@@ -350,7 +354,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -426,11 +430,39 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "funding_date": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "funding_amount": {
+                "aggregations": [
+                  "sum"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "funding_amount (sum)": "funding_amount"
+            }
+          }
+        }
+      ]
     },
     {
       "id": 6,
       "type": "timeseries",
+      "pluginVersion": "12.4.0",
       "title": "Deal Count Over Time",
       "gridPos": {
         "h": 8,
@@ -451,7 +483,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -527,11 +559,27 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "funding_date": {
+                "aggregations": [
+                  "count"
+                ],
+                "operation": "groupby"
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "id": 7,
       "type": "piechart",
+      "pluginVersion": "12.4.0",
       "title": "Deals by Funding Stage",
       "gridPos": {
         "h": 8,
@@ -552,7 +600,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -606,78 +654,7 @@
             "mode": "palette-classic"
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#50fa7b"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#ffb86c"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#ff5555"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#8be9fd"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#f1fa8c"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "pieType": "pie",
@@ -699,7 +676,22 @@
           ]
         },
         "displayLabels": []
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "stage": {
+                "aggregations": [
+                  "count"
+                ],
+                "operation": "groupby"
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "id": 8,
@@ -717,6 +709,7 @@
     {
       "id": 9,
       "type": "barchart",
+      "pluginVersion": "12.4.0",
       "title": "Total Funding by Industry",
       "gridPos": {
         "h": 8,
@@ -737,7 +730,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -800,7 +793,7 @@
         "overrides": []
       },
       "options": {
-        "orientation": "horizontal",
+        "orientation": "auto",
         "xTickLabelRotation": 0,
         "showValue": "auto",
         "stacking": "none",
@@ -814,11 +807,51 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "industry": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "funding_amount": {
+                "aggregations": [
+                  "sum"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "funding_amount (sum)": "funding_amount"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "funding_amount",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "id": 10,
       "type": "barchart",
+      "pluginVersion": "12.4.0",
       "title": "Industry Funding by Stage",
       "gridPos": {
         "h": 8,
@@ -839,7 +872,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -903,78 +936,7 @@
             "mode": "palette-classic"
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#50fa7b"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#ffb86c"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#ff5555"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#8be9fd"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#f1fa8c"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "orientation": "auto",
@@ -991,11 +953,83 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "industry": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "stage": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "funding_amount": {
+                "aggregations": [
+                  "sum"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "funding_amount (sum)": "funding_amount"
+            }
+          }
+        },
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "stage",
+            "rowField": "industry",
+            "valueField": "funding_amount"
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "reduceRow",
+            "reduce": {
+              "reducer": "sum",
+              "include": []
+            },
+            "alias": "_total",
+            "replaceFields": false
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "_total",
+                "desc": false
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "_total": true
+            }
+          }
+        }
+      ]
     },
     {
       "id": 11,
       "type": "barchart",
+      "pluginVersion": "12.4.0",
       "title": "Industry Deal Count by Stage",
       "gridPos": {
         "h": 8,
@@ -1016,7 +1050,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1080,78 +1114,7 @@
             "mode": "palette-classic"
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#50fa7b"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#ffb86c"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#ff5555"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#8be9fd"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#f1fa8c"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "orientation": "auto",
@@ -1168,11 +1131,71 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "industry": {
+                "aggregations": [
+                  "count"
+                ],
+                "operation": "groupby"
+              },
+              "stage": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            }
+          }
+        },
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "stage",
+            "rowField": "industry",
+            "valueField": "industry (count)"
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "reduceRow",
+            "reduce": {
+              "reducer": "sum",
+              "include": []
+            },
+            "alias": "_total",
+            "replaceFields": false
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "_total",
+                "desc": false
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "_total": true
+            }
+          }
+        }
+      ]
     },
     {
       "id": 12,
-      "type": "heatmap",
+      "type": "table",
+      "pluginVersion": "12.4.0",
       "title": "Funding Heatmap: Industry vs Country",
       "gridPos": {
         "h": 8,
@@ -1193,7 +1216,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1247,114 +1270,98 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "custom": {},
+          "custom": {
+            "cellOptions": {
+              "type": "color-background",
+              "mode": "gradient"
+            },
+            "inspect": false,
+            "align": "center"
+          },
           "color": {
-            "mode": "palette-classic"
+            "mode": "continuous-purples"
+          },
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "purples",
+                "value": 0
+              }
+            ]
           }
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byFrameRefID"
+              "id": "byName",
+              "options": "industry"
             },
             "properties": [
               {
-                "id": "color",
+                "id": "custom.cellOptions",
                 "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#50fa7b"
+                  "type": "auto"
                 }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
+              },
               {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#ffb86c"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#ff5555"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#8be9fd"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#f1fa8c"
-                }
+                "id": "custom.width",
+                "value": 150
               }
             ]
           }
         ]
       },
       "options": {
-        "calculate": true,
-        "calculation": {
-          "xBuckets": {
-            "mode": "count"
-          },
-          "yBuckets": {
-            "mode": "count"
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "industry": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "country": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "funding_amount": {
+                "aggregations": [
+                  "sum"
+                ],
+                "operation": "aggregate"
+              }
+            }
           }
         },
-        "color": {
-          "mode": "scheme",
-          "scheme": "interpolatePurples",
-          "steps": 64
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "funding_amount (sum)": "funding_amount"
+            }
+          }
         },
-        "cellGap": 1,
-        "filterValues": {
-          "le": 1e-09
-        },
-        "tooltip": {
-          "show": true,
-          "yHistogram": false
-        },
-        "legend": {
-          "show": true
-        },
-        "yAxis": {
-          "axisPlacement": "left"
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "country",
+            "rowField": "industry",
+            "valueField": "funding_amount"
+          }
         }
-      }
+      ]
     },
     {
       "id": 13,
@@ -1372,6 +1379,7 @@
     {
       "id": 14,
       "type": "geomap",
+      "pluginVersion": "12.4.0",
       "title": "Total Funding by Country",
       "gridPos": {
         "h": 8,
@@ -1392,7 +1400,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1443,8 +1451,20 @@
         "defaults": {
           "custom": {},
           "color": {
-            "mode": "fixed",
-            "fixedColor": "#bd93f9"
+            "mode": "continuous-purples"
+          },
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "purples",
+                "value": 0
+              }
+            ]
           }
         },
         "overrides": []
@@ -1463,23 +1483,29 @@
         "layers": [
           {
             "type": "markers",
-            "name": "Markers",
+            "name": "Data",
             "config": {
               "showLegend": true,
               "style": {
                 "size": {
-                  "fixed": 5,
-                  "min": 2,
-                  "max": 15
+                  "field": "funding_amount",
+                  "min": 3,
+                  "max": 20
                 },
                 "color": {
-                  "fixed": "dark-green"
+                  "field": "funding_amount"
                 },
-                "opacity": 0.6
+                "opacity": 0.7,
+                "symbol": {
+                  "fixed": "img/icons/marker/circle.svg",
+                  "mode": "fixed"
+                }
               }
             },
             "location": {
-              "mode": "auto"
+              "mode": "lookup",
+              "lookup": "country",
+              "gazetteer": "public/gazetteer/countries.json"
             }
           }
         ],
@@ -1491,11 +1517,39 @@
         "tooltip": {
           "mode": "details"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "country": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "funding_amount": {
+                "aggregations": [
+                  "sum"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "funding_amount (sum)": "funding_amount"
+            }
+          }
+        }
+      ]
     },
     {
       "id": 15,
       "type": "barchart",
+      "pluginVersion": "12.4.0",
       "title": "Top 10 Countries by Funding",
       "gridPos": {
         "h": 8,
@@ -1516,7 +1570,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1579,7 +1633,7 @@
         "overrides": []
       },
       "options": {
-        "orientation": "horizontal",
+        "orientation": "auto",
         "xTickLabelRotation": 0,
         "showValue": "auto",
         "stacking": "none",
@@ -1593,11 +1647,57 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "country": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "funding_amount": {
+                "aggregations": [
+                  "sum"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "funding_amount (sum)": "funding_amount"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "funding_amount",
+                "desc": false
+              }
+            ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "maxRows": 10
+          }
+        }
+      ]
     },
     {
       "id": 16,
       "type": "barchart",
+      "pluginVersion": "12.4.0",
       "title": "Top 10 Cities by Deal Count",
       "gridPos": {
         "h": 8,
@@ -1618,7 +1718,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1681,7 +1781,7 @@
         "overrides": []
       },
       "options": {
-        "orientation": "horizontal",
+        "orientation": "auto",
         "xTickLabelRotation": 0,
         "showValue": "auto",
         "stacking": "none",
@@ -1695,7 +1795,40 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "city": {
+                "aggregations": [
+                  "count"
+                ],
+                "operation": "groupby"
+              }
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "funding_amount",
+                "desc": false
+              }
+            ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "maxRows": 10
+          }
+        }
+      ]
     },
     {
       "id": 17,
@@ -1713,6 +1846,7 @@
     {
       "id": 18,
       "type": "xychart",
+      "pluginVersion": "12.4.0",
       "title": "Funding Amount vs Valuation",
       "gridPos": {
         "h": 8,
@@ -1733,7 +1867,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1749,7 +1883,7 @@
             {
               "selector": "funding_amount",
               "text": "funding_amount",
-              "type": "string"
+              "type": "number"
             },
             {
               "selector": "valuation",
@@ -1782,7 +1916,15 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "custom": {},
+          "custom": {
+            "show": "points",
+            "pointSize": {
+              "fixed": 5
+            },
+            "fillOpacity": 50,
+            "axisPlacement": "auto",
+            "axisBorderShow": false
+          },
           "color": {
             "mode": "fixed",
             "fixedColor": "#bd93f9"
@@ -1791,38 +1933,45 @@
         "overrides": []
       },
       "options": {
-        "seriesMapping": "manual",
-        "dims": {
-          "x": "funding_amount"
-        },
+        "mapping": "manual",
         "series": [
           {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
             "x": {
-              "field": "funding_amount"
+              "matcher": {
+                "id": "byName",
+                "options": "funding_amount"
+              }
             },
             "y": {
-              "field": "valuation"
-            },
-            "pointSize": {
-              "fixed": 5
-            },
-            "pointColor": {
-              "fixed": "dark-green"
+              "matcher": {
+                "id": "byName",
+                "options": "valuation"
+              }
             }
           }
         ],
         "tooltip": {
-          "mode": "single"
+          "mode": "single",
+          "sort": "none"
         },
         "legend": {
+          "showLegend": true,
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "calcs": []
         }
       }
     },
     {
       "id": 19,
       "type": "histogram",
+      "pluginVersion": "12.4.0",
       "title": "Distribution of Funding Amounts",
       "gridPos": {
         "h": 8,
@@ -1843,7 +1992,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1859,7 +2008,7 @@
             {
               "selector": "funding_amount",
               "text": "funding_amount",
-              "type": "string"
+              "type": "number"
             },
             {
               "selector": "funding_amount",
@@ -1918,6 +2067,7 @@
     {
       "id": 20,
       "type": "text",
+      "pluginVersion": "12.4.0",
       "title": "Funding Distribution by Stage",
       "gridPos": {
         "h": 8,
@@ -1944,6 +2094,7 @@
     {
       "id": 21,
       "type": "xychart",
+      "pluginVersion": "12.4.0",
       "title": "Industries: Funding vs Valuation (sized by Employees)",
       "gridPos": {
         "h": 8,
@@ -1964,7 +2115,7 @@
           },
           "type": "csv",
           "source": "url",
-          "url": "http://host.docker.internal:8888/startup_funding.csv",
+          "url": "http://host.docker.internal:8887/startup_funding.csv",
           "url_options": {
             "method": "GET",
             "params": [],
@@ -1980,7 +2131,7 @@
             {
               "selector": "funding_amount",
               "text": "funding_amount",
-              "type": "string"
+              "type": "number"
             },
             {
               "selector": "valuation",
@@ -2023,43 +2174,101 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "custom": {},
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "#bd93f9"
+          "custom": {
+            "show": "points",
+            "pointSize": {
+              "min": 3,
+              "max": 30
+            },
+            "fillOpacity": 50,
+            "axisPlacement": "auto",
+            "axisBorderShow": false
           }
         },
         "overrides": []
       },
       "options": {
-        "seriesMapping": "manual",
-        "dims": {
-          "x": "funding_amount"
-        },
+        "mapping": "manual",
         "series": [
           {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
             "x": {
-              "field": "funding_amount"
+              "matcher": {
+                "id": "byName",
+                "options": "funding_amount"
+              }
             },
             "y": {
-              "field": "valuation"
+              "matcher": {
+                "id": "byName",
+                "options": "valuation"
+              }
             },
-            "pointSize": {
-              "fixed": 5
-            },
-            "pointColor": {
-              "fixed": "dark-green"
+            "size": {
+              "matcher": {
+                "id": "byName",
+                "options": "employees"
+              }
             }
           }
         ],
         "tooltip": {
-          "mode": "single"
+          "mode": "single",
+          "sort": "none"
         },
         "legend": {
+          "showLegend": true,
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "calcs": []
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "industry": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "funding_amount": {
+                "aggregations": [
+                  "mean"
+                ],
+                "operation": "aggregate"
+              },
+              "valuation": {
+                "aggregations": [
+                  "mean"
+                ],
+                "operation": "aggregate"
+              },
+              "employees": {
+                "aggregations": [
+                  "mean"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "funding_amount (mean)": "funding_amount",
+              "valuation (mean)": "valuation",
+              "employees (mean)": "employees"
+            }
+          }
+        }
+      ]
     }
   ],
   "schemaVersion": 39,

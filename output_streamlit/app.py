@@ -169,7 +169,7 @@ def main():
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_line(color="#bd93f9", point=True).encode(
             x=alt.X("funding_date" + x_encoding_suffix, sort=None, title="Funding Date"),
-            y=alt.Y("funding_amount", title="Funding Amount"),
+            y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["funding_date", "funding_amount"]
         )
         st.altair_chart(c, use_container_width=True)
@@ -195,7 +195,7 @@ def main():
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_area(color="#bd93f9", opacity=0.7).encode(
             x=alt.X("funding_date" + x_encoding_suffix, sort=None, title="Funding Date"),
-            y=alt.Y("funding_amount", title="Funding Amount"),
+            y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["funding_date", "funding_amount"]
         )
         st.altair_chart(c, use_container_width=True)
@@ -249,7 +249,7 @@ def main():
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_bar(color="#bd93f9").encode(
             x=alt.X("industry" + x_encoding_suffix, sort="y", title="Industry"),
-            y=alt.Y("funding_amount", title="Funding Amount"),
+            y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["industry", "funding_amount"]
         )
         st.altair_chart(c, use_container_width=True)
@@ -423,7 +423,7 @@ def main():
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_bar(color="#bd93f9").encode(
             x=alt.X("country" + x_encoding_suffix, sort="y", title="Country"),
-            y=alt.Y("funding_amount", title="Funding Amount"),
+            y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["country", "funding_amount"]
         )
         st.altair_chart(c, use_container_width=True)
@@ -443,7 +443,7 @@ def main():
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_bar(color="#bd93f9").encode(
             x=alt.X("city" + x_encoding_suffix, sort="y", title="City"),
-            y=alt.Y("funding_amount", title="Funding Amount"),
+            y=alt.Y("funding_amount:Q", title="Funding Amount"),
             tooltip=["city", "funding_amount"]
         )
         st.altair_chart(c, use_container_width=True)

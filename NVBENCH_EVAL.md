@@ -206,6 +206,50 @@ Tune the LLM prompt, experiment with step-wise reasoning, try different models.
 | Qwen2.5-7B (SFT) | Step-wise | 75.08 | 59.85 |
 | **Step-NL2VIS** | **Step-DPO** | **81.50** | **64.46** |
 
+## Methodology: What Counts as Fair
+
+The benchmark comparison (NL → DashML → VL vs NL → VL directly) is valid only if the transformer is not tuned against specific test cases. The rule:
+
+### Data Split
+
+Use a held-out evaluation setup to keep development and testing cleanly separated:
+
+| Split | Source | Size | Purpose |
+|-------|--------|------|---------|
+| **Dev set** | Random 10% of nvBench test split | ~80 entries | Find expressiveness gaps, tune format alignment, debug the pipeline |
+| **Eval set** | Remaining 90% of nvBench test split | ~711 entries | Final scores — never seen during development |
+
+> "We randomly sampled 10% of the test split (80 entries) as a development set to identify expressiveness gaps in the DashML schema and validate transformer output format alignment. The remaining 711 entries were held out for final evaluation. No changes to the DSL or transformer were made after development concluded."
+
+### Development vs Evaluation
+
+| Phase | What you do | Example |
+|-------|------------|---------|
+| **Development** | Build the transformer, fix bugs, align output format using **dev set only** | `pie` → `arc`, filters → nvBench object format, `--bare` stripping |
+| **Freeze** | Stop changing `vegalite.py` and the DashML schema | Draw the line here |
+| **Evaluation** | Run both experiments on **eval set only**, report scores as-is | No going back to patch |
+
+### What's legitimate to fix (before freeze)
+
+**General expressiveness gaps** — if DashML can't express a class of visualizations (e.g., intra-group sort order, binning with specific step sizes), adding that capability to the DSL is a language improvement, not overfitting. The test: would the fix help with ANY query that uses that feature, or only the specific failing test case?
+
+Examples:
+- "DashML has no `group_sort` field, so grouped bar charts with custom sort always fail" → **Add `group_sort` to the schema.** This is an expressiveness contribution.
+- "The `--bare` output includes `type: quantitative` but nvBench expects it absent" → **Fix the stripping logic.** This is format alignment, required for any benchmark participation.
+- "DashML doesn't support `timeUnit` in encodings" → **Add `time_unit` field.** General capability gap.
+
+### What's NOT legitimate
+
+- "The LLM keeps swapping x/y, let me auto-correct in the transformer" → Compensating for LLM errors.
+- "Test case #347 expects descending sort, let me special-case it" → Overfitting to a specific test.
+- Iterating between evaluation results and transformer changes — if tests fail after freeze, report the failure.
+
+### Documenting the process
+
+Expressiveness gaps discovered during development are a **thesis contribution**:
+
+> "During pre-evaluation testing against nvBench 2.0 gold answers, we identified N expressiveness gaps in the DashML schema (e.g., no support for intra-group sorting, no `timeUnit` encoding). We extended the schema with fields X, Y, Z to address these gaps. All schema changes were completed before running the final evaluation."
+
 ## Key Risks and Considerations
 
 1. **Multiple predictions**: Getting good Recall@K requires generating multiple .dashml specs per query. The LLM needs to reason about ambiguity and enumerate alternatives.

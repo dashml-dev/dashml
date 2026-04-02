@@ -132,12 +132,13 @@ def build_command(args):
             from dashml_new.transformers.grafana import GrafanaTransformer
             csv_url = getattr(args, "grafana_csv_url", None)
             serve_port = getattr(args, "grafana_serve_csv", None)
-            # --grafana-serve-csv: derive csv_url from the port + csv filename
+            csv_host = getattr(args, "grafana_csv_host", None) or "localhost"
+            # --grafana-serve-csv: derive csv_url from the host + port + csv filename
             if serve_port and data_type == "csv" and not csv_url:
                 csv_path = spec.get("data", {}).get("csv_path")
                 if csv_path:
                     csv_filename = Path(csv_path).name
-                    csv_url = f"http://localhost:{serve_port}/{csv_filename}"
+                    csv_url = f"http://{csv_host}:{serve_port}/{csv_filename}"
             transformer = GrafanaTransformer(
                 datasource_uid=getattr(args, "grafana_datasource_uid", None),
                 csv_url=csv_url,
@@ -509,6 +510,12 @@ Examples:
         default=None,
         metavar="PORT",
         help="Start a local HTTP server for the CSV file (default port: 8888, for grafana backend with Infinity plugin)"
+    )
+    build_parser.add_argument(
+        "--grafana-csv-host",
+        default=None,
+        metavar="HOST",
+        help="Hostname Grafana uses to reach the CSV server (default: localhost; use host.docker.internal for Docker)"
     )
     build_parser.add_argument(
         "--embed-data",

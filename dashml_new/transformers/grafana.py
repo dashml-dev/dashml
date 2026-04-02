@@ -29,7 +29,7 @@ CHART_TYPE_TO_PANEL = {
     "stacked_bar": "barchart",
     "grouped_bar": "barchart",
     "scatter": "xychart",
-    "heatmap": "heatmap",
+    "heatmap": "table",
     "geo": "geomap",
     "box": "text",
     "bubble": "xychart",
@@ -254,6 +254,7 @@ class GrafanaTransformer(Transformer):
         panel = {
             "id": panel_id,
             "type": panel_type,
+            "pluginVersion": "12.4.0",
             "title": chart.get("title", chart.get("id", "")),
             "gridPos": {"h": h, "w": w, "x": x, "y": y},
             "datasource": {
@@ -293,6 +294,14 @@ class GrafanaTransformer(Transformer):
         if configurator:
             configurator(panel, chart, spec)
 
+        # Add data transformations for CSV (filters, groupBy, sort, limit)
+        if data_type == "csv" and self._csv_url:
+            transforms = self._build_transformations(chart)
+            if transforms:
+                # Prepend to any transforms added by the configurator (e.g. groupingToMatrix)
+                existing = panel.get("transformations", [])
+                panel["transformations"] = transforms + existing
+
         # Apply theme colors
         self._apply_theme(panel, chart, spec)
 
@@ -331,7 +340,12 @@ class GrafanaTransformer(Transformer):
         # Build columns list based on chart type
         columns = []
         if x_field:
-            col_type = "timestamp" if chart.get("x_type") == "date" else "string"
+            if chart.get("x_type") == "date":
+                col_type = "timestamp"
+            elif chart_type in ("scatter", "bubble", "histogram"):
+                col_type = "number"
+            else:
+                col_type = "string"
             columns.append({"selector": x_field, "text": x_field, "type": col_type})
         if y_field:
             columns.append({"selector": y_field, "text": y_field, "type": "number"})
@@ -389,6 +403,223 @@ class GrafanaTransformer(Transformer):
 
     # ── Chart type configurators ───────────────────────────────────
 
+    # ── Panel transformations ─────────────────────────────────────
+
+    # DashML agg → Grafana groupBy aggregation name
+    _AGG_TO_GRAFANA = {
+        "sum": "sum",
+        "mean": "mean",
+        "count": "count",
+    }
+
+    # Chart types that don't need groupBy (they handle data differently)
+    _NO_GROUPBY_TYPES = {"metric", "histogram", "scatter", "box"}
+
+    # DashML filter op → Grafana filterByValue condition type
+    _FILTER_OP_TO_GRAFANA = {
+        "eq": "equal",
+        "ne": "notEqual",
+        "gt": "greater",
+        "lt": "lower",
+        "gte": "greaterOrEqual",
+        "lte": "lowerOrEqual",
+        "contains": "regex",
+    }
+
+    def _build_transformations(self, chart: dict) -> list:
+        """Build Grafana panel transformations for CSV data."""
+        transforms = []
+
+        # 1. Filters (applied first, before aggregation)
+        filters = chart.get("filters", [])
+        if filters:
+            transforms.extend(self._build_filter_transforms(filters))
+
+        # 2. GroupBy aggregation
+        chart_type = chart.get("type", "bar")
+        agg = chart.get("agg")
+        if chart_type not in self._NO_GROUPBY_TYPES and agg:
+            transforms.extend(self._build_groupby_transform(chart))
+
+        # 3. Sort and limit (skip for pivoted charts — pivot handles sort internally)
+        has_pivot = chart_type in ("stacked_bar", "grouped_bar") and chart.get("group")
+        sort_field = chart.get("sort")
+        limit = chart.get("limit")
+
+        if not has_pivot:
+            if sort_field:
+                transforms.extend(self._build_sort_transform(chart))
+            if limit:
+                transforms.append({"id": "limit", "options": {"maxRows": limit}})
+
+        # 4. Pivot to wide format (stacked/grouped bar — includes sort by row total)
+        transforms.extend(self._build_pivot_transform(chart))
+
+        return transforms
+
+    def _build_filter_transforms(self, filters: list) -> list:
+        """Convert DashML filters to Grafana filterByValue transformations."""
+        conditions = []
+        for f in filters:
+            field = f.get("field", "")
+            op = f.get("op", "eq")
+            value = f.get("value")
+
+            if op == "in" and isinstance(value, list):
+                # "in" → multiple OR conditions with "equal"
+                for v in value:
+                    conditions.append({
+                        "config": {"id": "equal", "options": {"value": str(v)}},
+                        "fieldName": field,
+                    })
+            elif op == "contains" and isinstance(value, str):
+                conditions.append({
+                    "config": {"id": "regex", "options": {"value": value}},
+                    "fieldName": field,
+                })
+            else:
+                grafana_op = self._FILTER_OP_TO_GRAFANA.get(op)
+                if grafana_op:
+                    conditions.append({
+                        "config": {"id": grafana_op, "options": {"value": str(value)}},
+                        "fieldName": field,
+                    })
+
+        if not conditions:
+            return []
+
+        return [{
+            "id": "filterByValue",
+            "options": {
+                "filters": conditions,
+                "type": "include",
+                "match": "any" if any(f.get("op") == "in" for f in filters) else "all",
+            },
+        }]
+
+    def _build_groupby_transform(self, chart: dict) -> list:
+        """Build groupBy transformation for aggregation."""
+        chart_type = chart.get("type", "bar")
+        x_field = chart.get("x", "x")
+        y_field = chart.get("y", "y")
+        group_field = chart.get("group")
+        size_field = chart.get("size", "")
+        agg = chart.get("agg", "sum")
+        grafana_agg = self._AGG_TO_GRAFANA.get(agg, "sum")
+
+        fields = {}
+        rename_map = {}
+
+        if chart_type == "bubble" and group_field:
+            # Bubble: group by the group field, aggregate x, y, and size
+            fields[group_field] = {"aggregations": [], "operation": "groupby"}
+            fields[x_field] = {"aggregations": [grafana_agg], "operation": "aggregate"}
+            fields[y_field] = {"aggregations": [grafana_agg], "operation": "aggregate"}
+            rename_map[f"{x_field} ({grafana_agg})"] = x_field
+            rename_map[f"{y_field} ({grafana_agg})"] = y_field
+            if size_field:
+                fields[size_field] = {"aggregations": [grafana_agg], "operation": "aggregate"}
+                rename_map[f"{size_field} ({grafana_agg})"] = size_field
+        elif agg == "count":
+            fields[x_field] = {"aggregations": ["count"], "operation": "groupby"}
+            if group_field and chart_type in ("stacked_bar", "grouped_bar", "heatmap"):
+                fields[group_field] = {"aggregations": [], "operation": "groupby"}
+        else:
+            fields[x_field] = {"aggregations": [], "operation": "groupby"}
+            if group_field and chart_type in ("stacked_bar", "grouped_bar", "heatmap"):
+                fields[group_field] = {"aggregations": [], "operation": "groupby"}
+            fields[y_field] = {"aggregations": [grafana_agg], "operation": "aggregate"}
+            rename_map[f"{y_field} ({grafana_agg})"] = y_field
+
+        transforms = [{"id": "groupBy", "options": {"fields": fields}}]
+
+        # Rename aggregated columns back to clean names
+        if rename_map:
+            transforms.append({
+                "id": "organize",
+                "options": {"renameByName": rename_map},
+            })
+
+        return transforms
+
+    def _build_pivot_transform(self, chart: dict) -> list:
+        """Build groupingToMatrix pivot for multi-series charts (stacked/grouped bar)."""
+        chart_type = chart.get("type", "bar")
+        group_field = chart.get("group")
+        if not group_field or chart_type not in ("stacked_bar", "grouped_bar"):
+            return []
+
+        x_field = chart.get("x", "x")
+        y_field = chart.get("y", "y")
+        agg = chart.get("agg", "sum")
+
+        if agg == "count":
+            value_field = f"{x_field} (count)"
+        else:
+            value_field = y_field
+
+        transforms = [{
+            "id": "groupingToMatrix",
+            "options": {
+                "columnField": group_field,
+                "rowField": x_field,
+                "valueField": value_field,
+            },
+        }]
+
+        # After pivot, sort by row total: calculate sum → sort → hide total column
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
+        if sort_field:
+            transforms.append({
+                "id": "calculateField",
+                "options": {
+                    "mode": "reduceRow",
+                    "reduce": {"reducer": "sum", "include": []},
+                    "alias": "_total",
+                    "replaceFields": False,
+                },
+            })
+            transforms.append({
+                "id": "sortBy",
+                "options": {
+                    "fields": {},
+                    "sort": [{"field": "_total", "desc": sort_order == "desc"}],
+                },
+            })
+            transforms.append({
+                "id": "organize",
+                "options": {
+                    "excludeByName": {"_total": True},
+                },
+            })
+
+        return transforms
+
+    def _build_sort_transform(self, chart: dict) -> list:
+        """Build sortBy transformation."""
+        sort = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
+        x_field = chart.get("x", "x")
+        y_field = chart.get("y", "y")
+
+        if sort == "x":
+            sort_field = x_field
+        elif sort == "y":
+            sort_field = y_field
+        else:
+            sort_field = sort  # direct field name
+
+        return [{
+            "id": "sortBy",
+            "options": {
+                "fields": {},
+                "sort": [{"field": sort_field, "desc": sort_order == "desc"}],
+            },
+        }]
+
+    # ── Panel type configurators ───────────────────────────────────
+
     def _configure_metric_panel(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
         """Configure stat panel for metric charts."""
         panel["options"] = {
@@ -427,7 +658,7 @@ class GrafanaTransformer(Transformer):
     def _configure_bar_panel(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
         """Configure barchart panel for bar charts."""
         panel["options"] = {
-            "orientation": "horizontal" if chart.get("sort") else "auto",
+            "orientation": "auto",
             "xTickLabelRotation": 0,
             "showValue": "auto",
             "stacking": "none",
@@ -544,53 +775,137 @@ class GrafanaTransformer(Transformer):
         }
 
     def _configure_scatter_panel(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
-        """Configure xychart panel for scatter plots (Grafana 10+)."""
+        """Configure XY panel for scatter plots."""
         x_field = chart.get("x", "x")
         y_field = chart.get("y", "y")
         panel["options"] = {
-            "seriesMapping": "manual",
-            "dims": {
-                "x": x_field,
-            },
+            "mapping": "manual",
             "series": [
                 {
-                    "x": {"field": x_field},
-                    "y": {"field": y_field},
-                    "pointSize": {"fixed": 5},
-                    "pointColor": {"fixed": "dark-green"},
+                    "frame": {"matcher": {"id": "byIndex", "options": 0}},
+                    "x": {"matcher": {"id": "byName", "options": x_field}},
+                    "y": {"matcher": {"id": "byName", "options": y_field}},
                 }
             ],
-            "tooltip": {"mode": "single"},
-            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single", "sort": "none"},
+            "legend": {"showLegend": True, "displayMode": "list", "placement": "bottom", "calcs": []},
+        }
+        panel["fieldConfig"]["defaults"]["custom"] = {
+            "show": "points",
+            "pointSize": {"fixed": 5},
+            "fillOpacity": 50,
+            "axisPlacement": "auto",
+            "axisBorderShow": False,
         }
 
     def _configure_heatmap_panel(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
-        """Configure heatmap panel."""
+        """Configure heatmap as a color-coded table.
+
+        Grafana's native heatmap panel is a 2D histogram for numeric/time-series data.
+        DashML's heatmap is a categorical grid (category × category, colored by value),
+        which is the standard definition used by Seaborn, Plotly, Vega-Lite, and Tableau.
+        We render it as a table with colored cell backgrounds to match the intended semantics.
+        """
+        self.warn(
+            "Heatmap rendered as color-coded table. Grafana's native heatmap panel is a 2D histogram "
+            "for numeric data, while DashML's heatmap is a categorical grid — the standard definition "
+            "used by most visualization tools."
+        )
         style = spec.get("style", {})
         sequential = style.get("sequential", "blues")
-        scheme = SEQUENTIAL_TO_HEATMAP_SCHEME.get(sequential, "interpolateBlues")
 
+        # Map DashML sequential scheme to Grafana continuous color mode
+        SEQUENTIAL_TO_CONTINUOUS = {
+            "blues": "continuous-blues",
+            "greens": "continuous-greens",
+            "reds": "continuous-reds",
+            "purples": "continuous-purples",
+            "oranges": "continuous-YlOrRd",
+            "viridis": "continuous-GrYlRd",
+            "cividis": "continuous-GrYlRd",
+            "teals": "continuous-greens",
+        }
+        color_mode = SEQUENTIAL_TO_CONTINUOUS.get(sequential, "continuous-blues")
+
+        # Switch panel type from heatmap to table
+        panel["type"] = "table"
         panel["options"] = {
-            "calculate": True,
-            "calculation": {"xBuckets": {"mode": "count"}, "yBuckets": {"mode": "count"}},
-            "color": {
-                "mode": "scheme",
-                "scheme": scheme,
-                "steps": 64,
+            "showHeader": True,
+            "cellHeight": "sm",
+            "footer": {"show": False},
+        }
+        panel["fieldConfig"] = {
+            "defaults": {
+                "custom": {
+                    "cellOptions": {"type": "color-background", "mode": "gradient"},
+                    "inspect": False,
+                    "align": "center",
+                },
+                "color": {"mode": color_mode},
+                "thresholds": {
+                    "mode": "percentage",
+                    "steps": [
+                        {"color": "transparent", "value": None},
+                        {"color": color_mode.replace("continuous-", ""), "value": 0},
+                    ],
+                },
             },
-            "cellGap": 1,
-            "filterValues": {"le": 1e-9},
-            "tooltip": {"show": True, "yHistogram": False},
-            "legend": {"show": True},
-            "yAxis": {"axisPlacement": "left"},
+            "overrides": [
+                {
+                    "matcher": {"id": "byName", "options": chart.get("x", "x")},
+                    "properties": [
+                        {"id": "custom.cellOptions", "value": {"type": "auto"}},
+                        {"id": "custom.width", "value": 150},
+                    ],
+                },
+            ],
         }
 
+        # Add groupingToMatrix transform to pivot the data
+        x_field = chart.get("x", "x")
+        group_field = chart.get("group", "y")
+        y_field = chart.get("y", "value")
+        agg = chart.get("agg", "sum")
+        grafana_agg = self._AGG_TO_GRAFANA.get(agg, "sum")
+
+        # The aggregated field name after groupBy + organize rename
+        value_field = y_field if agg != "count" else f"{x_field} (count)"
+
+        panel.setdefault("transformations", [])
+        panel["transformations"].append({
+            "id": "groupingToMatrix",
+            "options": {
+                "columnField": group_field,
+                "rowField": x_field,
+                "valueField": value_field,
+            },
+        })
+
     def _configure_geo_panel(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
-        """Configure geomap panel."""
-        self.warn(
-            "Geo chart: Grafana geomap needs lat/lon fields or a lookup plugin. "
-            "Ensure your data includes geographic coordinates or use the Geomap plugin's built-in lookup."
-        )
+        """Configure geomap panel with country lookup from built-in gazetteer."""
+        x_field = chart.get("x", "country")
+        y_field = chart.get("y", "value")
+        agg = chart.get("agg", "sum")
+        geo_encoding = chart.get("geo_encoding", "name")
+
+        style = spec.get("style", {})
+        sequential = style.get("sequential", "blues")
+        SEQUENTIAL_TO_CONTINUOUS = {
+            "blues": "continuous-blues",
+            "greens": "continuous-greens",
+            "reds": "continuous-reds",
+            "purples": "continuous-purples",
+            "oranges": "continuous-YlOrRd",
+            "viridis": "continuous-GrYlRd",
+        }
+        color_mode = SEQUENTIAL_TO_CONTINUOUS.get(sequential, "continuous-blues")
+
+        if geo_encoding == "name":
+            self.warn(
+                "Geo chart: country names may not fully match Grafana's built-in gazetteer. "
+                "For best results, use geo_encoding: iso2 or iso3."
+            )
+
         panel["options"] = {
             "view": {
                 "id": "zero",
@@ -602,20 +917,35 @@ class GrafanaTransformer(Transformer):
             "layers": [
                 {
                     "type": "markers",
-                    "name": "Markers",
+                    "name": "Data",
                     "config": {
                         "showLegend": True,
                         "style": {
-                            "size": {"fixed": 5, "min": 2, "max": 15},
-                            "color": {"fixed": "dark-green"},
-                            "opacity": 0.6,
+                            "size": {"field": y_field, "min": 3, "max": 20},
+                            "color": {"field": y_field},
+                            "opacity": 0.7,
+                            "symbol": {"fixed": "img/icons/marker/circle.svg", "mode": "fixed"},
                         },
                     },
-                    "location": {"mode": "auto"},
+                    "location": {
+                        "mode": "lookup",
+                        "lookup": x_field,
+                        "gazetteer": "public/gazetteer/countries.json",
+                    },
                 }
             ],
             "controls": {"showZoom": True, "mouseWheelZoom": True, "showAttribution": True},
             "tooltip": {"mode": "details"},
+        }
+
+        # Color field by value using continuous scheme
+        panel["fieldConfig"]["defaults"]["color"] = {"mode": color_mode}
+        panel["fieldConfig"]["defaults"]["thresholds"] = {
+            "mode": "percentage",
+            "steps": [
+                {"color": "transparent", "value": None},
+                {"color": color_mode.replace("continuous-", ""), "value": 0},
+            ],
         }
 
     def _configure_box_panel(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
@@ -640,28 +970,42 @@ class GrafanaTransformer(Transformer):
         panel["targets"] = []
 
     def _configure_bubble_panel(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
-        """Bubble chart rendered as scatter (no size encoding in Grafana XY chart)."""
-        self.warn(
-            f"Chart '{chart.get('id')}': Grafana XY Chart does not support size encoding. "
-            "Rendered as scatter plot."
-        )
+        """Bubble chart using XY chart with size and color encoding.
+
+        Uses partitionByValues transform to split data by group field,
+        creating one series per category with automatic color assignment.
+        """
         x_field = chart.get("x", "x")
         y_field = chart.get("y", "y")
+        size_field = chart.get("size", "")
+        group_field = chart.get("group", "")
+
+        if group_field:
+            self.warn(
+                f"Chart '{chart.get('id')}': Grafana XY chart color field only supports numbers, "
+                f"not categorical strings. Color by '{group_field}' is not applied."
+            )
+
+        series_config = {
+            "frame": {"matcher": {"id": "byIndex", "options": 0}},
+            "x": {"matcher": {"id": "byName", "options": x_field}},
+            "y": {"matcher": {"id": "byName", "options": y_field}},
+        }
+        if size_field:
+            series_config["size"] = {"matcher": {"id": "byName", "options": size_field}}
+
         panel["options"] = {
-            "seriesMapping": "manual",
-            "dims": {
-                "x": x_field,
-            },
-            "series": [
-                {
-                    "x": {"field": x_field},
-                    "y": {"field": y_field},
-                    "pointSize": {"fixed": 5},
-                    "pointColor": {"fixed": "dark-green"},
-                }
-            ],
-            "tooltip": {"mode": "single"},
-            "legend": {"displayMode": "list", "placement": "bottom"},
+            "mapping": "manual",
+            "series": [series_config],
+            "tooltip": {"mode": "single", "sort": "none"},
+            "legend": {"showLegend": True, "displayMode": "list", "placement": "bottom", "calcs": []},
+        }
+        panel["fieldConfig"]["defaults"]["custom"] = {
+            "show": "points",
+            "pointSize": {"min": 3, "max": 30},
+            "fillOpacity": 50,
+            "axisPlacement": "auto",
+            "axisBorderShow": False,
         }
 
     # ── Theme / color application ──────────────────────────────────
@@ -679,26 +1023,15 @@ class GrafanaTransformer(Transformer):
 
         defaults = panel["fieldConfig"]["defaults"]
 
-        # Multi-series charts: use palette-classic with secondary color overrides
-        if chart_type in ("stacked_bar", "grouped_bar", "pie", "heatmap"):
+        # Multi-series charts: use palette-classic (Grafana assigns colors automatically)
+        # Heatmap excluded — it uses continuous color set in _configure_heatmap_panel
+        if chart_type in ("stacked_bar", "grouped_bar", "pie"):
             defaults["color"] = {
                 "mode": "palette-classic",
             }
-            # Add overrides for each secondary color
-            if isinstance(secondary, list) and secondary:
-                overrides = []
-                for i, color in enumerate(secondary):
-                    overrides.append({
-                        "matcher": {"id": "byFrameRefID"},
-                        "properties": [
-                            {"id": "color", "value": {"mode": "fixed", "fixedColor": color}}
-                        ],
-                    })
-                # Only set if not already heavily customized
-                if not panel["fieldConfig"]["overrides"]:
-                    panel["fieldConfig"]["overrides"] = overrides
-        else:
+        elif chart_type not in ("heatmap", "geo", "bubble"):
             # Single-series: use fixed primary color
+            # Heatmap/geo/bubble excluded — they set their own color mode
             defaults["color"] = {
                 "mode": "fixed",
                 "fixedColor": primary,
