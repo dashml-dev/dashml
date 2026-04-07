@@ -110,6 +110,48 @@ def main():
 
         _dashboard_filters = {}
         _filtered_df = df
+        _mc0, _mc1, _mc2 = st.columns(3)
+        with _mc0:
+            # Chart: total_revenue_kpi
+            _metric_df = df
+            _metric_df["total_amount"] = pd.to_numeric(_metric_df["total_amount"], errors="coerce")
+            _metric_val = float(_metric_df["total_amount"].sum())
+            if _metric_val is not None and not (isinstance(_metric_val, float) and __import__("math").isnan(_metric_val)):
+                _metric_formatted = f"{_metric_val:,.0f}"
+            else:
+                _metric_formatted = "N/A"
+            st.markdown(f'''<div style="background:rgba(255,255,255,0.05);border-radius:8px;padding:16px 20px;text-align:center;">
+                <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;opacity:0.6;margin-bottom:8px;">Total Revenue</div>
+                <div style="font-size:2rem;font-weight:700;color:#bd93f9;">{_metric_formatted}</div>
+            </div>''', unsafe_allow_html=True)
+        with _mc1:
+            # Chart: total_orders_kpi
+            _metric_df = df
+            _metric_df["order_id"] = pd.to_numeric(_metric_df["order_id"], errors="coerce")
+            _metric_val = float(len(_metric_df))
+            if _metric_val is not None and not (isinstance(_metric_val, float) and __import__("math").isnan(_metric_val)):
+                _metric_formatted = f"{_metric_val:,.0f}"
+            else:
+                _metric_formatted = "N/A"
+            st.markdown(f'''<div style="background:rgba(255,255,255,0.05);border-radius:8px;padding:16px 20px;text-align:center;">
+                <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;opacity:0.6;margin-bottom:8px;">Total Orders</div>
+                <div style="font-size:2rem;font-weight:700;color:#bd93f9;">{_metric_formatted}</div>
+            </div>''', unsafe_allow_html=True)
+        with _mc2:
+            # Chart: avg_order_value_kpi
+            _metric_df = df
+            _metric_df["total_amount"] = pd.to_numeric(_metric_df["total_amount"], errors="coerce")
+            _metric_val = float(_metric_df["total_amount"].mean())
+            if _metric_val is not None and not (isinstance(_metric_val, float) and __import__("math").isnan(_metric_val)):
+                _metric_formatted = f"{_metric_val:,.2f}"
+            else:
+                _metric_formatted = "N/A"
+            st.markdown(f'''<div style="background:rgba(255,255,255,0.05);border-radius:8px;padding:16px 20px;text-align:center;">
+                <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;opacity:0.6;margin-bottom:8px;">Avg Order Value</div>
+                <div style="font-size:2rem;font-weight:700;color:#bd93f9;">{_metric_formatted}</div>
+            </div>''', unsafe_allow_html=True)
+        st.divider()
+
         # Chart: bar_sales_by_country
         st.subheader("Total Sales by Country")
         chart_df = df
@@ -130,10 +172,10 @@ def main():
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_bar(color="#bd93f9").encode(
             x=alt.X("shipping_address_country" + x_encoding_suffix, sort=None, title="Shipping Address Country"),
-            y=alt.Y("total_amount", title="Total Amount"),
+            y=alt.Y("total_amount:Q", title="Total Amount"),
             tooltip=["shipping_address_country", "total_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: pie_orders_by_status
@@ -164,7 +206,7 @@ def main():
             ),
             tooltip=["status", "order_id"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: grouped_bar_country_status
@@ -180,16 +222,16 @@ def main():
         # Grouped bar: group order_id by status
         theme_colors = ['#50fa7b', '#ffb86c', '#ff5555', '#8be9fd', '#f1fa8c']
         c = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X("shipping_address_country" + x_encoding_suffix, sort=None, title="Shipping Address Country"),
+            x=alt.X("shipping_address_country" + x_encoding_suffix, sort="-y", title="Shipping Address Country"),
             y=alt.Y("order_id:Q", title="Order Id"),
             color=alt.Color("status:N",
                 scale=alt.Scale(range=theme_colors),
                 legend=alt.Legend(title="Status")
             ),
-            xOffset="status:N",
+            xOffset=alt.XOffset("status:N", sort="-y"),
             tooltip=["shipping_address_country", "status", "order_id"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: stacked_bar_payment_status
@@ -221,7 +263,7 @@ def main():
             ),
             tooltip=["payment_method", "status", "order_id"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: geo_sales_by_country
@@ -284,7 +326,7 @@ def main():
             height=450
         )
         c = background + foreground
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
 
     with tab2:
         st.markdown("*Line and area charts for temporal trends*")
@@ -296,8 +338,8 @@ def main():
         st.subheader("Orders Over Time")
         chart_df = df
         effective_x_type = "date" if "date" != "None" else column_types.get("order_date")
-        # Aggregate: count(order_id) group by order_date
-        chart_data = chart_df.groupby("order_date")["order_id"].count().reset_index()
+        # Aggregate: count rows group by order_date
+        chart_data = chart_df.groupby("order_date").size().reset_index(name="count")
         if effective_x_type == "date":
             # Sort by date for chronological order
             chart_data["order_date"] = pd.to_datetime(chart_data["order_date"])
@@ -312,10 +354,10 @@ def main():
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_line(color="#bd93f9", point=True).encode(
             x=alt.X("order_date" + x_encoding_suffix, sort=None, title="Order Date"),
-            y=alt.Y("order_id", title="Order Id"),
-            tooltip=["order_date", "order_id"]
+            y=alt.Y("count:Q", title="Count"),
+            tooltip=["order_date", "count"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: area_revenue_over_time
@@ -338,10 +380,10 @@ def main():
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
         c = alt.Chart(chart_data).mark_area(color="#bd93f9", opacity=0.7).encode(
             x=alt.X("order_date" + x_encoding_suffix, sort=None, title="Order Date"),
-            y=alt.Y("total_amount", title="Total Amount"),
+            y=alt.Y("total_amount:Q", title="Total Amount"),
             tooltip=["order_date", "total_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
 
     with tab3:
         st.markdown("*Scatter plots, histograms, box plots, bubble charts, and heatmaps*")
@@ -353,27 +395,15 @@ def main():
         st.subheader("Order Amount vs Tax Amount")
         chart_df = df
         effective_x_type = "None" if "None" != "None" else column_types.get("total_amount")
-        # Aggregate: sum(tax_amount) group by total_amount
-        chart_data = chart_df.groupby("total_amount")["tax_amount"].sum().reset_index()
-        if effective_x_type == "date":
-            # Sort by date for chronological order
-            chart_data["total_amount"] = pd.to_datetime(chart_data["total_amount"])
-            chart_data = chart_data.sort_values("total_amount")
-        elif effective_x_type == "number":
-            # Sort by number for numerical order
-            chart_data = chart_data.sort_values("total_amount")
-        else:
-            # Sort strings alphabetically for consistency across transformers
-            chart_data = chart_data.sort_values("total_amount")
         # Determine Altair encoding type based on effective x_type
         x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")
-        # Scatter: aggregated data points
-        c = alt.Chart(chart_data).mark_circle(color="#bd93f9", size=60).encode(
-            x=alt.X("total_amount" + x_encoding_suffix, sort=None, title="Total Amount"),
-            y=alt.Y("tax_amount", title="Tax Amount"),
+        # Scatter: raw data points
+        c = alt.Chart(chart_df).mark_circle(color="#bd93f9", size=60).encode(
+            x=alt.X("total_amount:Q", title="Total Amount"),
+            y=alt.Y("tax_amount:Q", title="Tax Amount"),
             tooltip=["total_amount", "tax_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: histogram_order_amounts
@@ -388,7 +418,7 @@ def main():
             y=alt.Y("count()", title="Count"),
             tooltip=["count()"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: box_amount_by_status
@@ -403,7 +433,7 @@ def main():
             y=alt.Y("total_amount:Q", title="Total Amount"),
             tooltip=["status"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: bubble_region_sales
@@ -434,7 +464,7 @@ def main():
             color=alt.Color("shipping_address_state:N", legend=alt.Legend(title="Shipping Address State")),
             tooltip=["shipping_address_state", "total_amount", "tax_amount", "total_amount"]
         )
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
         st.divider()
 
         # Chart: heatmap_country_status
@@ -471,7 +501,7 @@ def main():
             ),
             tooltip=["shipping_address_country", "status", "order_id"]
         ).properties(width=600, height=400)
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, use_container_width=True, theme="streamlit")
 
 
 if __name__ == "__main__":

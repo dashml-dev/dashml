@@ -117,7 +117,7 @@ pages:
         y: "funding_amount"
         agg: "sum"
         sort: "y"
-        sort_order: "asc"
+        sort_order: "desc"
         limit: 10
 
       - id: "bar_top_cities"
@@ -127,7 +127,7 @@ pages:
         y: "funding_amount"
         agg: "count"
         sort: "y"
-        sort_order: "asc"
+        sort_order: "desc"
         limit: 10
 
   - id: "deep_dive"

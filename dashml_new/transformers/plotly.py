@@ -1429,6 +1429,9 @@ if __name__ == '__main__':
             x = chart.get("x", "")  # Not required for metric type
             y = chart.get("y", "")
             agg = chart.get("agg", "sum")
+            # When normalizer moved y→group for count agg, use "count" as the y column
+            if not y and agg == "count" and chart_type != "metric":
+                y = "count"
             group = chart.get("group")
             title = chart.get("title", chart_id)
             x_type = chart.get("x_type")  # Optional: "date", "number", "string"
@@ -2327,6 +2330,9 @@ if __name__ == '__main__':
             title = chart.get("title", chart_id)
             x = chart.get("x", "")  # Not required for metric type
             y = chart.get("y", "")
+            agg = chart.get("agg", "sum")
+            if not y and agg == "count" and chart_type != "metric":
+                y = "count"
             group = chart.get("group")
             size_field = chart.get("size")
             bins = chart.get("bins", 20)

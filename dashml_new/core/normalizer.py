@@ -122,7 +122,7 @@ class DashMLNormalizer:
 
         chart_type = chart["type"]
         x = chart.get("x", "")
-        y = chart["y"]
+        y = chart.get("y", "")
         agg = chart.get("agg", "sum")
         group = chart.get("group")
         size_field = chart.get("size")
@@ -132,6 +132,8 @@ class DashMLNormalizer:
 
         agg_map = {"sum": "SUM", "mean": "AVG", "count": "COUNT"}
         sql_agg = agg_map.get(agg, "SUM")
+        # For count agg without y, use COUNT(*) instead of COUNT(y)
+        agg_expr = f"{sql_agg}({y})" if y else "COUNT(*)"
 
         order = ""
         if sort_field == "y":
@@ -143,23 +145,23 @@ class DashMLNormalizer:
             order = " ORDER BY x ASC"
 
         if chart_type in ("bar", "line", "area", "pie", "geo"):
-            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}{order}{limit_clause}"
+            return f"SELECT {x} AS x, {agg_expr} AS y FROM {T} WHERE {F} GROUP BY {x}{order}{limit_clause}"
         elif chart_type in ("stacked_bar", "grouped_bar"):
             if sort_field == "y":
                 # Sort x categories by aggregate total across all groups
                 direction = 'ASC' if sort_order == 'asc' else 'DESC'
                 return (
                     f"SELECT agg.x, agg.grp, agg.y FROM"
-                    f" (SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}, {group}) agg"
-                    f" JOIN (SELECT {x} AS x, {sql_agg}({y}) AS x_total FROM {T} WHERE {F} GROUP BY {x}) totals"
+                    f" (SELECT {x} AS x, {group} AS grp, {agg_expr} AS y FROM {T} WHERE {F} GROUP BY {x}, {group}) agg"
+                    f" JOIN (SELECT {x} AS x, {agg_expr} AS x_total FROM {T} WHERE {F} GROUP BY {x}) totals"
                     f" ON agg.x = totals.x"
                     f" ORDER BY totals.x_total {direction}, agg.x{limit_clause}"
                 )
-            return f"SELECT {x} AS x, {group} AS grp, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}, {group}{order}{limit_clause}"
+            return f"SELECT {x} AS x, {group} AS grp, {agg_expr} AS y FROM {T} WHERE {F} GROUP BY {x}, {group}{order}{limit_clause}"
         elif chart_type == "heatmap":
             hy = group if group else y
             return (
-                f"SELECT {x} AS x, {hy} AS heatmap_y, {sql_agg}({y}) AS y FROM {T}"
+                f"SELECT {x} AS x, {hy} AS heatmap_y, {agg_expr} AS y FROM {T}"
                 f" WHERE {F}"
                 f" AND {x} IN (SELECT {x} FROM {T} GROUP BY {x} ORDER BY COUNT(*) DESC LIMIT 20)"
                 f" AND {hy} IN (SELECT {hy} FROM {T} GROUP BY {hy} ORDER BY COUNT(*) DESC LIMIT 20)"
@@ -171,15 +173,15 @@ class DashMLNormalizer:
             size_ref = size_field or y
             if not group:
                 return f"SELECT {x} AS x, {y} AS y, {size_ref} AS size FROM {T} WHERE {F}"
-            return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {sql_agg}({y}) AS y, {sql_agg}({size_ref}) AS size FROM {T} WHERE {F} GROUP BY {group}{order}{limit_clause}"
+            return f"SELECT {group} AS grp, {sql_agg}({x}) AS x, {agg_expr} AS y, {sql_agg}({size_ref}) AS size FROM {T} WHERE {F} GROUP BY {group}{order}{limit_clause}"
         elif chart_type == "histogram":
             return f"SELECT {x} AS x FROM {T} WHERE {F} AND {x} IS NOT NULL"
         elif chart_type == "box":
             return f"SELECT {x} AS x, {y} AS y FROM {T} WHERE {F} AND {x} IS NOT NULL AND {y} IS NOT NULL"
         elif chart_type == "metric":
-            return f"SELECT {sql_agg}({y}) AS y FROM {T} WHERE {F}"
+            return f"SELECT {agg_expr} AS y FROM {T} WHERE {F}"
         else:
-            return f"SELECT {x} AS x, {sql_agg}({y}) AS y FROM {T} WHERE {F} GROUP BY {x}{order}{limit_clause}"
+            return f"SELECT {x} AS x, {agg_expr} AS y FROM {T} WHERE {F} GROUP BY {x}{order}{limit_clause}"
 
     # ------------------------------------------------------------------ #
 

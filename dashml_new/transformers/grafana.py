@@ -37,8 +37,8 @@ CHART_TYPE_TO_PANEL = {
 
 # Grafana datasource type strings for db_config types
 DB_TYPE_TO_GRAFANA_DS = {
-    "postgresql": "postgres",
-    "mysql": "mysql",
+    "postgresql": "grafana-postgresql-datasource",
+    "mysql": "grafana-mysql-datasource",
     "sqlite": "grafana-sqlite-datasource",
     "bigquery": "grafana-bigquery-datasource",
 }
@@ -137,9 +137,19 @@ class GrafanaTransformer(Transformer):
 
     # ── Dashboard envelope ─────────────────────────────────────────
 
+    # Human-readable names for Grafana datasource plugins
+    _DS_DISPLAY_NAMES = {
+        "grafana-postgresql-datasource": "PostgreSQL",
+        "grafana-mysql-datasource": "MySQL",
+        "grafana-sqlite-datasource": "SQLite",
+        "grafana-bigquery-datasource": "BigQuery",
+        "yesoreyeram-infinity-datasource": "Infinity",
+    }
+
     def _build_dashboard_envelope(self, spec: "NormalizedSpec", panels: list) -> dict:
         """Build top-level Grafana dashboard JSON with __inputs and __requires."""
         ds_type = self._resolve_datasource_type(spec)
+        ds_name = self._DS_DISPLAY_NAMES.get(ds_type, ds_type)
 
         dashboard = {
             "__inputs": [
@@ -149,12 +159,12 @@ class GrafanaTransformer(Transformer):
                     "description": "Select your datasource",
                     "type": "datasource",
                     "pluginId": ds_type,
-                    "pluginName": ds_type.capitalize(),
+                    "pluginName": ds_name,
                 }
             ],
             "__requires": [
                 {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
-                {"type": "datasource", "id": ds_type, "name": ds_type.capitalize(), "version": "1.0.0"},
+                {"type": "datasource", "id": ds_type, "name": ds_name, "version": "1.0.0"},
             ],
             "annotations": {"list": []},
             "editable": True,
@@ -184,10 +194,10 @@ class GrafanaTransformer(Transformer):
         db_config = spec.get("db_config")
         if db_config:
             db_type = db_config.get("type", "")
-            return DB_TYPE_TO_GRAFANA_DS.get(db_type, "postgres")
+            return DB_TYPE_TO_GRAFANA_DS.get(db_type, "grafana-postgresql-datasource")
         if data_type == "bigquery":
             return "grafana-bigquery-datasource"
-        return "postgres"
+        return "grafana-postgresql-datasource"
 
     # ── Row panels ─────────────────────────────────────────────────
 
@@ -288,6 +298,18 @@ class GrafanaTransformer(Transformer):
                 "rawSql": resolved_sql,
                 "format": "table",
             })
+
+        # For SQL mode, the query aliases columns to x/y/grp/size.
+        # Panel configurators must use these aliased names instead of original field names.
+        if sql:
+            chart = dict(chart)  # shallow copy to avoid mutating original
+            chart["x"] = "x"
+            if chart.get("y"):
+                chart["y"] = "y"
+            if chart.get("group"):
+                chart["group"] = "grp"
+            if chart.get("size"):
+                chart["size"] = "size"
 
         # Configure panel type-specific options
         configurator = getattr(self, f"_configure_{chart_type}_panel", None)

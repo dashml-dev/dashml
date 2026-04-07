@@ -506,6 +506,9 @@ class ObservablePlotTransformer(Transformer):
         x = chart.get("x", "")  # Not required for metric type
         y = chart.get("y", "")
         agg = chart.get("agg", "sum")
+        # When normalizer moved y→group for count agg, use "count" as the y column
+        if not y and agg == "count" and chart_type != "metric":
+            y = "count"
         group = chart.get("group")  # Optional grouping field for stacked/grouped bars
         x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
         y_type = chart.get("y_type")  # Optional: "number", "string" for casting
@@ -2170,6 +2173,9 @@ if __name__ == '__main__':
         chart_type = chart["type"]
         x = chart.get("x", "")  # Not required for metric type
         y = chart.get("y", "")
+        agg = chart.get("agg", "sum")
+        if not y and agg == "count" and chart_type != "metric":
+            y = "count"
         group = chart.get("group")
         size_field = chart.get("size")
         x_type = chart.get("x_type")

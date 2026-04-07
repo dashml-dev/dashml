@@ -1209,7 +1209,7 @@
       Plotly.newPlot('chart-geo_funding_by_country', traces, layout, { responsive: true });
     }
     function render_bar_top_countries(data) {
-      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 10};
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "desc", "limit": 10};
       const grouped = aggregateData(data, 'country', 'funding_amount', 'sum', options);
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);
@@ -1300,7 +1300,7 @@
       Plotly.newPlot('chart-bar_top_countries', traces, layout, { responsive: true });
     }
     function render_bar_top_cities(data) {
-      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "asc", "limit": 10};
+      const options = {"xType": null, "yType": null, "filters": [], "sort": "y", "sortOrder": "desc", "limit": 10};
       const grouped = aggregateData(data, 'city', '', 'count', options);
       const xValues = grouped.map(d => d.x);
       const yValues = grouped.map(d => d.y);
