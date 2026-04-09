@@ -28,6 +28,12 @@ def load_data():
                 column_types[col_name] = 'number'
             else:
                 column_types[col_name] = 'string'
+
+        # Cast numeric columns so Altair can handle Decimal/other non-float types
+        for col_name, col_type in column_types.items():
+            if col_type == 'number' and col_name in df.columns:
+                df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+
         return df, column_types
     except Exception as e:
         return None, None

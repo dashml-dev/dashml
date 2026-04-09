@@ -87,7 +87,7 @@
         "reduceOptions": {
           "values": false,
           "calcs": [
-            "sum"
+            "lastNotNull"
           ],
           "fields": ""
         },
@@ -142,7 +142,7 @@
         "reduceOptions": {
           "values": false,
           "calcs": [
-            "count"
+            "lastNotNull"
           ],
           "fields": ""
         },
@@ -197,7 +197,7 @@
         "reduceOptions": {
           "values": false,
           "calcs": [
-            "mean"
+            "lastNotNull"
           ],
           "fields": ""
         },
@@ -232,7 +232,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "${DS_DATASOURCE}"
           },
-          "rawSql": "SELECT shipping_address_country AS x, SUM(total_amount) AS y FROM public.orders WHERE 1=1 GROUP BY shipping_address_country",
+          "rawSql": "SELECT shipping_address_country AS x, SUM(total_amount) AS y FROM public.orders WHERE 1=1 GROUP BY shipping_address_country ORDER BY x ASC",
           "format": "table"
         }
       ],
@@ -290,7 +290,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "${DS_DATASOURCE}"
           },
-          "rawSql": "SELECT status AS x, COUNT(order_id) AS y FROM public.orders WHERE 1=1 GROUP BY status",
+          "rawSql": "SELECT status AS x, COUNT(order_id) AS y FROM public.orders WHERE 1=1 GROUP BY status ORDER BY x ASC",
           "format": "table"
         }
       ],
@@ -380,7 +380,49 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "grp",
+            "rowField": "x",
+            "valueField": "y"
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "reduceRow",
+            "reduce": {
+              "reducer": "sum",
+              "include": []
+            },
+            "alias": "_total",
+            "replaceFields": false
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "_total",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "_total": true
+            }
+          }
+        }
+      ]
     },
     {
       "id": 8,
@@ -437,7 +479,17 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "grp",
+            "rowField": "x",
+            "valueField": "y"
+          }
+        }
+      ]
     },
     {
       "id": 9,
@@ -461,7 +513,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "${DS_DATASOURCE}"
           },
-          "rawSql": "SELECT shipping_address_country AS x, SUM(total_amount) AS y FROM public.orders WHERE 1=1 GROUP BY shipping_address_country",
+          "rawSql": "SELECT shipping_address_country AS x, SUM(total_amount) AS y FROM public.orders WHERE 1=1 GROUP BY shipping_address_country ORDER BY x ASC",
           "format": "table"
         }
       ],
@@ -1003,9 +1055,9 @@
         {
           "id": "groupingToMatrix",
           "options": {
-            "columnField": "grp",
-            "rowField": "x",
-            "valueField": "x (count)"
+            "columnField": "x",
+            "rowField": "heatmap_y",
+            "valueField": "y"
           }
         }
       ]

@@ -119,7 +119,7 @@ def main():
         _mc0, _mc1, _mc2 = st.columns(3)
         with _mc0:
             # Chart: total_revenue_kpi
-            _metric_df = df
+            _metric_df = df.copy()
             _metric_df["total_amount"] = pd.to_numeric(_metric_df["total_amount"], errors="coerce")
             _metric_val = float(_metric_df["total_amount"].sum())
             if _metric_val is not None and not (isinstance(_metric_val, float) and __import__("math").isnan(_metric_val)):
@@ -132,7 +132,7 @@ def main():
             </div>''', unsafe_allow_html=True)
         with _mc1:
             # Chart: total_orders_kpi
-            _metric_df = df
+            _metric_df = df.copy()
             _metric_df["order_id"] = pd.to_numeric(_metric_df["order_id"], errors="coerce")
             _metric_val = float(len(_metric_df))
             if _metric_val is not None and not (isinstance(_metric_val, float) and __import__("math").isnan(_metric_val)):
@@ -145,7 +145,7 @@ def main():
             </div>''', unsafe_allow_html=True)
         with _mc2:
             # Chart: avg_order_value_kpi
-            _metric_df = df
+            _metric_df = df.copy()
             _metric_df["total_amount"] = pd.to_numeric(_metric_df["total_amount"], errors="coerce")
             _metric_val = float(_metric_df["total_amount"].mean())
             if _metric_val is not None and not (isinstance(_metric_val, float) and __import__("math").isnan(_metric_val)):
