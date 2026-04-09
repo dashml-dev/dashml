@@ -141,6 +141,7 @@ For each combination, verify:
 | **Grafana** | Bubble color: XY chart color field only supports numbers, not categorical strings |
 | **Grafana** | Heatmap: rendered as color-coded table (Grafana's native heatmap is a 2D histogram) |
 | **Grafana** | Geo: markers only, no choropleth fill |
+| **Superset** | Grouped/stacked bar sort direction: `x_axis_sort_asc` is stashed (removed from form_data) on reload due to missing `disableStash: true` on the control definition in Superset's `customControls.tsx`. Falls back to `default: true` (ascending). Superset bug — DashML sets the correct value via API but Superset's control stashing mechanism discards it. |
 | **Vega-Lite** | SQL/BigQuery: not supported (no runtime) |
 | **Vega-Lite** | Boxplot in hconcat: crashes Vega renderer, rendered solo |
 | **Superset** | CSV: not supported (Superset manages own data sources) |

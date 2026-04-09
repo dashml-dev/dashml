@@ -523,24 +523,52 @@ class VegaLiteTransformer(Transformer):
         return enc
 
     def _apply_limit(self, vl: dict, chart: dict) -> None:
-        """Add window + filter transforms for limit."""
+        """Add aggregate + window rank + filter transforms for limit.
+
+        Aggregates first so rank operates on totals, not individual rows.
+        """
         limit = chart.get("limit")
         if not limit:
             return
         transforms = vl.get("transform", [])
         sort_order = chart.get("sort_order", "asc")
+        x_field = chart.get("x", "x")
         y_field = chart.get("y", "y")
         agg = chart.get("agg", "sum")
+        agg_map = {"sum": "sum", "mean": "mean", "count": "count"}
+        vl_agg = agg_map.get(agg, "sum")
 
-        # Use a window rank then filter
-        transforms.extend([
-            {
-                "window": [{"op": "rank", "as": "_rank"}],
-                "sort": [{"field": y_field, "order": "descending" if sort_order == "desc" else "ascending"}],
-            },
-            {"filter": f"datum._rank <= {limit}"},
-        ])
+        # Step 1: Aggregate so rank is on totals, not individual rows
+        if agg == "count":
+            transforms.append({
+                "aggregate": [{"op": "count", "as": y_field}],
+                "groupby": [x_field],
+            })
+        else:
+            transforms.append({
+                "aggregate": [{"op": vl_agg, "field": y_field, "as": y_field}],
+                "groupby": [x_field],
+            })
+
+        # Step 2: Rank by aggregated value
+        transforms.append({
+            "window": [{"op": "rank", "as": "_rank"}],
+            "sort": [{"field": y_field, "order": "descending" if sort_order == "desc" else "ascending"}],
+        })
+
+        # Step 3: Filter to top N
+        transforms.append({"filter": f"datum._rank <= {limit}"})
+
         vl["transform"] = transforms
+
+        # Remove aggregate from encoding since we did it in transforms,
+        # and ensure field is set (count encoding has no field by default)
+        enc = vl.get("encoding", {})
+        y_enc = enc.get("y", {})
+        if "aggregate" in y_enc:
+            del y_enc["aggregate"]
+        if "field" not in y_enc:
+            y_enc["field"] = y_field
 
     # ── Chart type builders ────────────────────────────────────────
 
@@ -872,23 +900,32 @@ class VegaLiteTransformer(Transformer):
 
     def _build_bubble(self, chart: dict, spec: "NormalizedSpec") -> dict:
         group = chart.get("group", "")
+        x_field = chart.get("x", "x")
+        y_field = chart.get("y", "y")
         size_field = chart.get("size", "")
         agg = chart.get("agg", "sum")
+        vl_agg = AGG_MAP.get(agg, "sum")
+
+        # Aggregate in transforms so we get one point per group
+        transforms = []
+        if group:
+            agg_fields = [
+                {"op": vl_agg, "field": x_field, "as": x_field},
+                {"op": vl_agg, "field": y_field, "as": y_field},
+            ]
+            if size_field:
+                agg_fields.append({"op": vl_agg, "field": size_field, "as": size_field})
+            transforms.append({
+                "aggregate": agg_fields,
+                "groupby": [group],
+            })
 
         enc = {
-            "x": {
-                "field": chart.get("x", "x"),
-                "type": "quantitative",
-                "aggregate": AGG_MAP.get(agg, "sum"),
-            },
-            "y": {
-                "field": chart.get("y", "y"),
-                "type": "quantitative",
-                "aggregate": AGG_MAP.get(agg, "sum"),
-            },
+            "x": {"field": x_field, "type": "quantitative"},
+            "y": {"field": y_field, "type": "quantitative"},
             "tooltip": [
-                {"field": chart.get("x", "x"), "type": "quantitative"},
-                {"field": chart.get("y", "y"), "type": "quantitative"},
+                {"field": x_field, "type": "quantitative"},
+                {"field": y_field, "type": "quantitative"},
             ],
         }
 
@@ -902,17 +939,16 @@ class VegaLiteTransformer(Transformer):
             enc["tooltip"].append({"field": group, "type": "nominal"})
 
         if size_field:
-            enc["size"] = {
-                "field": size_field,
-                "type": "quantitative",
-                "aggregate": AGG_MAP.get(agg, "sum"),
-            }
+            enc["size"] = {"field": size_field, "type": "quantitative"}
             enc["tooltip"].append({"field": size_field, "type": "quantitative"})
 
-        return {
+        result = {
             "mark": {"type": "point", "filled": True, "opacity": 0.7},
             "encoding": enc,
         }
+        if transforms:
+            result["transform"] = transforms
+        return result
 
     def _build_metric(self, chart: dict, spec: "NormalizedSpec") -> dict:
         """Metric as a large text mark showing the aggregate value."""

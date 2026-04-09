@@ -927,9 +927,14 @@ class SupersetTransformer(Transformer):
 
         # Check if chart already exists
         existing_chart_id = existing_chart_map.get(title)
-        x = chart["x"]
+        x = chart.get("x", "")
         y = chart.get("y", "")
         agg = chart.get("agg", "sum")
+        # When normalizer moved y→group for count agg, y is empty
+        if not y and agg == "count" and chart_type != "metric":
+            y = "count"
+        # Map DashML agg to Superset aggregate names
+        superset_agg = {"sum": "SUM", "mean": "AVG", "count": "COUNT"}.get(agg, "SUM")
         group = chart.get("group")
         x_type = chart.get("x_type")  # Optional: "date", "number", "string" for sorting
         y_type = chart.get("y_type")  # Optional: "number", "string" for casting
@@ -940,6 +945,9 @@ class SupersetTransformer(Transformer):
         limit = chart.get("limit")  # Optional: max rows after aggregation
 
         viz_type = DASHML_TO_SUPERSET_VIZ.get(chart_type, "dist_bar")
+        # Metric charts use big_number_total
+        if chart_type == "metric":
+            viz_type = "big_number_total"
 
         # Get colors from style config
         if not style_config:
@@ -1025,10 +1033,28 @@ class SupersetTransformer(Transformer):
         # Build metric label for orderby
         metric_label = f"{agg.lower()}__{y}"
 
-        if chart_type in ["bar", "line", "stacked_bar", "grouped_bar"]:
+        if chart_type == "metric":
+            # Big number total: single aggregate value
+            if agg == "count":
+                params["metric"] = {
+                    "expressionType": "SQL",
+                    "label": "COUNT(*)",
+                    "sqlExpression": "COUNT(*)",
+                }
+            else:
+                params["metric"] = {
+                    "expressionType": "SIMPLE",
+                    "column": {"column_name": y},
+                    "aggregate": superset_agg,
+                    "label": f"{superset_agg}({y})",
+                }
+        elif chart_type in ["bar", "line", "stacked_bar", "grouped_bar"]:
             # ECharts timeseries configuration
             params["x_axis"] = x
-            params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper()}]
+            if agg == "count":
+                params["metrics"] = [{"expressionType": "SQL", "label": "COUNT(*)", "sqlExpression": "COUNT(*)"}]
+            else:
+                params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": superset_agg}]
 
             # Configure temporal axis if x_type is date
             if x_type == "date":
@@ -1054,6 +1080,13 @@ class SupersetTransformer(Transformer):
             elif chart_type in ["stacked_bar", "grouped_bar"]:
                 params["seriesType"] = "bar"
                 params["groupby"] = [group] if group else []
+                # Sort grouped/stacked bars by total across all series
+                if sort_field == "y":
+                    params["x_axis_sort"] = "sum"
+                    params["x_axis_sort_asc"] = sort_order == "asc"
+                elif sort_field == "x":
+                    params["x_axis_sort"] = "name"
+                    params["x_axis_sort_asc"] = sort_order == "asc"
                 # For stacked bar, enable stacking
                 if chart_type == "stacked_bar":
                     params["stack"] = True
@@ -1061,7 +1094,10 @@ class SupersetTransformer(Transformer):
         elif chart_type == "area":
             # ECharts area uses x_axis and metrics
             params["x_axis"] = x
-            params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper()}]
+            if agg == "count":
+                params["metrics"] = [{"expressionType": "SQL", "label": "COUNT(*)", "sqlExpression": "COUNT(*)"}]
+            else:
+                params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": superset_agg}]
             # Configure temporal axis if x_type is date
             if x_type == "date":
                 params["x_axis_sort_asc"] = sort_order == "asc" if sort_field == "x" else True
@@ -1075,7 +1111,7 @@ class SupersetTransformer(Transformer):
                 params["orderby"] = [[x, True]]
         elif chart_type == "pie":
             # Pie chart uses singular 'metric' param with adhoc metric format
-            if agg.upper() == "COUNT":
+            if superset_agg == "COUNT":
                 # Use SQL expression for COUNT
                 params["metric"] = {
                     "expressionType": "SQL",
@@ -1087,8 +1123,8 @@ class SupersetTransformer(Transformer):
                 params["metric"] = {
                     "expressionType": "SIMPLE",
                     "column": {"column_name": y},
-                    "aggregate": agg.upper(),
-                    "label": f"{agg.upper()}({y})"
+                    "aggregate": superset_agg,
+                    "label": f"{superset_agg}({y})"
                 }
             params["groupby"] = [x]
             # Pie chart sorting
@@ -1100,7 +1136,7 @@ class SupersetTransformer(Transformer):
         elif chart_type == "scatter":
             # ECharts timeseries scatter - same structure as bar/line
             params["x_axis"] = x
-            params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg.upper() if agg else "AVG"}]
+            params["metrics"] = [{"label": y, "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": superset_agg if agg else "AVG"}]
             params["seriesType"] = "scatter"
 
             # Apply sorting for scatter
@@ -1119,7 +1155,7 @@ class SupersetTransformer(Transformer):
             # Controls: entity (grouping column), x/y/size (metrics), series (optional)
             size_field = chart.get("size", y)  # Default to y if size not specified
             bubble_group = group if group else x  # Use group field as entity
-            agg_upper = agg.upper() if agg else "SUM"
+            agg_upper = superset_agg if agg else "SUM"
             x_metric = {"label": f"{agg_upper}({x})", "expressionType": "SIMPLE", "column": {"column_name": x}, "aggregate": agg_upper}
             y_metric = {"label": f"{agg_upper}({y})", "expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": agg_upper}
             size_metric = {"label": f"{agg_upper}({size_field})", "expressionType": "SIMPLE", "column": {"column_name": size_field}, "aggregate": agg_upper}
@@ -1136,7 +1172,7 @@ class SupersetTransformer(Transformer):
             params["x_axis"] = x
             params["groupby"] = [heatmap_y]  # Y-axis dimension (multi=false but still array)
             # Metric for the value (color intensity)
-            if agg.upper() == "COUNT":
+            if superset_agg == "COUNT":
                 params["metric"] = {
                     "expressionType": "SQL",
                     "label": f"COUNT({y})",
@@ -1146,8 +1182,8 @@ class SupersetTransformer(Transformer):
                 params["metric"] = {
                     "expressionType": "SIMPLE",
                     "column": {"column_name": y},
-                    "aggregate": agg.upper(),
-                    "label": f"{agg.upper()}({y})"
+                    "aggregate": superset_agg,
+                    "label": f"{superset_agg}({y})"
                 }
             params["linear_color_scheme"] = colors.get("sequential", "blue_white_yellow")
             params["normalize_across"] = "heatmap"
@@ -1189,7 +1225,7 @@ class SupersetTransformer(Transformer):
             params["entity"] = x  # Column containing country names/codes
             params["country_fieldtype"] = ENCODING_TO_SUPERSET.get(geo_encoding, "cca2")
             # Build metric for the value to color by
-            if agg.upper() == "COUNT":
+            if superset_agg == "COUNT":
                 params["metric"] = {
                     "expressionType": "SQL",
                     "label": f"COUNT({y})",
@@ -1199,8 +1235,8 @@ class SupersetTransformer(Transformer):
                 params["metric"] = {
                     "expressionType": "SIMPLE",
                     "column": {"column_name": y},
-                    "aggregate": agg.upper(),
-                    "label": f"{agg.upper()}({y})"
+                    "aggregate": superset_agg,
+                    "label": f"{superset_agg}({y})"
                 }
             # Apply sorting
             if sort_field == "y":
@@ -1264,7 +1300,7 @@ class SupersetTransformer(Transformer):
                 # Bubble chart: entity column for grouping, 3 metrics for x/y/size
                 columns = [group if group else x]
                 size_f = chart.get("size", y)
-                agg_up = agg.upper() if agg else "SUM"
+                agg_up = superset_agg if agg else "SUM"
                 # Build deduplicated metrics for query_context
                 bubble_metrics = {}
                 for col in [x, y, size_f]:
@@ -1300,7 +1336,7 @@ class SupersetTransformer(Transformer):
                     "label": metric_label,
                     "expressionType": "SIMPLE",
                     "column": {"column_name": y},
-                    "aggregate": agg.upper()
+                    "aggregate": superset_agg
                 }
                 query_metrics = [metric_obj]
 
@@ -1329,6 +1365,7 @@ class SupersetTransformer(Transformer):
                 "datasource": {"id": self.dataset_id, "type": "table"},
                 "force": False,
                 "queries": query_context_queries,
+                "form_data": params,
                 "result_format": "json",
                 "result_type": "full"
             })

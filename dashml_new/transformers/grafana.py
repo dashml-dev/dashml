@@ -319,7 +319,8 @@ class GrafanaTransformer(Transformer):
             if chart.get("y"):
                 chart["y"] = "y"
             if chart.get("group"):
-                chart["group"] = "grp"
+                # Heatmap SQL aliases group as "heatmap_y", others as "grp"
+                chart["group"] = "heatmap_y" if chart_type == "heatmap" else "grp"
             if chart.get("size"):
                 chart["size"] = "size"
 
@@ -341,13 +342,21 @@ class GrafanaTransformer(Transformer):
         # Apply reference lines as thresholds
         self._apply_reference_lines(panel, chart)
 
-        # Add data transformations for CSV (filters, groupBy, sort, limit)
+        # Add data transformations
         if data_type == "csv" and self._csv_url:
+            # CSV: full pipeline (filters, groupBy, sort, limit, pivot)
             transforms = self._build_transformations(chart)
             if transforms:
                 # Prepend to any transforms added by the configurator (e.g. groupingToMatrix)
                 existing = panel.get("transformations", [])
                 panel["transformations"] = transforms + existing
+        elif sql:
+            # SQL: data comes pre-aggregated, but pivot is still needed
+            # for stacked/grouped bars and heatmap
+            pivot = self._build_pivot_transform(chart)
+            if pivot:
+                existing = panel.get("transformations", [])
+                panel["transformations"] = existing + pivot
 
         # Apply theme colors
         self._apply_theme(panel, chart, spec)
@@ -597,13 +606,15 @@ class GrafanaTransformer(Transformer):
             return []
 
         x_field = chart.get("x", "x")
-        y_field = chart.get("y", "y")
+        y_field = chart.get("y", "")
         agg = chart.get("agg", "sum")
 
-        if agg == "count":
+        if y_field:
+            value_field = y_field
+        elif agg == "count":
             value_field = f"{x_field} (count)"
         else:
-            value_field = y_field
+            value_field = x_field
 
         transforms = [{
             "id": "groupingToMatrix",
@@ -676,10 +687,17 @@ class GrafanaTransformer(Transformer):
 
     def _configure_metric_panel(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
         """Configure stat panel for metric charts."""
+        # For SQL mode, the query already aggregates — just display the value.
+        # For CSV mode, the stat panel needs to reduce the raw data.
+        data_type = spec.get("data", {}).get("type", "csv")
+        if data_type in ("sql", "bigquery"):
+            calc = "lastNotNull"
+        else:
+            calc = self._agg_to_grafana_calc(chart.get("agg", "sum"))
         panel["options"] = {
             "reduceOptions": {
                 "values": False,
-                "calcs": [self._agg_to_grafana_calc(chart.get("agg", "sum"))],
+                "calcs": [calc],
                 "fields": "",
             },
             "graphMode": "none",
@@ -922,15 +940,21 @@ class GrafanaTransformer(Transformer):
         agg = chart.get("agg", "sum")
         grafana_agg = self._AGG_TO_GRAFANA.get(agg, "sum")
 
-        # The aggregated field name after groupBy + organize rename
-        value_field = y_field if agg != "count" else f"{x_field} (count)"
+        # The aggregated field name: SQL mode always uses "y",
+        # CSV count mode produces "x_field (count)" after groupBy
+        if y_field:
+            value_field = y_field
+        elif agg == "count":
+            value_field = f"{x_field} (count)"
+        else:
+            value_field = x_field
 
         panel.setdefault("transformations", [])
         panel["transformations"].append({
             "id": "groupingToMatrix",
             "options": {
-                "columnField": group_field,
-                "rowField": x_field,
+                "columnField": x_field,
+                "rowField": group_field,
                 "valueField": value_field,
             },
         })
