@@ -439,22 +439,37 @@ class ObservablePlotTransformer(Transformer):
             if description:
                 page_html.append(f'        <p class="page-description">{description}</p>')
 
+            # Separate metric cards from regular chart cards
+            metric_htmls = []
+            regular_htmls = []
             for chart in charts:
                 chart_id = chart["id"]
                 chart_title = chart.get("title", chart_id)
                 if chart.get("type") == "metric":
-                    page_html.append(f"""        <div class="card metric-card">
+                    metric_htmls.append(f"""        <div class="card metric-card">
             <div class="metric-title">{chart_title}</div>
             <div id="chart-{page_id}-{chart_id}" class="metric-value">—</div>
         </div>""")
                 else:
-                    page_html.append(f"""        <div class="card">
+                    regular_htmls.append(f"""        <div class="card">
             <h2>{chart_title}</h2>
             <div id="chart-{page_id}-{chart_id}"></div>
         </div>""")
 
                 # Generate render function for this chart
                 render_functions.append(self._generate_chart_render(chart, colors, page_id))
+
+            # Metric cards first (they display inline via CSS)
+            page_html.extend(metric_htmls)
+
+            # Regular chart cards — optionally wrapped in CSS Grid
+            columns = page.get("layout", {}).get("columns")
+            if columns and regular_htmls:
+                page_html.append(f'        <div style="display: grid; grid-template-columns: repeat({columns}, 1fr); gap: 16px;">')
+                page_html.extend(regular_htmls)
+                page_html.append(f'        </div>')
+            else:
+                page_html.extend(regular_htmls)
 
             page_html.append('    </div>')
             page_contents.append("\n".join(page_html))
@@ -599,6 +614,12 @@ class ObservablePlotTransformer(Transformer):
         sequential_scheme = colors.get("sequential", "blues")
         mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field, sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"), sort_field=sort_field, sort_order=sort_order)
 
+        # Inject annotation + reference-line marks into the marks array
+        mark_code = self._inject_extra_marks(mark_code, chart, data_ref=f"data_{safe_var_name}")
+
+        # Merge log-scale type into existing axis options inside mark_code
+        mark_code = self._merge_scale_into_mark_code(mark_code, chart)
+
         # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
         # TODO: [Magic Values] Extract temporal field names to module-level constant
         # Fix: TEMPORAL_FIELD_NAMES = frozenset(['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at'])
@@ -608,6 +629,18 @@ class ObservablePlotTransformer(Transformer):
         scale_config = ""
         if is_temporal_x:
             scale_config = f"""x: {{ type: "utc" }},
+                """
+
+        # Log scale: build top-level scale overrides for axes that don't already
+        # appear in mark_code (e.g. line/scatter where _get_plot_mark omits x:/y:)
+        log_scale_config = self._axis_scale_options_js(chart)
+        if log_scale_config:
+            # Only add axes that are NOT already present in mark_code (after marks])
+            marks_end = mark_code.find(']')
+            after_marks = mark_code[marks_end:] if marks_end != -1 else ""
+            for axis in ("x", "y"):
+                if chart.get(f"{axis}_scale") == "log" and f"{axis}:" not in after_marks:
+                    scale_config += f"""{axis}: {{ type: "log" }},
                 """
 
         # Determine if chart has categorical x-axis (needs more bottom margin for rotated labels)
@@ -1973,13 +2006,16 @@ if __name__ == '__main__':
                 )
                 page_html.append('        </div>')
 
+            # Separate metric cards from regular chart cards
+            metric_htmls = []
+            regular_htmls = []
             for chart in charts:
                 chart_id = chart["id"]
                 chart_title = chart.get("title", chart_id)
                 container_id = f"chart-{page_id}-{chart_id}"
 
                 if chart.get("type") == "metric":
-                    page_html.append(f"""        <div class="card metric-card">
+                    metric_htmls.append(f"""        <div class="card metric-card">
             <div class="metric-title">{chart_title}</div>
             <div id="{container_id}" class="metric-value">—</div>
         </div>""")
@@ -1987,13 +2023,25 @@ if __name__ == '__main__':
                     render_fn_assignments.append(f"        window['renderFn_{chart_id}'] = {render_fn};")
                     load_calls.append(f"        loadMetric('{container_id}', '{chart_id}', window['renderFn_{chart_id}'])")
                 else:
-                    page_html.append(f"""        <div class="card">
+                    regular_htmls.append(f"""        <div class="card">
             <h2>{chart_title}</h2>
             <div id="{container_id}"></div>
         </div>""")
                     render_fn = self._generate_sql_chart_render_fn(chart, colors, container_id)
                     render_fn_assignments.append(f"        window['renderFn_{chart_id}'] = {render_fn};")
                     load_calls.append(f"        loadChart('{container_id}', '{chart_id}', window['renderFn_{chart_id}'])")
+
+            # Metric cards first (they display inline via CSS)
+            page_html.extend(metric_htmls)
+
+            # Regular chart cards — optionally wrapped in CSS Grid
+            columns = page.get("layout", {}).get("columns")
+            if columns and regular_htmls:
+                page_html.append(f'        <div style="display: grid; grid-template-columns: repeat({columns}, 1fr); gap: 16px;">')
+                page_html.extend(regular_htmls)
+                page_html.append(f'        </div>')
+            else:
+                page_html.extend(regular_htmls)
 
             page_html.append('    </div>')
             page_contents.append("\n".join(page_html))
@@ -2166,6 +2214,142 @@ if __name__ == '__main__':
             c = c[0]*2 + c[1]*2 + c[2]*2
         r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
         return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5
+
+    # ------------------------------------------------------------------
+    # Helpers: annotations, reference lines, log scale
+    # ------------------------------------------------------------------
+
+    def _annotation_marks_js(self, chart: Dict[str, Any], data_ref: str = "data") -> str:
+        """Return JS snippet(s) for Plot.text() annotation marks.
+
+        Each annotation is: {text, x, y, color (optional)}.
+        *data_ref* is the JS variable holding the chart data array — used
+        only for field-name references; annotations carry literal x/y values.
+        """
+        annotations = chart.get("annotations")
+        if not annotations:
+            return ""
+        parts = []
+        for ann in annotations:
+            text_val = json.dumps(ann.get("text", ""))
+            x_val = json.dumps(ann.get("x"))
+            y_val = ann.get("y")
+            # y can be numeric or string
+            y_js = json.dumps(y_val) if isinstance(y_val, str) else str(y_val)
+            color = ann.get("color", "currentColor")
+            parts.append(
+                f'Plot.text([{{x: {x_val}, y: {y_js}}}], '
+                f'{{x: "x", y: "y", text: d => {text_val}, '
+                f'fontSize: 12, fill: "{color}", dy: -8}})'
+            )
+        return ",\n                    ".join(parts)
+
+    def _reference_lines_marks_js(self, chart: Dict[str, Any]) -> str:
+        """Return JS snippet(s) for Plot.ruleY() / Plot.ruleX() reference-line marks.
+
+        Each ref line is: {axis, value, label (optional), color (optional), style (optional)}.
+        style mapping: solid → (none), dashed → "4,4", dotted → "1,3".
+        """
+        ref_lines = chart.get("reference_lines")
+        if not ref_lines:
+            return ""
+        _dash_map = {"solid": "", "dashed": "4,4", "dotted": "1,3"}
+        parts = []
+        for rl in ref_lines:
+            axis = rl.get("axis", "y")
+            value = rl["value"]
+            color = rl.get("color", "red")
+            style = rl.get("style", "dashed")
+            dash = _dash_map.get(style, "4,4")
+            rule_fn = "Plot.ruleY" if axis == "y" else "Plot.ruleX"
+            opts = f'stroke: "{color}"'
+            if dash:
+                opts += f', strokeDasharray: "{dash}"'
+            parts.append(f'{rule_fn}([{json.dumps(value)}], {{{opts}}})')
+            # Optional label next to the line
+            label = rl.get("label")
+            if label:
+                label_js = json.dumps(label)
+                if axis == "y":
+                    parts.append(
+                        f'Plot.text([{{y: {json.dumps(value)}}}], '
+                        f'{{y: "y", text: d => {label_js}, '
+                        f'fontSize: 10, fill: "{color}", dx: 4, frameAnchor: "left"}})'
+                    )
+                else:
+                    parts.append(
+                        f'Plot.text([{{x: {json.dumps(value)}}}], '
+                        f'{{x: "x", text: d => {label_js}, '
+                        f'fontSize: 10, fill: "{color}", dy: -8, frameAnchor: "top"}})'
+                    )
+        return ",\n                    ".join(parts)
+
+    def _inject_extra_marks(self, mark_code: str, chart: Dict[str, Any], data_ref: str = "data") -> str:
+        """Append annotation + reference-line marks into an existing mark_code string.
+
+        *mark_code* has the form ``marks: [...], x: {...}, ...``.
+        We locate the **first** ``]`` that closes the marks array and insert
+        the extra marks just before it.
+        """
+        extras = []
+        ann = self._annotation_marks_js(chart, data_ref)
+        if ann:
+            extras.append(ann)
+        ref = self._reference_lines_marks_js(chart)
+        if ref:
+            extras.append(ref)
+        if not extras:
+            return mark_code
+        extra_str = ",\n                    ".join(extras)
+        # Find the first ']' that closes the marks array
+        idx = mark_code.find(']')
+        if idx == -1:
+            return mark_code
+        return mark_code[:idx] + ",\n                    " + extra_str + "\n                " + mark_code[idx:]
+
+    def _axis_scale_options_js(self, chart: Dict[str, Any]) -> str:
+        """Return JS options for log-scale axes to merge into Plot.plot() options.
+
+        Returns a string like ``x: { type: "log" }, y: { type: "log" },``
+        or empty string if no log scales are configured.
+        """
+        parts = []
+        if chart.get("x_scale") == "log":
+            parts.append('x: { type: "log" }')
+        if chart.get("y_scale") == "log":
+            parts.append('y: { type: "log" }')
+        if not parts:
+            return ""
+        return ", ".join(parts) + ","
+
+    def _merge_scale_into_mark_code(self, mark_code: str, chart: Dict[str, Any]) -> str:
+        """Merge log-scale type into existing axis options inside mark_code.
+
+        mark_code may already contain ``x: { ... }`` or ``y: { ... }`` axis
+        option objects.  If x_scale or y_scale is "log", we inject
+        ``type: "log"`` into the existing object (if present) or leave
+        the top-level scale_config to handle it.
+        """
+        for axis in ("x", "y"):
+            scale = chart.get(f"{axis}_scale")
+            if scale != "log":
+                continue
+            # Try to find `x: {` or `y: {` (as a top-level option, not inside marks)
+            # We look for the pattern after the marks array closes
+            marks_end = mark_code.find(']')
+            if marks_end == -1:
+                continue
+            after_marks = mark_code[marks_end:]
+            # Pattern: `x: {` or `y: {` — we want to inject `type: "log",` right after the `{`
+            import re as _re
+            # Match axis option like:  x: {  or  y: {
+            # Be careful to match the axis letter as a standalone token
+            pattern = _re.compile(r'(\b' + axis + r'\s*:\s*\{)')
+            m = pattern.search(after_marks)
+            if m:
+                insert_pos = marks_end + m.end()
+                mark_code = mark_code[:insert_pos] + f' type: "log",' + mark_code[insert_pos:]
+        return mark_code
 
     def _generate_sql_chart_render_fn(self, chart: Dict[str, Any], colors: Dict[str, str], container_id: str) -> str:
         """Generate a JS function(data) for rendering a chart with pre-aggregated data"""
@@ -2535,11 +2719,28 @@ if __name__ == '__main__':
                 }},
                 y: {{ label: "{y}" }}"""
 
+        # Inject annotation + reference-line marks
+        mark_code = self._inject_extra_marks(mark_code, chart, data_ref="data")
+
+        # Merge log-scale into existing axis options
+        mark_code = self._merge_scale_into_mark_code(mark_code, chart)
+
+        # Build top-level scale overrides for axes not already in mark_code
+        sql_scale_config = ""
+        log_scale_config = self._axis_scale_options_js(chart)
+        if log_scale_config:
+            marks_end = mark_code.find(']')
+            after_marks = mark_code[marks_end:] if marks_end != -1 else ""
+            for axis in ("x", "y"):
+                if chart.get(f"{axis}_scale") == "log" and f"{axis}:" not in after_marks:
+                    sql_scale_config += f"""{axis}: {{ type: "log" }},
+                """
+
         return f"""function(data) {{
             {preprocess}
             const plot = Plot.plot({{
                 {mark_code},
-                marginLeft: {margin_left},
+                {sql_scale_config}marginLeft: {margin_left},
                 marginBottom: {margin_bottom},
                 grid: true,
                 style: {{

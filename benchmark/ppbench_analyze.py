@@ -145,6 +145,8 @@ def analyze_visual_scores(
         else:
             buckets["0-29"] += 1
 
+    good_count = sum(1 for s in scores if s >= 75)
+
     return {
         "arm": arm,
         "count": n,
@@ -152,7 +154,22 @@ def analyze_visual_scores(
         "median": median,
         "min": min(scores),
         "max": max(scores),
+        "good_pct": round(good_count / n, 2) if n else 0,
+        "good_count": good_count,
         "distribution": buckets,
+    }
+
+
+def load_expressible_ids(results_dir: Path) -> set:
+    """Load expressible task IDs from audit results."""
+    audit_path = results_dir / "audit_results.json"
+    if not audit_path.exists():
+        return set()
+    with open(audit_path) as f:
+        audit = json.load(f)
+    return {
+        i for i, t in enumerate(audit.get("per_task", []))
+        if t.get("expressibility") in ("full", "partial")
     }
 
 
@@ -162,6 +179,7 @@ def run_analysis(results_dir: Path):
     dashml_results = load_results(results_dir, "dashml")
     plotly_results = load_results(results_dir, "plotly")
     visual_scores = load_visual_scores(results_dir)
+    expressible_ids = load_expressible_ids(results_dir)
 
     if not dashml_results and not plotly_results:
         print("No results found. Run ppbench_benchmark.py first.")
@@ -212,7 +230,7 @@ def run_analysis(results_dir: Path):
         print(f"\n  {'Metric':<25s} {'DashML':>12s} {'Plotly':>12s} {'Delta':>10s}")
         print(f"  {'-'*25} {'-'*12} {'-'*12} {'-'*10}")
 
-        for label, key in [("Count", "count"), ("Mean score", "mean"), ("Median", "median")]:
+        for label, key in [("Count", "count"), ("Mean score", "mean"), ("Median", "median"), ("Good (>=75)", "good_pct")]:
             d_val = (dashml_visual or {}).get(key, 0)
             p_val = (plotly_visual or {}).get(key, 0)
             if isinstance(d_val, float) or (isinstance(d_val, int) and key != "count"):
@@ -264,6 +282,49 @@ def run_analysis(results_dir: Path):
     if d_tok.get("avg_output") and p_tok.get("avg_output"):
         ratio = p_tok["avg_output"] / d_tok["avg_output"]
         print(f"  Token ratio:      DashML uses {ratio:.1f}x fewer output tokens")
+
+    # ── Expressible Subset ──
+    if expressible_ids:
+        print(f"\n{'EXPRESSIBLE SUBSET (' + str(len(expressible_ids)) + '/175 tasks, ' + f'{100*len(expressible_ids)/175:.1f}%' + ')':=^70}")
+
+        d_expr = [r for r in dashml_results if r.get("task_id") in expressible_ids]
+        p_expr = [r for r in plotly_results if r.get("task_id") in expressible_ids]
+        d_expr_stats = analyze_arm(d_expr, "dashml")
+        p_expr_stats = analyze_arm(p_expr, "plotly")
+
+        print(f"\n  {'Metric':<25s} {'DashML':>12s} {'Plotly':>12s} {'Delta':>10s}")
+        print(f"  {'-'*25} {'-'*12} {'-'*12} {'-'*10}")
+        for label, key in [("Tasks", "total"), ("Compile/Exec rate", "compile_rate")]:
+            d_val = d_expr_stats.get(key, 0)
+            p_val = p_expr_stats.get(key, 0)
+            if isinstance(d_val, float):
+                delta = d_val - p_val
+                print(f"  {label:<25s} {100*d_val:>11.1f}% {100*p_val:>11.1f}% {100*delta:>+9.1f}pp")
+            else:
+                print(f"  {label:<25s} {d_val:>12d} {p_val:>12d}")
+
+        # Visual scores for expressible subset
+        d_expr_visual = analyze_visual_scores(
+            {k: v for k, v in visual_scores.items() if k[0] in expressible_ids}, "dashml"
+        )
+        p_expr_visual = analyze_visual_scores(
+            {k: v for k, v in visual_scores.items() if k[0] in expressible_ids}, "plotly"
+        )
+        if d_expr_visual or p_expr_visual:
+            print(f"\n  Visual scores (expressible subset):")
+            print(f"  {'Metric':<25s} {'DashML':>12s} {'Plotly':>12s} {'Delta':>10s}")
+            print(f"  {'-'*25} {'-'*12} {'-'*12} {'-'*10}")
+            for label, key in [("Count", "count"), ("Mean task score", "mean"), ("Median", "median"), ("Good (>=75)", "good_pct")]:
+                d_val = (d_expr_visual or {}).get(key, 0)
+                p_val = (p_expr_visual or {}).get(key, 0)
+                if isinstance(d_val, float):
+                    delta = d_val - p_val
+                    if key == "good_pct":
+                        print(f"  {label:<25s} {100*d_val:>11.1f}% {100*p_val:>11.1f}% {100*delta:>+9.1f}pp")
+                    else:
+                        print(f"  {label:<25s} {d_val:>12.1f} {p_val:>12.1f} {delta:>+10.1f}")
+                else:
+                    print(f"  {label:<25s} {d_val:>12d} {p_val:>12d}")
 
     # ── Save JSON ──
     report = {

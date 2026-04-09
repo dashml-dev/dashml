@@ -8,6 +8,8 @@ Generates a Grafana dashboard JSON file that can be imported via:
 Uses __inputs variable placeholders so Grafana's import wizard
 prompts the user to select their datasource.
 """
+from __future__ import annotations
+
 import json
 from typing import TYPE_CHECKING
 
@@ -127,8 +129,9 @@ class GrafanaTransformer(Transformer):
 
             # Layout charts within this page
             charts = page.get("charts", [])
+            layout = page.get("layout", {})
             page_panels, y_pos, panel_id = self._layout_page_charts(
-                charts, panel_id, y_pos, spec
+                charts, panel_id, y_pos, spec, layout
             )
             panels.extend(page_panels)
 
@@ -215,16 +218,23 @@ class GrafanaTransformer(Transformer):
     # ── Layout ─────────────────────────────────────────────────────
 
     def _layout_page_charts(
-        self, charts: list, panel_id: int, y_pos: int, spec: "NormalizedSpec"
+        self, charts: list, panel_id: int, y_pos: int, spec: "NormalizedSpec",
+        layout: dict | None = None,
     ) -> tuple[list, int, int]:
-        """Layout charts: metrics 4-per-row (w=6), charts 2-per-row (w=12)."""
+        """Layout charts: metrics 4-per-row (w=6), charts N-per-row (w=24/N).
+
+        When layout has a 'columns' key, non-metric charts use that column count
+        instead of the default 2-per-row.
+        """
         panels = []
+        layout = layout or {}
+        columns = layout.get("columns")
 
         # Separate metrics from charts
         metrics = [c for c in charts if c.get("type") == "metric"]
         non_metrics = [c for c in charts if c.get("type") != "metric"]
 
-        # Layout metrics: 4 per row
+        # Layout metrics: 4 per row (unaffected by layout.columns)
         for i, chart in enumerate(metrics):
             col = (i % 4) * METRIC_WIDTH
             if i % 4 == 0 and i > 0:
@@ -236,12 +246,14 @@ class GrafanaTransformer(Transformer):
         if metrics:
             y_pos += METRIC_HEIGHT
 
-        # Layout non-metric charts: 2 per row
+        # Layout non-metric charts: N per row (default 2)
+        charts_per_row = columns if columns else 2
+        chart_width = GRID_COLS // charts_per_row
         for i, chart in enumerate(non_metrics):
-            col = (i % 2) * CHART_WIDTH
-            if i % 2 == 0 and i > 0:
+            col = (i % charts_per_row) * chart_width
+            if i % charts_per_row == 0 and i > 0:
                 y_pos += CHART_HEIGHT
-            panel = self._build_panel_for_chart(chart, panel_id, col, y_pos, CHART_WIDTH, CHART_HEIGHT, spec)
+            panel = self._build_panel_for_chart(chart, panel_id, col, y_pos, chart_width, CHART_HEIGHT, spec)
             panels.append(panel)
             panel_id += 1
 
@@ -311,10 +323,23 @@ class GrafanaTransformer(Transformer):
             if chart.get("size"):
                 chart["size"] = "size"
 
+        # Warn about unsupported chart-level annotations
+        if chart.get("annotations"):
+            self.warn(
+                f"Chart '{chart.get('id')}': Grafana does not support chart-level text annotations; "
+                "annotations ignored."
+            )
+
         # Configure panel type-specific options
         configurator = getattr(self, f"_configure_{chart_type}_panel", None)
         if configurator:
             configurator(panel, chart, spec)
+
+        # Apply log scale (only for chart types that use fieldConfig.defaults.custom)
+        self._apply_log_scale(panel, chart, chart_type)
+
+        # Apply reference lines as thresholds
+        self._apply_reference_lines(panel, chart)
 
         # Add data transformations for CSV (filters, groupBy, sort, limit)
         if data_type == "csv" and self._csv_url:
@@ -1036,6 +1061,58 @@ class GrafanaTransformer(Transformer):
             "axisPlacement": "auto",
             "axisBorderShow": False,
         }
+
+    # ── Log scale & reference lines ──────────────────────────────
+
+    # Chart types where log scale can be applied (have fieldConfig.defaults.custom)
+    _LOG_SCALE_TYPES = {"bar", "line", "area", "scatter", "stacked_bar", "grouped_bar"}
+
+    def _apply_log_scale(self, panel: dict, chart: dict, chart_type: str) -> None:
+        """Apply logarithmic scale to panel axes if configured."""
+        if chart_type not in self._LOG_SCALE_TYPES:
+            return
+        if chart.get("y_scale") == "log":
+            panel["fieldConfig"]["defaults"]["custom"]["scaleDistribution"] = {
+                "type": "log",
+                "log": 2,
+            }
+        if chart.get("x_scale") == "log":
+            # Grafana does not support per-axis scale; scaleDistribution is y-only
+            self.warn(
+                f"Chart '{chart.get('id')}': Grafana scaleDistribution applies to the value (Y) axis only; "
+                "x_scale: log is ignored."
+            )
+
+    def _apply_reference_lines(self, panel: dict, chart: dict) -> None:
+        """Apply reference lines as Grafana thresholds (y-axis only)."""
+        ref_lines = chart.get("reference_lines", [])
+        if not ref_lines:
+            return
+
+        steps = [{"color": "transparent", "value": None}]
+        has_y = False
+        for rl in ref_lines:
+            if rl.get("axis") == "y":
+                has_y = True
+                steps.append({
+                    "color": rl.get("color", "red"),
+                    "value": rl["value"],
+                })
+            else:
+                self.warn(
+                    f"Chart '{chart.get('id')}': Grafana thresholds only support y-axis reference lines; "
+                    f"x-axis reference line at value={rl.get('value')} is ignored."
+                )
+
+        if has_y:
+            panel["fieldConfig"]["defaults"]["thresholds"] = {
+                "mode": "absolute",
+                "steps": steps,
+            }
+            # Enable threshold display as dashed lines in panel options
+            panel["fieldConfig"]["defaults"]["custom"]["thresholdsStyle"] = {
+                "mode": "line",
+            }
 
     # ── Theme / color application ──────────────────────────────────
 

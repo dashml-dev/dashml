@@ -88,6 +88,18 @@ SUPPORTED_DASHBOARD_FILTER_TYPES = frozenset({"select", "multiselect"})
 # Column types for x_type/y_type hints
 COLUMN_TYPES = frozenset({"date", "number", "string"})
 
+# Supported axis scale types
+SUPPORTED_SCALE_TYPES = frozenset({"linear", "log"})
+
+# Supported reference line styles
+SUPPORTED_REFERENCE_LINE_STYLES = frozenset({"solid", "dashed", "dotted"})
+
+# Default annotation styling
+ANNOTATION_DEFAULTS = {
+    "font_size": 12,
+    "color": "#333333",
+}
+
 # Date-related column names (heuristic for auto-detection)
 TEMPORAL_FIELD_NAMES = frozenset({
     'date', 'time', 'timestamp', 'datetime',

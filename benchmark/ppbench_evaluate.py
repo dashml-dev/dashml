@@ -29,27 +29,50 @@ sys.path.insert(0, str(PROJECT_ROOT))
 def render_html_to_png(html_path: str, output_png: str, timeout: int = 15000) -> bool:
     """Screenshot an HTML file using Playwright headless Chromium.
 
+    Serves the file via a local HTTP server so that fetch()/XHR for
+    relative paths (e.g. CSV data files) works correctly.
+    file:// protocol blocks fetch due to CORS.
+
     Returns True on success, False on failure.
     """
+    import threading
+    from http.server import HTTPServer, SimpleHTTPRequestHandler
+    from functools import partial
+
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         print("  [WARN] playwright not installed. Run: pip install playwright && playwright install chromium")
         return False
 
+    html_abs = Path(html_path).resolve()
+    # Serve from project root so relative paths like
+    # "benchmark/ppbench_results/task_N/dashml/data.csv" resolve correctly
+    serve_dir = str(PROJECT_ROOT)
+    html_rel = str(html_abs.relative_to(PROJECT_ROOT))
+
+    # Start a local HTTP server
+    handler = partial(SimpleHTTPRequestHandler, directory=serve_dir)
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 1280, "height": 960})
-            page.goto(f"file://{html_path}", wait_until="networkidle", timeout=timeout)
-            # Wait for Plotly to render
-            page.wait_for_timeout(2000)
+            page.goto(f"http://127.0.0.1:{port}/{html_rel}", wait_until="networkidle", timeout=timeout)
+            # Wait for Plotly/Observable to render after data loads
+            page.wait_for_timeout(3000)
             page.screenshot(path=output_png, full_page=False)
             browser.close()
         return True
     except Exception as e:
         print(f"  [WARN] Playwright screenshot failed: {e}")
         return False
+    finally:
+        server.shutdown()
 
 
 def encode_image_base64(image_path: str) -> Optional[str]:
@@ -274,24 +297,25 @@ def run_visual_evaluation(
             if (task_id, arm) in scored_ids:
                 continue
 
-            output_path = result["output_path"]
+            output_path = str(Path(result["output_path"]).resolve())
             task_desc = result.get("description", "")
 
-            # For DashML HTML outputs, screenshot first
-            if arm == "dashml" and output_path.endswith(".html"):
+            # For HTML outputs (DashML or Plotly), screenshot first
+            if output_path.endswith(".html"):
                 png_path = str(Path(output_path).with_suffix(".png"))
-                success = render_html_to_png(output_path, png_path)
-                if not success:
-                    score_entry = {
-                        "task_id": task_id,
-                        "arm": arm,
-                        "score": 0,
-                        "explanation": "Failed to screenshot HTML",
-                        "screenshot_failed": True,
-                    }
-                    scores_file.write(json.dumps(score_entry) + "\n")
-                    scores_file.flush()
-                    continue
+                if not Path(png_path).exists():
+                    success = render_html_to_png(output_path, png_path)
+                    if not success:
+                        score_entry = {
+                            "task_id": task_id,
+                            "arm": arm,
+                            "score": 0,
+                            "explanation": "Failed to screenshot HTML",
+                            "screenshot_failed": True,
+                        }
+                        scores_file.write(json.dumps(score_entry) + "\n")
+                        scores_file.flush()
+                        continue
                 image_to_score = png_path
             else:
                 image_to_score = output_path
