@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Trends Analysis</title>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #0e1117;
+      color: #fafafa;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background-color: #0e1117;
+      padding: 0;
+    }
+    .card {
+      background-color: #262730;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(255,255,255,0.1);
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin-top: 0;
+      color: #fafafa;
+    }
+    #chart {
+      margin-top: 20px;
+      min-height: 500px;
+    }
+    .chart-selector {
+      margin: 20px 0;
+    }
+    select {
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #262730;
+      color: #fafafa;
+    }
+    label {
+      margin-right: 10px;
+      font-weight: 500;
+      color: #fafafa;
+    }
+    .page-tabs {
+      display: flex;
+      gap: 10px;
+      margin: 20px 0;
+      border-bottom: 2px solid #fafafa40; /* 40 = 25% opacity hex */
+      padding-bottom: 0;
+    }
+    .tab-button {
+      padding: 10px 20px;
+      background-color: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      color: #fafafa;
+      opacity: 0.7;
+      transition: all 0.2s;
+    }
+    .tab-button:hover {
+      opacity: 1;
+      background-color: #fafafa10; /* 10 = ~6% opacity */
+    }
+    .tab-button.active {
+      color: #29b5e8;
+      border-bottom-color: #29b5e8;
+      opacity: 1;
+    }
+    .page-container {
+      margin-top: 20px;
+    }
+    .page-description {
+      color: #fafafa;
+      opacity: 0.8;
+      margin-bottom: 20px;
+    }
+    .chart-container {
+      margin: 20px 0;
+      min-height: 400px;
+    }
+    .chart-spinner {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 300px; gap: 12px;
+      color: #fafafa; opacity: 0.6;
+    }
+    .chart-spinner .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #fafafa20;
+      border-top-color: #29b5e8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .chart-error {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 300px; color: #e74c3c;
+    }
+    .metric-card {
+      text-align: center;
+      padding: 24px 20px;
+      min-width: 160px;
+      display: inline-block;
+    }
+    .metric-title {
+      font-size: 13px;
+      color: #fafafa;
+      opacity: 0.65;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .metric-value {
+      font-size: 2.6rem;
+      font-weight: 700;
+      color: #29b5e8;
+      line-height: 1.1;
+    }
+    .filter-bar {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      padding: 14px 18px;
+      background: #262730;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      border: 1px solid rgba(128,128,128,0.12);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }
+    .filter-bar-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      opacity: .4;
+      align-self: center;
+      padding-bottom: 2px;
+      white-space: nowrap;
+      margin-right: 4px;
+      color: #fafafa;
+    }
+    .filter-item {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .filter-item > label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      opacity: .55;
+      color: #fafafa;
+    }
+    .filter-select-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .filter-select-wrap select {
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(128,128,128,0.08);
+      color: #fafafa;
+      border: 1px solid rgba(128,128,128,0.22);
+      border-radius: 7px;
+      padding: 7px 32px 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 150px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      font-family: inherit;
+    }
+    .filter-select-wrap select:hover { border-color: rgba(128,128,128,0.45); }
+    .filter-select-wrap select:focus { border-color: #29b5e8; box-shadow: 0 0 0 2px #29b5e833; }
+    .filter-select-wrap .sel-arrow {
+      position: absolute;
+      right: 9px;
+      pointer-events: none;
+      opacity: .45;
+      flex-shrink: 0;
+      color: #fafafa;
+    }
+    .ms-wrap { position: relative; }
+    .ms-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(128,128,128,0.08);
+      color: #fafafa;
+      border: 1px solid rgba(128,128,128,0.22);
+      border-radius: 7px;
+      padding: 7px 10px 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 150px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+    .ms-btn:hover { border-color: rgba(128,128,128,0.45); }
+    .ms-btn.ms-open, .ms-btn:focus { border-color: #29b5e8; box-shadow: 0 0 0 2px #29b5e833; }
+    .ms-count {
+      background: #29b5e8;
+      color: #fff;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 600;
+      display: none;
+    }
+    .ms-count.visible { display: inline; }
+    .ms-arrow { opacity: .45; transition: transform 0.15s; flex-shrink: 0; }
+    .ms-btn.ms-open .ms-arrow { transform: rotate(180deg); }
+    .ms-panel {
+      position: absolute;
+      top: calc(100% + 5px);
+      left: 0;
+      z-index: 200;
+      background: #0e1117;
+      border: 1px solid rgba(128,128,128,0.25);
+      border-radius: 9px;
+      padding: 6px;
+      min-width: 190px;
+      max-height: 230px;
+      overflow-y: auto;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+      display: none;
+    }
+    .ms-panel.ms-open { display: block; }
+    .ms-option {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 9px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      user-select: none;
+      transition: background 0.1s;
+      color: #fafafa;
+    }
+    .ms-option:hover { background: rgba(128,128,128,0.1); }
+    .ms-option input[type="checkbox"] {
+      accent-color: #29b5e8;
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .filter-reset {
+      align-self: flex-end;
+      background: none;
+      border: 1px solid rgba(128,128,128,0.2);
+      color: #fafafa;
+      padding: 7px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      cursor: pointer;
+      opacity: .55;
+      transition: opacity 0.15s, border-color 0.15s;
+      font-family: inherit;
+    }
+    .filter-reset:hover { opacity: 1; border-color: rgba(128,128,128,0.5); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Data Trends Analysis</h1>
+    <div class="page-tabs">
+      <button class="tab-button active" onclick="showPage('main', this)">Data Trends Analysis</button>
+    </div>
+    <div id="page-main" class="page-container">
+      <div class="card">
+        <div id="chart-chart1"></div>
+      </div>
+      <div class="card">
+        <div id="chart-chart2"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const theme = {"primary": "#29b5e8", "secondary": ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"], "background": "#0e1117", "text": "#fafafa", "card": "#262730", "buttons": "#29b5e8", "sequential": "Blues"};
+
+    // Apply filters to data
+    function applyFilters(data, filters) {
+      if (!filters || filters.length === 0) return data;
+      return data.filter(row => {
+        return filters.every(f => {
+          const val = row[f.field];
+          switch (f.op) {
+            case 'eq': return val === f.value;
+            case 'ne': return val !== f.value;
+            case 'gt': return val > f.value;
+            case 'lt': return val < f.value;
+            case 'gte': return val >= f.value;
+            case 'lte': return val <= f.value;
+            case 'in': return Array.isArray(f.value) && f.value.includes(val);
+            case 'contains': return String(val).includes(f.value);
+            case 'range': return Array.isArray(f.value) && f.value.length === 2 && val >= f.value[0] && val <= f.value[1];
+            default: return true;
+          }
+        });
+      });
+    }
+
+    // Cast y values based on y_type
+    function castYValues(data, y, yType) {
+      if (!yType) return data;
+      return data.map(row => {
+        const newRow = {...row};
+        if (yType === 'number') {
+          newRow[y] = parseFloat(row[y]) || 0;
+        } else if (yType === 'string') {
+          newRow[y] = String(row[y]);
+        }
+        return newRow;
+      });
+    }
+
+    // Sort aggregated data
+    function sortData(data, sortField, sortOrder, xType) {
+      const result = [...data];
+      const ascending = sortOrder !== 'desc';
+
+      if (sortField === 'y') {
+        result.sort((a, b) => ascending ? a.y - b.y : b.y - a.y);
+      } else if (sortField === 'x') {
+        if (xType === 'date') {
+          result.sort((a, b) => {
+            const diff = new Date(a.x) - new Date(b.x);
+            return ascending ? diff : -diff;
+          });
+        } else if (xType === 'number') {
+          result.sort((a, b) => ascending ? a.x - b.x : b.x - a.x);
+        } else {
+          result.sort((a, b) => {
+            const cmp = String(a.x).localeCompare(String(b.x));
+            return ascending ? cmp : -cmp;
+          });
+        }
+      } else if (xType === 'date') {
+        // Default: sort by date if x_type is date
+        result.sort((a, b) => new Date(a.x) - new Date(b.x));
+      } else if (xType === 'number') {
+        result.sort((a, b) => parseFloat(a.x) - parseFloat(b.x));
+      } else {
+        // Default: sort strings alphabetically for consistency across transformers
+        result.sort((a, b) => String(a.x).localeCompare(String(b.x)));
+      }
+      return result;
+    }
+
+    function aggregateData(data, x, y, agg, options) {
+      options = options || {};
+      const xType = options.xType;
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+      const sizeField = options.sizeField;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const key = row[x];
+        if (!grouped[key]) grouped[key] = { values: [], count: 0, sizeValues: [] };
+        grouped[key].values.push(row[y]);
+        grouped[key].count++;
+        if (sizeField) grouped[key].sizeValues.push(parseFloat(row[sizeField]) || 0);
+      });
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const values = grouped[key].values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = grouped[key].count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        const entry = { x: key, y: aggregated };
+        if (sizeField) {
+          const sizeVals = grouped[key].sizeValues;
+          switch (agg) {
+            case 'sum': entry.size = sizeVals.reduce((a, b) => a + b, 0); break;
+            case 'mean': entry.size = sizeVals.reduce((a, b) => a + b, 0) / sizeVals.length; break;
+            case 'count': entry.size = grouped[key].count; break;
+            default: entry.size = sizeVals.reduce((a, b) => a + b, 0);
+          }
+        }
+        result.push(entry);
+      });
+
+      // Sort
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    function aggregateDataWithGroup(data, x, y, groupField, agg, options) {
+      options = options || {};
+      const xType = options.xType;
+      const yType = options.yType;
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      // Apply filters first
+      let filtered = applyFilters(data, filters);
+
+      // Cast y values
+      filtered = castYValues(filtered, y, yType);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const xKey = row[x];
+        const groupKey = row[groupField];
+        const compositeKey = xKey + '|||' + groupKey;
+        if (!grouped[compositeKey]) grouped[compositeKey] = { x: xKey, group: groupKey, values: [], count: 0 };
+        grouped[compositeKey].values.push(row[y]);
+        grouped[compositeKey].count++;
+      });
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const entry = grouped[key];
+        const values = entry.values;
+        let aggregated;
+        switch (agg) {
+          case 'sum': aggregated = values.reduce((a, b) => a + b, 0); break;
+          case 'mean': aggregated = values.reduce((a, b) => a + b, 0) / values.length; break;
+          case 'count': aggregated = entry.count; break;
+          default: aggregated = values.reduce((a, b) => a + b, 0);
+        }
+        result.push({ x: entry.x, group: entry.group, y: aggregated });
+      });
+
+      // Sort based on sortField or default x_type
+      result = sortData(result, sortField, sortOrder, xType);
+
+      // Limit
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    // Aggregate data for bubble charts: group by groupField, aggregate x, y, size independently
+    function aggregateBubbleData(data, groupField, xMetric, yMetric, sizeMetric, agg, options) {
+      options = options || {};
+      const filters = options.filters || [];
+      const sortField = options.sort;
+      const sortOrder = options.sortOrder || 'asc';
+      const limit = options.limit;
+
+      let filtered = applyFilters(data, filters);
+
+      const grouped = {};
+      filtered.forEach(row => {
+        const key = row[groupField];
+        if (!grouped[key]) grouped[key] = { xValues: [], yValues: [], sizeValues: [], count: 0 };
+        grouped[key].xValues.push(parseFloat(row[xMetric]) || 0);
+        grouped[key].yValues.push(parseFloat(row[yMetric]) || 0);
+        grouped[key].sizeValues.push(parseFloat(row[sizeMetric]) || 0);
+        grouped[key].count++;
+      });
+
+      function aggArray(values, count) {
+        switch (agg) {
+          case 'sum': return values.reduce((a, b) => a + b, 0);
+          case 'mean': return values.reduce((a, b) => a + b, 0) / values.length;
+          case 'count': return count;
+          default: return values.reduce((a, b) => a + b, 0);
+        }
+      }
+
+      let result = [];
+      Object.keys(grouped).forEach(key => {
+        const g = grouped[key];
+        result.push({
+          group: key,
+          x: aggArray(g.xValues, g.count),
+          y: aggArray(g.yValues, g.count),
+          size: aggArray(g.sizeValues, g.count)
+        });
+      });
+
+      if (sortField === 'y') {
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.y - b.y : b.y - a.y);
+      } else {
+        const asc = sortOrder !== 'desc';
+        result.sort((a, b) => asc ? a.x - b.x : b.x - a.x);
+      }
+
+      if (limit && limit > 0) {
+        result = result.slice(0, limit);
+      }
+
+      return result;
+    }
+
+    // Format a metric scalar value using a format string and optional suffix
+    function formatMetric(value, format, suffix) {
+      if (value === null || value === undefined || isNaN(value)) return 'N/A';
+      const n = parseFloat(value);
+      const m = format.match(/,?\.(\d+)f/);
+      const decimals = m ? parseInt(m[1]) : 0;
+      const str = n.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+      return str + (suffix || '');
+    }
+
+    // Aggregate a column to a scalar metric value
+    function computeMetric(data, yField, agg, filters) {
+      let d = applyFilters(data, filters);
+      const vals = d.map(r => parseFloat(r[yField])).filter(v => !isNaN(v));
+      if (!vals.length) return null;
+      if (agg === 'sum') return vals.reduce((a, b) => a + b, 0);
+      if (agg === 'mean') return vals.reduce((a, b) => a + b, 0) / vals.length;
+      if (agg === 'count') return vals.length;
+      return null;
+    }
+
+
+    function render_chart1(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null};
+      const grouped = aggregateData(data, 'index', 'Data', 'mean', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('line') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_chart1 = [...new Set(data.map(d => d['index']))];
+          boxGroups_chart1.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['index'] === group).map(d => parseFloat(d['Data'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_chart1 = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_chart1 === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'Data' }
+            };
+          } else {
+            const normalizedX_chart1 = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_chart1));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_chart1,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'Data' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('line' === 'geo') {
+        layout = {
+          title: { text: 'Data vs Index - Fixed Sizing', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Data vs Index - Fixed Sizing', font: { color: theme.text } },
+          xaxis: { title: 'index', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'Data', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-chart1', traces, layout, { responsive: true });
+    }
+    function render_chart2(data) {
+      const options = {"xType": null, "yType": null, "filters": [], "sort": null, "sortOrder": "asc", "limit": null};
+      const grouped = aggregateData(data, 'index', 'Data', 'mean', options);
+      const xValues = grouped.map(d => d.x);
+      const yValues = grouped.map(d => d.y);
+
+      let trace;
+      let traces = [];
+      switch ('line') {
+        case 'line':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: { color: theme.primary } };
+          break;
+        case 'scatter':
+          trace = { x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: { color: theme.primary } };
+          break;
+        case 'pie':
+          trace = { labels: xValues, values: yValues, type: 'pie', marker: { colors: theme.secondary } };
+          break;
+        case 'area':
+          trace = { x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: { color: theme.primary }, fillcolor: theme.primary + '40' };
+          break;
+        case 'histogram':
+          trace = { x: xValues, type: 'histogram', nbinsx: 20, marker: { color: theme.primary } };
+          break;
+        case 'box':
+          // Box plot: shows distribution (min, Q1, median, Q3, max)
+          const boxGroups_chart2 = [...new Set(data.map(d => d['index']))];
+          boxGroups_chart2.forEach(group => {
+            traces.push({
+              y: data.filter(d => d['index'] === group).map(d => parseFloat(d['Data'])),
+              name: group,
+              type: 'box',
+              marker: { color: theme.primary }
+            });
+          });
+          break;
+        case 'geo':
+          const geoEnc_chart2 = 'None' !== 'None' ? 'None' : detectGeoEncoding(xValues);
+          if (geoEnc_chart2 === 'iso3') {
+            trace = {
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'Data' }
+            };
+          } else {
+            const normalizedX_chart2 = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_chart2));
+            trace = {
+              type: 'choropleth',
+              locations: normalizedX_chart2,
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              colorbar: { title: 'Data' }
+            };
+          }
+          break;
+        default:
+          trace = { x: xValues, y: yValues, type: 'bar', marker: { color: theme.primary } };
+      }
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('line' === 'geo') {
+        layout = {
+          title: { text: 'Data vs Index - Dynamic Sizing', font: { color: theme.text } },
+          geo: {
+            showframe: false,
+            showcoastlines: true,
+            projection: { type: 'natural earth' },
+            bgcolor: 'rgba(0,0,0,0)'
+          },
+          margin: { t: 60, r: 0, b: 0, l: 0 },
+          paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+      } else {
+        layout = {
+          title: { text: 'Data vs Index - Dynamic Sizing', font: { color: theme.text } },
+          xaxis: { title: 'index', color: theme.text, gridcolor: theme.text + '20' },
+          yaxis: { title: 'Data', color: theme.text, gridcolor: theme.text + '20' },
+          margin: { t: 60, r: 40, b: 60, l: 60 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        };
+      }
+
+      Plotly.newPlot('chart-chart2', traces, layout, { responsive: true });
+    }
+
+
+    function showPage(pageId, clickedButton) {
+      document.querySelectorAll('.page-container').forEach(page => {
+        page.style.display = 'none';
+      });
+      document.querySelectorAll('.tab-button').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.getElementById('page-' + pageId).style.display = 'block';
+      if (clickedButton) {
+        clickedButton.classList.add('active');
+      }
+    }
+
+
+    function renderAllPages(data) {
+      render_chart1(data);
+      render_chart2(data);
+    }
+
+    fetch('benchmark/ppbench_results/task_2/dashml/data.csv')
+      .then(response => response.text())
+      .then(csv => {
+        const lines = csv.trim().split('\n').filter(line => line.trim());
+        const headers = lines[0].split(',').map(h => h.trim());
+        const data = lines.slice(1)
+          .map(line => {
+            const values = line.split(',');
+            if (values.length !== headers.length) return null;
+            const row = {};
+            headers.forEach((header, i) => {
+              const val = values[i] ? values[i].trim() : '';
+              row[header] = (val !== '' && !isNaN(val)) ? parseFloat(val) : val;
+            });
+            return row;
+          })
+          .filter(row => row !== null);
+
+        renderAllPages(data);
+      })
+      .catch(error => console.error('Error loading data:', error));
+  </script>
+</body>
+</html>
