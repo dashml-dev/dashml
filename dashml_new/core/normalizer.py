@@ -141,7 +141,7 @@ class DashMLNormalizer:
         elif sort_field == "x":
             order = f" ORDER BY x {'ASC' if sort_order == 'asc' else 'DESC'}"
         limit_clause = f" LIMIT {limit}" if limit else ""
-        if not order and chart_type in ("line", "area"):
+        if not order and chart_type in ("bar", "line", "area", "pie", "geo"):
             order = " ORDER BY x ASC"
 
         if chart_type in ("bar", "line", "area", "pie", "geo"):

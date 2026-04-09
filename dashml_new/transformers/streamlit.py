@@ -515,7 +515,7 @@ def load_data():
                         elif op == "range" and isinstance(value, list) and len(value) == 2:
                             code_parts.append(f'    _metric_df = _metric_df[(_metric_df["{field}"] >= {repr(value[0])}) & (_metric_df["{field}"] <= {repr(value[1])})]')
                 else:
-                    code_parts.append(f'    _metric_df = {base_df}')
+                    code_parts.append(f'    _metric_df = {base_df}.copy()')
                 agg_method = AGG_METHODS.get(agg, "sum")
                 code_parts.append(f'    _metric_df["{y}"] = pd.to_numeric(_metric_df["{y}"], errors="coerce")')
                 if agg == "count":
