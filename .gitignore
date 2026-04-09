@@ -58,6 +58,11 @@ output_test_*/
 # Benchmark cache and results
 benchmark/cache/
 benchmark/results/
+benchmark/ppbench_results/
 benchmark/nvbench_metadata.json
 benchmark/audit_results.json
+
+# Generated test outputs
+generated_dashboard.html
+/output_*/
 
