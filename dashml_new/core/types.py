@@ -151,6 +151,11 @@ class ChartSpec(TypedDict, total=False):
     format: str  # Optional: Python/D3 format string e.g. ",.0f", ".1f", "$,.2f"
     suffix: str  # Optional: text appended after value e.g. " mins", "%"
     geo_encoding: str  # Optional: "iso2", "iso3", or "name" — auto-detected if omitted
+    # Axis scale and decoration fields:
+    x_scale: str  # Optional: "linear" (default) or "log"
+    y_scale: str  # Optional: "linear" (default) or "log"
+    annotations: list  # Optional: list of {"text": str, "x": any, "y": any, "color": str}
+    reference_lines: list  # Optional: list of {"axis": "x"|"y", "value": number, "label": str, "style": str}
     # Normalizer-resolved fields:
     needs_aggregation: bool   # True if chart type in CHARTS_NEED_AGGREGATION
     uses_raw_data: bool       # True if chart type in CHARTS_USE_RAW_DATA
@@ -186,12 +191,14 @@ class PageSpec(TypedDict, total=False):
     Page specification for multi-page dashboards.
 
     A page groups multiple charts together with metadata.
+    Supports optional grid layout for subplot-style arrangements.
     """
     id: str
     title: str
     description: str
     charts: List[ChartSpec]
     filters: List[DashboardFilterSpec]   # Optional: dashboard-level runtime filter widgets
+    layout: dict  # Optional: {"columns": int} — grid layout for charts on this page
 
 
 class DashMLSpec(TypedDict, total=False):
