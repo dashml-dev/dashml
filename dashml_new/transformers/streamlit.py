@@ -490,6 +490,13 @@ def load_data():
         x_label = self._humanize_column_name(x) if x else ""
         y_label = self._humanize_column_name(y)
 
+        # Check for overlay features (reference lines / annotations)
+        has_overlays = bool(chart.get("reference_lines") or chart.get("annotations"))
+
+        # Build encoding strings with optional log scale
+        y_enc_str = self._y_encoding_str(y, y_label, chart)
+        # x_enc_str built inline per chart type (varies by suffix_var / type_suffix)
+
         code_parts = []
         code_parts.append(f'    # Chart: {chart_id}')
 
@@ -567,7 +574,7 @@ def load_data():
                 code_parts.append(f'    chart_data = chart_data.rename(columns={repr(rename_dict)})')
             # Re-apply sort in Python (SQL ORDER BY may not survive driver/pandas roundtrip)
             if sort_field:
-                actual_sort_col = x if sort_field == "x" else y
+                actual_sort_col = x if sort_field == "x" else (y if y else "count")
                 ascending = sort_order == "asc"
                 code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
             code_parts.append(f'    chart_df = chart_data')
@@ -691,55 +698,58 @@ def load_data():
 
         # Altair Chart Generation
         if chart_type == "bar":
+            x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
-        y=alt.Y("{y}:Q", title="{y_label}"),
+        x={x_enc},
+        y={y_enc_str},
         tooltip=["{x}", "{y}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "line":
+            x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
-        y=alt.Y("{y}:Q", title="{y_label}"),
+        x={x_enc},
+        y={y_enc_str},
         tooltip=["{x}", "{y}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "scatter":
+            x_enc_scatter = self._x_encoding_str(x, x_label, chart, type_suffix=":Q", sort_val="None")
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    # Scatter: raw data points
     c = alt.Chart(chart_df).mark_circle(color="{primary_color}", size=60).encode(
-        x=alt.X("{x}:Q", title="{x_label}"),
-        y=alt.Y("{y}:Q", title="{y_label}"),
+        x={x_enc_scatter},
+        y={y_enc_str},
         tooltip=["{x}", "{y}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "bubble":
             size_field = chart.get("size", y)  # Default to y if size not specified
             # In SQL mode, if size overlaps with x or y, the column keeps its "size" alias
             size_col = "size" if (sql_mode and size_field in (x, y)) else size_field
             size_label = self._humanize_column_name(size_field)
+            x_enc_bubble = self._x_encoding_str(x, x_label, chart, type_suffix=":Q", sort_val="None")
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             if group:
                 group_label = self._humanize_column_name(group)
                 code_parts.append(f'''    # Bubble: 4D visualization (group, x, y, size)
     c = alt.Chart(chart_data).mark_circle().encode(
-        x=alt.X("{x}:Q", title="{x_label}"),
-        y=alt.Y("{y}:Q", title="{y_label}"),
+        x={x_enc_bubble},
+        y={y_enc_str},
         size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
         color=alt.Color("{group}:N", legend=alt.Legend(title="{group_label}")),
         tooltip=["{group}", "{x}", "{y}", "{size_col}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
             else:
                 code_parts.append(f'''    # Bubble: scatter with size encoding
     c = alt.Chart(chart_data).mark_circle(color="{primary_color}").encode(
-        x=alt.X("{x}:Q", title="{x_label}"),
-        y=alt.Y("{y}:Q", title="{y_label}"),
+        x={x_enc_bubble},
+        y={y_enc_str},
         size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
         tooltip=["{x}", "{y}", "{size_col}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "heatmap":
             # Heatmap needs aggregation by both x and y (like grouped bars)
@@ -748,6 +758,7 @@ def load_data():
             heatmap_y_label = self._humanize_column_name(heatmap_y)
             value_field = y  # The value to aggregate for color
             value_label = self._humanize_column_name(value_field)
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             if sql_mode:
                 # In SQL mode, chart_df already contains aggregated and renamed data
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity (data pre-aggregated by SQL query)
@@ -760,8 +771,7 @@ def load_data():
             legend=alt.Legend(title="{value_label}")
         ),
         tooltip=["{x}", "{heatmap_y}", "{value_field}"]
-    ).properties(width=600, height=400)
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ).properties(width=600, height=400){render_line}''')
             else:
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity
     # Re-aggregate for heatmap (group by both x and y)
@@ -778,11 +788,11 @@ def load_data():
             legend=alt.Legend(title="{value_label}")
         ),
         tooltip=["{x}", "{heatmap_y}", "{value_field}"]
-    ).properties(width=600, height=400)
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ).properties(width=600, height=400){render_line}''')
 
         elif chart_type == "pie":
             # Use secondary colors from theme for categorical data
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    # Use theme secondary colors for pie chart
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_arc().encode(
@@ -792,52 +802,57 @@ def load_data():
             legend=alt.Legend(title="{x_label}")
         ),
         tooltip=["{x}", "{y}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "area":
+            x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
-        y=alt.Y("{y}:Q", title="{y_label}"),
+        x={x_enc},
+        y={y_enc_str},
         tooltip=["{x}", "{y}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "histogram":
             # Histogram uses binning on x axis, no aggregation needed
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    # Histogram: bin {x} values into {bins} bins
     c = alt.Chart(chart_df).mark_bar(color="{primary_color}").encode(
         x=alt.X("{x}:Q", bin=alt.Bin(maxbins={bins}), title="{x_label}"),
         y=alt.Y("count()", title="Count"),
         tooltip=["count()"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "box":
             # Box plot: shows distribution (min, Q1, median, Q3, max)
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    # Box plot: distribution by {x}
     c = alt.Chart(chart_df).mark_boxplot(color="{primary_color}").encode(
         x=alt.X("{x}:N", title="{x_label}"),
-        y=alt.Y("{y}:Q", title="{y_label}"),
+        y={y_enc_str},
         tooltip=["{x}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "stacked_bar":
             # Use secondary colors from theme for stacked segments
             group_label = self._humanize_column_name(group) if group else group
+            x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
+            y_stack_enc = f'alt.Y("{y}:Q", stack="zero", title="{y_label}"'
+            if chart.get("y_scale") == "log":
+                y_stack_enc += ', scale=alt.Scale(type="log")'
+            y_stack_enc += ')'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    # Stacked bar: stack {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
-        y=alt.Y("{y}:Q", stack="zero", title="{y_label}"),
+        x={x_enc},
+        y={y_stack_enc},
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),
             legend=alt.Legend(title="{group_label}")
         ),
         tooltip=["{x}", "{group}", "{y}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "grouped_bar":
             # Use secondary colors from theme for grouped bars
@@ -847,19 +862,20 @@ def load_data():
                 offset_sort = f'"-y"' if sort_order == "desc" else f'"y"'
             else:
                 offset_sort = "None"
+            x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
             code_parts.append(f'''    # Grouped bar: group {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("{x}" + x_encoding_suffix, sort={x_sort}, title="{x_label}"),
-        y=alt.Y("{y}:Q", title="{y_label}"),
+        x={x_enc},
+        y={y_enc_str},
         color=alt.Color("{group}:N",
             scale=alt.Scale(range=theme_colors),
             legend=alt.Legend(title="{group_label}")
         ),
         xOffset=alt.XOffset("{group}:N", sort={offset_sort}),
         tooltip=["{x}", "{group}", "{y}"]
-    )
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    ){render_line}''')
 
         elif chart_type == "geo":
             # Choropleth map using Altair with world topojson
@@ -913,6 +929,13 @@ def load_data():
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')
+
+        # Add overlay layers (reference lines / annotations) and deferred render
+        if has_overlays and chart_type not in ("metric", "geo"):
+            overlay_code = self._generate_overlay_code(chart)
+            if overlay_code:
+                code_parts.append(overlay_code)
+            code_parts.append('    st.altair_chart(c, use_container_width=True, theme="streamlit")')
 
         return "\n".join(code_parts)
 
@@ -1012,8 +1035,10 @@ def load_data():
             use_filtered_df = bool(page_filters) and not sql_mode
 
             page_charts = page.get("charts", [])
+            grid_columns = page.get("layout", {}).get("columns")
+
             # Metrics are grouped into a single compact columns row;
-            # regular charts each get their own full-width row.
+            # regular charts use grid layout (if specified) or full-width rows.
             idx = 0
             while idx < len(page_charts):
                 if page_charts[idx].get("type") == "metric":
@@ -1032,8 +1057,24 @@ def load_data():
                     if idx < len(page_charts):
                         code_parts.append('        st.divider()')
                     code_parts.append("")
+                elif grid_columns and grid_columns > 1:
+                    # Grid layout — batch regular charts into N-column rows
+                    row_charts = []
+                    while idx < len(page_charts) and page_charts[idx].get("type") != "metric" and len(row_charts) < grid_columns:
+                        row_charts.append(page_charts[idx])
+                        idx += 1
+                    n = len(row_charts)
+                    col_names = [f"_gc{k}" for k in range(n)]
+                    code_parts.append(f'        {", ".join(col_names)} = st.columns({grid_columns})')
+                    for k, rc in enumerate(row_charts):
+                        code_parts.append(f'        with {col_names[k]}:')
+                        rc_code = self._generate_chart(rc, colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
+                        code_parts.append("\n".join(f"        {line}" for line in rc_code.split("\n")))
+                    if idx < len(page_charts):
+                        code_parts.append('        st.divider()')
+                    code_parts.append("")
                 else:
-                    # Regular chart — full width
+                    # Regular chart — full width (no grid layout)
                     chart_code = self._generate_chart(page_charts[idx], colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
                     code_parts.append("\n".join(f"    {line}" for line in chart_code.split("\n")))
                     idx += 1
@@ -1042,6 +1083,100 @@ def load_data():
                     code_parts.append("")
 
         return "\n".join(code_parts)
+
+    def _generate_overlay_code(self, chart: Dict[str, Any]) -> str:
+        """Generate Altair layer code for reference lines and annotations.
+
+        Returns Python code lines that layer rule/text marks on top of the
+        chart variable ``c`` and re-assign ``c`` to the layered result.
+        """
+        ref_lines = chart.get("reference_lines", [])
+        annotations = chart.get("annotations", [])
+        if not ref_lines and not annotations:
+            return ""
+
+        parts: list[str] = []
+
+        for idx, rl in enumerate(ref_lines):
+            axis = rl.get("axis", "y")
+            value = rl["value"]
+            color = rl.get("color", "red")
+            style = rl.get("style", "solid")
+            stroke_dash = "[6, 4]" if style == "dashed" else "[1, 0]"
+
+            if axis == "y":
+                parts.append(
+                    f'    _rl{idx} = alt.Chart(pd.DataFrame({{"_v": [{value}]}})).mark_rule('
+                    f'color="{color}", strokeDash={stroke_dash}).encode(y="_v:Q")'
+                )
+            else:
+                parts.append(
+                    f'    _rl{idx} = alt.Chart(pd.DataFrame({{"_v": [{repr(value)}]}})).mark_rule('
+                    f'color="{color}", strokeDash={stroke_dash}).encode(x="_v:Q")'
+                )
+            parts.append(f'    c = alt.layer(c, _rl{idx})')
+
+            # Add label if present
+            label = rl.get("label")
+            if label:
+                if axis == "y":
+                    parts.append(
+                        f'    _rl{idx}_lbl = alt.Chart(pd.DataFrame({{"_v": [{value}], "_t": ["{label}"]}})).mark_text('
+                        f'align="left", dx=4, dy=-8, fontSize=11, color="{color}").encode(y="_v:Q", text="_t:N")'
+                    )
+                else:
+                    parts.append(
+                        f'    _rl{idx}_lbl = alt.Chart(pd.DataFrame({{"_v": [{repr(value)}], "_t": ["{label}"]}})).mark_text('
+                        f'align="left", dx=4, dy=-8, fontSize=11, color="{color}").encode(x="_v:Q", text="_t:N")'
+                    )
+                parts.append(f'    c = alt.layer(c, _rl{idx}_lbl)')
+
+        for idx, ann in enumerate(annotations):
+            text = ann["text"].replace('"', '\\"')
+            color = ann.get("color", "#333")
+            x_val = ann.get("x")
+            y_val = ann.get("y")
+
+            data_cols: list[str] = [f'"_t": ["{text}"]']
+            enc_parts: list[str] = ['text="_t:N"']
+
+            if x_val is not None:
+                data_cols.append(f'"_x": [{repr(x_val)}]')
+                enc_parts.append('x="_x:Q"')
+            if y_val is not None:
+                data_cols.append(f'"_y": [{repr(y_val)}]')
+                enc_parts.append('y="_y:Q"')
+
+            data_str = ", ".join(data_cols)
+            enc_str = ", ".join(enc_parts)
+            parts.append(
+                f'    _ann{idx} = alt.Chart(pd.DataFrame({{{data_str}}})).mark_text('
+                f'dy=-8, fontSize=12, color="{color}").encode({enc_str})'
+            )
+            parts.append(f'    c = alt.layer(c, _ann{idx})')
+
+        return "\n".join(parts)
+
+    def _y_encoding_str(self, y: str, y_label: str, chart: Dict[str, Any]) -> str:
+        """Build alt.Y() encoding string with optional log scale."""
+        if chart.get("y_scale") == "log":
+            return f'alt.Y("{y}:Q", title="{y_label}", scale=alt.Scale(type="log"))'
+        return f'alt.Y("{y}:Q", title="{y_label}")'
+
+    def _x_encoding_str(self, x: str, x_label: str, chart: Dict[str, Any],
+                         suffix_var: str = "", sort_val: str = "None",
+                         type_suffix: str = "") -> str:
+        """Build alt.X() encoding string with optional log scale.
+
+        When *type_suffix* is provided (e.g. ":Q"), it is appended directly.
+        Otherwise *suffix_var* (a runtime Python variable name like
+        ``x_encoding_suffix``) is concatenated.
+        """
+        field_expr = f'"{x}{type_suffix}"' if type_suffix else f'"{x}" + {suffix_var}'
+        base = f'alt.X({field_expr}, sort={sort_val}, title="{x_label}"'
+        if chart.get("x_scale") == "log":
+            base += ', scale=alt.Scale(type="log")'
+        return base + ")"
 
     @property
     def output_filename(self) -> str:

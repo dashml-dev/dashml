@@ -64,6 +64,96 @@ class PlotlyTransformer(Transformer):
         except Exception as e:
             raise TransformerError(f"Failed to generate Plotly code: {e}")
 
+    # ------------------------------------------------------------------
+    # Helpers for axis scale, annotations, and reference lines
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _axis_type_js(chart: dict, axis: str) -> str:
+        """Return Plotly axis type string for the given axis ('x' or 'y').
+
+        Returns 'log' when the spec says ``x_scale: log`` / ``y_scale: log``,
+        otherwise returns '-' (Plotly auto-detect, which is the default).
+        """
+        scale = chart.get(f"{axis}_scale", "")
+        if scale == "log":
+            return "log"
+        return "-"
+
+    @staticmethod
+    def _annotations_js(chart: dict) -> str:
+        """Build a JS snippet that sets ``layout.annotations`` from the chart spec.
+
+        Returns an empty string when there are no annotations so nothing is
+        injected into the generated code.
+        """
+        annotations = chart.get("annotations")
+        if not annotations:
+            return ""
+        items = []
+        for ann in annotations:
+            x_val = json.dumps(ann.get("x", ""))
+            y_val = json.dumps(ann.get("y", 0))
+            text = json.dumps(ann.get("text", ""))
+            color = json.dumps(ann.get("color", "red"))
+            items.append(
+                f"{{ x: {x_val}, y: {y_val}, text: {text}, showarrow: true, arrowhead: 2, font: {{ color: {color} }} }}"
+            )
+        return "\n      layout.annotations = [" + ", ".join(items) + "];"
+
+    @staticmethod
+    def _reference_lines_js(chart: dict) -> str:
+        """Build a JS snippet that sets ``layout.shapes`` from the chart spec.
+
+        Returns an empty string when there are no reference lines.
+        """
+        ref_lines = chart.get("reference_lines")
+        if not ref_lines:
+            return ""
+        style_map = {"solid": "solid", "dashed": "dash", "dotted": "dot"}
+        items = []
+        for rl in ref_lines:
+            axis = rl.get("axis", "y")
+            value = json.dumps(rl.get("value", 0))
+            label = rl.get("label", "")
+            dash = style_map.get(rl.get("style", "dashed"), "dash")
+            if axis == "y":
+                shape = (
+                    f"{{ type: 'line', yref: 'y', y0: {value}, y1: {value}, "
+                    f"xref: 'paper', x0: 0, x1: 1, "
+                    f"line: {{ color: 'red', width: 1.5, dash: '{dash}' }} }}"
+                )
+            else:
+                shape = (
+                    f"{{ type: 'line', xref: 'x', x0: {value}, x1: {value}, "
+                    f"yref: 'paper', y0: 0, y1: 1, "
+                    f"line: {{ color: 'red', width: 1.5, dash: '{dash}' }} }}"
+                )
+            items.append(shape)
+        # If any reference line has a label, also add annotations for them
+        ann_items = []
+        for rl in ref_lines:
+            label = rl.get("label", "")
+            if not label:
+                continue
+            axis = rl.get("axis", "y")
+            value = json.dumps(rl.get("value", 0))
+            label_json = json.dumps(label)
+            if axis == "y":
+                ann_items.append(
+                    f"{{ x: 1, xref: 'paper', y: {value}, yref: 'y', text: {label_json}, "
+                    f"showarrow: false, font: {{ color: 'red', size: 11 }}, xanchor: 'left' }}"
+                )
+            else:
+                ann_items.append(
+                    f"{{ y: 1, yref: 'paper', x: {value}, xref: 'x', text: {label_json}, "
+                    f"showarrow: false, font: {{ color: 'red', size: 11 }}, yanchor: 'bottom' }}"
+                )
+        result = "\n      layout.shapes = [" + ", ".join(items) + "];"
+        if ann_items:
+            result += "\n      layout.annotations = (layout.annotations || []).concat([" + ", ".join(ann_items) + "]);"
+        return result
+
     def _build_csv_version(self, spec: "NormalizedSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate single HTML file for CSV datasources"""
         if colors.get("buttons"):
@@ -850,6 +940,11 @@ if __name__ == '__main__':
       // Apply filters first
       let filtered = applyFilters(data, filters);
 
+      // If x column doesn't exist in data, generate row index
+      if (filtered.length > 0 && !(x in filtered[0])) {
+        filtered = filtered.map((row, i) => ({...row, [x]: i}));
+      }
+
       // Cast y values
       filtered = castYValues(filtered, y, yType);
 
@@ -1015,6 +1110,11 @@ if __name__ == '__main__':
     function aggregateData(data, x, y, agg, xType) {
       // Use schema-detected type if no explicit type provided
       const effectiveXType = getEffectiveXType(x, xType);
+
+      // If x column doesn't exist in data, generate row index
+      if (data.length > 0 && !(x in data[0])) {
+        data = data.map((row, i) => ({...row, [x]: i}));
+      }
 
       const grouped = {};
       data.forEach(row => {
@@ -1285,11 +1385,13 @@ if __name__ == '__main__':
           }},
           xaxis: {{
               title: chart.x,
+              type: chart.x_scale === 'log' ? 'log' : '-',
               color: theme.text,
               gridcolor: theme.text + '20' // 20 = low opacity
           }},
           yaxis: {{
               title: chart.y,
+              type: chart.y_scale === 'log' ? 'log' : '-',
               color: theme.text,
               gridcolor: theme.text + '20'
           }},
@@ -1308,6 +1410,33 @@ if __name__ == '__main__':
         layout.xaxis.categoryorder = 'array';
         layout.xaxis.categoryarray = window.__catOrder;
         delete window.__catOrder;
+      }}
+
+      // Annotations
+      if (chart.annotations && chart.annotations.length) {{
+        layout.annotations = chart.annotations.map(a => ({{
+          x: a.x, y: a.y, text: a.text, showarrow: true, arrowhead: 2,
+          font: {{ color: a.color || 'red' }}
+        }}));
+      }}
+
+      // Reference lines (shapes + labels)
+      const styleMap = {{ solid: 'solid', dashed: 'dash', dotted: 'dot' }};
+      if (chart.reference_lines && chart.reference_lines.length) {{
+        layout.shapes = chart.reference_lines.map(rl => {{
+          const dash = styleMap[rl.style] || 'dash';
+          if (rl.axis === 'x') {{
+            return {{ type: 'line', xref: 'x', x0: rl.value, x1: rl.value, yref: 'paper', y0: 0, y1: 1, line: {{ color: 'red', width: 1.5, dash: dash }} }};
+          }}
+          return {{ type: 'line', yref: 'y', y0: rl.value, y1: rl.value, xref: 'paper', x0: 0, x1: 1, line: {{ color: 'red', width: 1.5, dash: dash }} }};
+        }});
+        const rlAnnotations = chart.reference_lines.filter(rl => rl.label).map(rl => {{
+          if (rl.axis === 'x') {{
+            return {{ y: 1, yref: 'paper', x: rl.value, xref: 'x', text: rl.label, showarrow: false, font: {{ color: 'red', size: 11 }}, yanchor: 'bottom' }};
+          }}
+          return {{ x: 1, xref: 'paper', y: rl.value, yref: 'y', text: rl.label, showarrow: false, font: {{ color: 'red', size: 11 }}, xanchor: 'left' }};
+        }});
+        layout.annotations = (layout.annotations || []).concat(rlAnnotations);
       }}
 
       Plotly.newPlot('chart', traces, layout, {{ responsive: true }});
@@ -1379,18 +1508,33 @@ if __name__ == '__main__':
                 )
                 container_parts.append('      </div>')
 
+            # Separate metric cards from regular chart cards
+            metric_parts = []
+            regular_parts = []
             for chart in page.get("charts", []):
                 chart_id = chart["id"]
                 if chart.get("type") == "metric":
                     chart_title = chart.get("title", chart_id)
-                    container_parts.append(f'      <div class="card metric-card">')
-                    container_parts.append(f'        <div class="metric-title">{chart_title}</div>')
-                    container_parts.append(f'        <div class="metric-value" id="metric-{chart_id}">—</div>')
-                    container_parts.append(f'      </div>')
+                    metric_parts.append(f'      <div class="card metric-card">')
+                    metric_parts.append(f'        <div class="metric-title">{chart_title}</div>')
+                    metric_parts.append(f'        <div class="metric-value" id="metric-{chart_id}">—</div>')
+                    metric_parts.append(f'      </div>')
                 else:
-                    container_parts.append(f'      <div class="card">')
-                    container_parts.append(f'        <div id="chart-{chart_id}"></div>')
-                    container_parts.append(f'      </div>')
+                    regular_parts.append(f'      <div class="card">')
+                    regular_parts.append(f'        <div id="chart-{chart_id}"></div>')
+                    regular_parts.append(f'      </div>')
+
+            # Metric cards first (they display inline via CSS)
+            container_parts.extend(metric_parts)
+
+            # Regular chart cards — optionally wrapped in CSS Grid
+            columns = page.get("layout", {}).get("columns")
+            if columns and regular_parts:
+                container_parts.append(f'      <div style="display: grid; grid-template-columns: repeat({columns}, 1fr); gap: 16px;">')
+                container_parts.extend(regular_parts)
+                container_parts.append(f'      </div>')
+            else:
+                container_parts.extend(regular_parts)
 
             container_parts.append('    </div>')
             containers.append("\n".join(container_parts))
@@ -1446,6 +1590,12 @@ if __name__ == '__main__':
             format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
             suffix = chart.get("suffix", "")          # metric: unit text
 
+            # Axis scale, annotations, reference lines (compile-time helpers)
+            x_scale_type = self._axis_type_js(chart, "x")
+            y_scale_type = self._axis_type_js(chart, "y")
+            annotations_snippet = self._annotations_js(chart)
+            ref_lines_snippet = self._reference_lines_js(chart)
+
             # Build options object for aggregation
             options_obj = {
                 "xType": x_type,
@@ -1493,8 +1643,8 @@ if __name__ == '__main__':
 
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
-        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
+        yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
         barmode: '{barmode}',
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},
         paper_bgcolor: 'rgba(0,0,0,0)',
@@ -1508,7 +1658,7 @@ if __name__ == '__main__':
         const asc = '{sort_order}' !== 'desc';
         layout.xaxis.categoryorder = 'array';
         layout.xaxis.categoryarray = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
-      }}
+      }}{annotations_snippet}{ref_lines_snippet}
 
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
@@ -1539,12 +1689,12 @@ if __name__ == '__main__':
 
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
-        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
+        yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+      }};{annotations_snippet}{ref_lines_snippet}
 
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
@@ -1568,12 +1718,12 @@ if __name__ == '__main__':
 
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text }},
-        yaxis: {{ title: '{heatmap_y}', color: theme.text }},
+        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text }},
+        yaxis: {{ title: '{heatmap_y}', type: '{y_scale_type}', color: theme.text }},
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+      }};{annotations_snippet}{ref_lines_snippet}
 
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
@@ -1676,13 +1826,13 @@ if __name__ == '__main__':
       }} else {{
         layout = {{
           title: {{ text: '{title}', font: {{ color: theme.text }} }},
-          xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
-          yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+          xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
+          yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
           margin: {{ t: 60, r: 40, b: 60, l: 60 }},
           paper_bgcolor: 'rgba(0,0,0,0)',
           plot_bgcolor: 'rgba(0,0,0,0)'
         }};
-      }}
+      }}{annotations_snippet}{ref_lines_snippet}
 
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
@@ -2341,6 +2491,12 @@ if __name__ == '__main__':
             format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
             suffix = chart.get("suffix", "")          # metric: unit text
 
+            # Axis scale, annotations, reference lines (compile-time helpers)
+            x_scale_type = self._axis_type_js(chart, "x")
+            y_scale_type = self._axis_type_js(chart, "y")
+            annotations_snippet = self._annotations_js(chart)
+            ref_lines_snippet = self._reference_lines_js(chart)
+
             if chart_type == "metric":
                 chart_functions.append(f'''
     window.render_{chart_id} = function(data) {{
@@ -2357,10 +2513,10 @@ if __name__ == '__main__':
       const catTotals = {{}};
       data.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (parseFloat(d.y) || 0); }});
       const catOrder = Object.keys(catTotals).sort((a, b) => {ascending_js} ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);"""
-                    xaxis_js = f"title: '{x}', color: theme.text, gridcolor: theme.text + '20', categoryorder: 'array', categoryarray: catOrder"
+                    xaxis_js = f"title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20', categoryorder: 'array', categoryarray: catOrder"
                 else:
                     category_order_js = ""
-                    xaxis_js = f"title: '{x}', color: theme.text, gridcolor: theme.text + '20'"
+                    xaxis_js = f"title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20'"
                 chart_functions.append(f'''
     window.render_{chart_id} = function(data) {{
       const groupValues = [...new Set(data.map(d => d.grp))];
@@ -2378,12 +2534,12 @@ if __name__ == '__main__':
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
         xaxis: {{ {xaxis_js} }},
-        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+        yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
         barmode: '{barmode}',
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+      }};{annotations_snippet}{ref_lines_snippet}
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
             elif chart_type == "bubble" and group:
@@ -2408,12 +2564,12 @@ if __name__ == '__main__':
       }};
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
-        yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
+        yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+      }};{annotations_snippet}{ref_lines_snippet}
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
             elif chart_type == "heatmap":
@@ -2430,12 +2586,12 @@ if __name__ == '__main__':
       const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
       const layout = {{
         title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', color: theme.text }},
-        yaxis: {{ title: '{chart.get("group", y)}', color: theme.text }},
+        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text }},
+        yaxis: {{ title: '{chart.get("group", y)}', type: '{y_scale_type}', color: theme.text }},
         margin: {{ t: 60, r: 40, b: 60, l: 60 }},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+      }};{annotations_snippet}{ref_lines_snippet}
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
             else:
@@ -2517,13 +2673,13 @@ if __name__ == '__main__':
       }} else {{
         layout = {{
           title: {{ text: '{title}', font: {{ color: theme.text }} }},
-          xaxis: {{ title: '{x}', color: theme.text, gridcolor: theme.text + '20' }},
-          yaxis: {{ title: '{y}', color: theme.text, gridcolor: theme.text + '20' }},
+          xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
+          yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
           margin: {{ t: 60, r: 40, b: 60, l: 60 }},
           paper_bgcolor: 'rgba(0,0,0,0)',
           plot_bgcolor: 'rgba(0,0,0,0)'
         }};
-      }}
+      }}{annotations_snippet}{ref_lines_snippet}
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
 

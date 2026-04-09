@@ -275,7 +275,14 @@ class SupersetTransformer(Transformer):
 
             # Create or update dashboard
             print("\nCreating/updating dashboard...")
-            dashboard_id = self._create_or_update_dashboard(title, chart_ids)
+            # Use layout columns from the first page (Superset has a single flat layout)
+            layout_columns = None
+            for p in pages:
+                lc = p.get("layout", {}).get("columns")
+                if lc:
+                    layout_columns = lc
+                    break
+            dashboard_id = self._create_or_update_dashboard(title, chart_ids, charts_per_row=layout_columns)
 
             if not dashboard_id:
                 raise SupersetDashboardError("Failed to create dashboard")
@@ -1350,7 +1357,7 @@ class SupersetTransformer(Transformer):
             print(f"✗ Failed to {action} chart {title}: {e}")
             return None, {}
 
-    def _create_or_update_dashboard(self, title: str, chart_ids: list) -> Optional[int]:
+    def _create_or_update_dashboard(self, title: str, chart_ids: list, charts_per_row: int = None) -> Optional[int]:
         """Create dashboard or update existing one"""
         url = f"{self.superset_url}{API_DASHBOARD_ENDPOINT}"
 
@@ -1428,7 +1435,7 @@ class SupersetTransformer(Transformer):
                     print(f"  ✓ Deleted old charts")
 
                 # Update dashboard with new position_json
-                position_json = self._build_position_json(chart_ids)
+                position_json = self._build_position_json(chart_ids, charts_per_row=charts_per_row)
                 update_config = {
                     "position_json": json.dumps(position_json)
                 }
@@ -1465,7 +1472,7 @@ class SupersetTransformer(Transformer):
                 if chart_ids:
                     update_url = f"{self.superset_url}/api/v1/dashboard/{dashboard_id}"
                     # Build position_json with chart layout
-                    position_json = self._build_position_json(chart_ids)
+                    position_json = self._build_position_json(chart_ids, charts_per_row=charts_per_row)
                     update_config = {
                         "position_json": json.dumps(position_json)
                     }
@@ -1497,9 +1504,19 @@ class SupersetTransformer(Transformer):
                     pass
                 return None
 
-    def _build_position_json(self, chart_ids: list) -> Dict[str, Any]:
-        """Build position_json structure for dashboard layout"""
+    def _build_position_json(self, chart_ids: list, charts_per_row: int = None) -> Dict[str, Any]:
+        """Build position_json structure for dashboard layout.
+
+        Args:
+            chart_ids: List of Superset chart IDs to include.
+            charts_per_row: Number of charts per row. When None, falls back
+                to the module-level CHARTS_PER_ROW constant.
+        """
         import uuid
+
+        effective_charts_per_row = charts_per_row if charts_per_row is not None else CHARTS_PER_ROW
+        # Superset uses a 12-unit grid; distribute width evenly across columns
+        chart_width = max(1, 12 // effective_charts_per_row)
 
         position = {}
 
@@ -1515,7 +1532,7 @@ class SupersetTransformer(Transformer):
             }
         }
 
-        # Create ROWs with charts (2 charts per row)
+        # Create ROWs with charts
         row_ids = []
         chart_keys = []
 
@@ -1530,19 +1547,19 @@ class SupersetTransformer(Transformer):
                 "children": [],
                 "meta": {
                     "chartId": chart_id,
-                    "width": DEFAULT_CHART_WIDTH,  # Half width (2 columns)
+                    "width": chart_width,
                     "height": DEFAULT_CHART_HEIGHT,
                     "uuid": str(uuid.uuid4())
                 }
             }
 
         # Now create ROW entries (configurable charts per row)
-        for i in range(0, len(chart_keys), CHARTS_PER_ROW):
+        for i in range(0, len(chart_keys), effective_charts_per_row):
             row_id = f"ROW-{uuid.uuid4().hex[:8]}"
             row_ids.append(row_id)
 
-            # Get charts for this row (1 or more charts up to CHARTS_PER_ROW)
-            row_charts = chart_keys[i:i+CHARTS_PER_ROW]
+            # Get charts for this row (1 or more charts up to effective_charts_per_row)
+            row_charts = chart_keys[i:i+effective_charts_per_row]
 
             position[row_id] = {
                 "type": "ROW",

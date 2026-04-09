@@ -278,6 +278,50 @@ class DashMLValidator:
                     f"Must be a positive integer."
                 )
 
+        # x_scale / y_scale validation (optional)
+        for scale_field in ("x_scale", "y_scale"):
+            if scale_field in chart and chart[scale_field] not in ("linear", "log"):
+                raise ValidationError(
+                    f"Chart '{chart['id']}' has unsupported {scale_field}: '{chart[scale_field]}'. "
+                    f"Supported: linear, log"
+                )
+
+        # annotations validation (optional)
+        if "annotations" in chart:
+            if not isinstance(chart["annotations"], list):
+                raise ValidationError(
+                    f"Chart '{chart['id']}' annotations must be an array"
+                )
+            for i, ann in enumerate(chart["annotations"]):
+                if not isinstance(ann, dict):
+                    raise ValidationError(
+                        f"Chart '{chart['id']}' annotation at index {i} must be an object"
+                    )
+                if "text" not in ann:
+                    raise ValidationError(
+                        f"Chart '{chart['id']}' annotation at index {i} missing required 'text'"
+                    )
+
+        # reference_lines validation (optional)
+        if "reference_lines" in chart:
+            if not isinstance(chart["reference_lines"], list):
+                raise ValidationError(
+                    f"Chart '{chart['id']}' reference_lines must be an array"
+                )
+            for i, rl in enumerate(chart["reference_lines"]):
+                if not isinstance(rl, dict):
+                    raise ValidationError(
+                        f"Chart '{chart['id']}' reference_line at index {i} must be an object"
+                    )
+                if "axis" not in rl or rl["axis"] not in ("x", "y"):
+                    raise ValidationError(
+                        f"Chart '{chart['id']}' reference_line at index {i} must have axis 'x' or 'y'"
+                    )
+                if "value" not in rl:
+                    raise ValidationError(
+                        f"Chart '{chart['id']}' reference_line at index {i} missing required 'value'"
+                    )
+
         # ID uniqueness (check against other charts)
         # This is simplified - full implementation would track seen IDs
 
@@ -318,6 +362,10 @@ class DashMLValidator:
         if "filters" in page:
             self._validate_page_filters(page["filters"], page["id"])
 
+        # Validate layout (optional)
+        if "layout" in page:
+            self._validate_page_layout(page["layout"], page["id"])
+
     def _validate_page_filters(self, filters: Any, page_id: str) -> None:
         """Validate dashboard-level filter widgets for a page"""
         if not isinstance(filters, list):
@@ -350,6 +398,19 @@ class DashMLValidator:
             if "values" in f and not isinstance(f["values"], list):
                 raise ValidationError(
                     f"Page '{page_id}' filter at index {i} 'values' must be a list"
+                )
+
+    def _validate_page_layout(self, layout: Any, page_id: str) -> None:
+        """Validate page layout configuration"""
+        if not isinstance(layout, dict):
+            raise ValidationError(
+                f"Page '{page_id}' layout must be an object, got {type(layout)}"
+            )
+        if "columns" in layout:
+            cols = layout["columns"]
+            if not isinstance(cols, int) or cols < 1:
+                raise ValidationError(
+                    f"Page '{page_id}' layout columns must be a positive integer, got {cols!r}"
                 )
 
     def _validate_derived_fields(self, fields: Any) -> None:

@@ -249,10 +249,12 @@ class VegaLiteTransformer(Transformer):
 
         for page in pages:
             charts = page.get("charts", [])
+            layout = page.get("layout", {})
+            charts_per_row = layout.get("columns", 2)
             metrics = [c for c in charts if c.get("type") == "metric"]
             non_metrics = [c for c in charts if c.get("type") != "metric"]
 
-            # Metrics row: up to 4 per hconcat
+            # Metrics row: up to 4 per hconcat (unaffected by layout.columns)
             for i in range(0, len(metrics), 4):
                 batch = metrics[i:i + 4]
                 row_specs = [self._build_chart_spec(c, spec, top_level=False) for c in batch]
@@ -261,7 +263,7 @@ class VegaLiteTransformer(Transformer):
                 else:
                     rows.append({"hconcat": row_specs})
 
-            # Chart rows: 2 per hconcat (boxplot must be solo — crashes in hconcat with other marks)
+            # Chart rows: N per hconcat (boxplot must be solo — crashes in hconcat with other marks)
             SOLO_TYPES = {"box"}
             i = 0
             while i < len(non_metrics):
@@ -269,18 +271,19 @@ class VegaLiteTransformer(Transformer):
                 if chart.get("type") in SOLO_TYPES:
                     rows.append(self._build_chart_spec(chart, spec, top_level=False))
                     i += 1
-                elif i + 1 < len(non_metrics) and non_metrics[i + 1].get("type") in SOLO_TYPES:
-                    # Next chart is solo, emit current one alone
-                    rows.append(self._build_chart_spec(chart, spec, top_level=False))
-                    i += 1
-                elif i + 1 < len(non_metrics):
-                    batch = non_metrics[i:i + 2]
-                    row_specs = [self._build_chart_spec(c, spec, top_level=False) for c in batch]
-                    rows.append({"hconcat": row_specs})
-                    i += 2
                 else:
-                    rows.append(self._build_chart_spec(chart, spec, top_level=False))
-                    i += 1
+                    # Collect up to charts_per_row non-solo charts for this row
+                    batch = []
+                    while len(batch) < charts_per_row and i < len(non_metrics):
+                        if non_metrics[i].get("type") in SOLO_TYPES:
+                            break
+                        batch.append(non_metrics[i])
+                        i += 1
+                    if len(batch) == 1:
+                        rows.append(self._build_chart_spec(batch[0], spec, top_level=False))
+                    else:
+                        row_specs = [self._build_chart_spec(c, spec, top_level=False) for c in batch]
+                        rows.append({"hconcat": row_specs})
 
         dashboard = {
             "$schema": VEGALITE_SCHEMA,
@@ -309,6 +312,9 @@ class VegaLiteTransformer(Transformer):
             self.warn(f"Unknown chart type '{chart_type}', falling back to bar")
             vl = self._build_bar(chart, spec)
 
+        # Wrap in layer spec if reference lines or annotations are present
+        vl = self._wrap_with_overlays(vl, chart)
+
         # Add common properties
         if top_level:
             vl.setdefault("$schema", VEGALITE_SCHEMA)
@@ -329,6 +335,63 @@ class VegaLiteTransformer(Transformer):
             vl["transform"] = filter_transforms + transforms
 
         return vl
+
+    def _wrap_with_overlays(self, vl: dict, chart: dict) -> dict:
+        """Wrap chart in a layer spec if reference lines or annotations exist."""
+        ref_lines = chart.get("reference_lines", [])
+        annotations = chart.get("annotations", [])
+
+        if not ref_lines and not annotations:
+            return vl
+
+        layers = [vl]
+
+        # Reference lines as rule marks
+        for rl in ref_lines:
+            axis = rl.get("axis", "y")
+            rule: dict = {"mark": "rule", "encoding": {}}
+            if axis == "y":
+                rule["encoding"]["y"] = {"datum": rl["value"]}
+            else:
+                rule["encoding"]["x"] = {"datum": rl["value"]}
+            if rl.get("color"):
+                rule["encoding"]["color"] = {"value": rl["color"]}
+            if rl.get("style") == "dashed":
+                rule["mark"] = {"type": "rule", "strokeDash": [6, 4]}
+                if rl.get("color"):
+                    rule["mark"]["color"] = rl["color"]
+            layers.append(rule)
+
+            # Add label as text layer if present
+            if rl.get("label"):
+                label_layer: dict = {
+                    "mark": {"type": "text", "align": "left", "dx": 4, "dy": -8, "fontSize": 11},
+                    "encoding": {"text": {"value": rl["label"]}},
+                }
+                if axis == "y":
+                    label_layer["encoding"]["y"] = {"datum": rl["value"]}
+                else:
+                    label_layer["encoding"]["x"] = {"datum": rl["value"]}
+                if rl.get("color"):
+                    label_layer["encoding"]["color"] = {"value": rl["color"]}
+                layers.append(label_layer)
+
+        # Annotations as text marks
+        for ann in annotations:
+            text_layer: dict = {
+                "mark": {"type": "text", "fontSize": 12, "dy": -8},
+                "encoding": {},
+            }
+            if ann.get("x") is not None:
+                text_layer["encoding"]["x"] = {"datum": ann["x"]}
+            if ann.get("y") is not None:
+                text_layer["encoding"]["y"] = {"datum": ann["y"]}
+            text_layer["encoding"]["text"] = {"value": ann["text"]}
+            if ann.get("color"):
+                text_layer["encoding"]["color"] = {"value": ann["color"]}
+            layers.append(text_layer)
+
+        return {"layer": layers}
 
     # ── Data ───────────────────────────────────────────────────────
 
@@ -424,6 +487,8 @@ class VegaLiteTransformer(Transformer):
             enc["sort"] = sort_order
         elif sort == "y":
             enc["sort"] = {"encoding": "y", "order": "descending" if sort_order == "desc" else "ascending"}
+        if chart.get("x_scale") == "log":
+            enc["scale"] = {"type": "log"}
         return enc
 
     def _y_encoding(self, chart: dict, with_agg: bool = True) -> dict:
@@ -442,6 +507,8 @@ class VegaLiteTransformer(Transformer):
             pass  # handled on x via sort by encoding
         elif sort == "x":
             enc["sort"] = sort_order
+        if chart.get("y_scale") == "log":
+            enc["scale"] = {"type": "log"}
         return enc
 
     def _color_encoding(self, chart: dict, spec: "NormalizedSpec") -> dict:

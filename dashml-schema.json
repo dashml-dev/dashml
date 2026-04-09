@@ -76,6 +76,17 @@
             "description": "Charts on this page",
             "minItems": 1,
             "items": { "$ref": "#/definitions/chart" }
+          },
+          "layout": {
+            "type": "object",
+            "description": "Page layout configuration for grid/subplot arrangement",
+            "properties": {
+              "columns": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Number of columns for chart grid layout"
+              }
+            }
           }
         }
       }
@@ -179,6 +190,46 @@
               "value": {
                 "description": "Value to compare against (use array for 'in' operator)"
               }
+            }
+          }
+        },
+        "x_scale": {
+          "type": "string",
+          "description": "X-axis scale type",
+          "enum": ["linear", "log"],
+          "default": "linear"
+        },
+        "y_scale": {
+          "type": "string",
+          "description": "Y-axis scale type",
+          "enum": ["linear", "log"],
+          "default": "linear"
+        },
+        "annotations": {
+          "type": "array",
+          "description": "Text annotations overlaid on the chart",
+          "items": {
+            "type": "object",
+            "required": ["text"],
+            "properties": {
+              "text": { "type": "string", "description": "Annotation text" },
+              "x": { "description": "X position (data coordinate or category)" },
+              "y": { "description": "Y position (data coordinate)" },
+              "color": { "type": "string", "description": "Text color" }
+            }
+          }
+        },
+        "reference_lines": {
+          "type": "array",
+          "description": "Horizontal or vertical reference lines",
+          "items": {
+            "type": "object",
+            "required": ["axis", "value"],
+            "properties": {
+              "axis": { "type": "string", "enum": ["x", "y"], "description": "Which axis" },
+              "value": { "type": "number", "description": "Position value" },
+              "label": { "type": "string", "description": "Line label" },
+              "style": { "type": "string", "enum": ["solid", "dashed", "dotted"], "default": "dashed" }
             }
           }
         }
