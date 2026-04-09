@@ -74,19 +74,15 @@ MATPLOTLIB_TO_DASHML = {
 }
 
 # Features that DashML cannot express
+# Note: subplot/subplots/add_subplot now supported via layout.columns
+# Note: annotate/text/arrow now supported via annotations
+# Note: axhline/axvline now supported via reference_lines
+# Note: log_scale now supported via x_scale/y_scale
 UNSUPPORTED_FEATURES = {
-    "subplot",
-    "subplots",
-    "add_subplot",
     "twinx",
     "twiny",
     "secondary_yaxis",
-    "annotate",
-    "text",
-    "arrow",
     "FancyArrowPatch",
-    "axhline",
-    "axvline",
     "axhspan",
     "axvspan",
     "errorbar",
@@ -131,19 +127,13 @@ def detect_unsupported_features(code: str) -> list[str]:
         if feature in code:
             found.append(feature)
 
-    # Multi-subplot detection
-    if re.search(r"fig,\s*(?:ax|axes)\s*=\s*plt\.subplots\(.+,.+\)", code):
-        if "subplot" not in found:
-            found.append("subplots")
+    # Multi-subplot detection — now supported via layout.columns
 
     # 3D detection
     if "Axes3D" in code or "projection='3d'" in code or 'projection="3d"' in code:
         found.append("3d")
 
-    # Log scale
-    if "set_xscale" in code or "set_yscale" in code or "xscale" in code or "yscale" in code:
-        if "log" in code:
-            found.append("log_scale")
+    # Log scale — now supported via x_scale/y_scale (no longer unsupported)
 
     # Dual axis
     if "twinx" in code or "twiny" in code:
@@ -212,8 +202,7 @@ def classify_task(code: str, task_description: str) -> dict:
     if not gaps:
         expressibility = "full"
     elif any(d is not None for d in dashml_types) and not any(
-        f.startswith("feature:subplot") or f.startswith("feature:3d")
-        or f == "feature:dual_axis"
+        f.startswith("feature:3d") or f == "feature:dual_axis"
         for f in gaps
     ):
         expressibility = "partial"

@@ -189,10 +189,11 @@ def compile_dashml_to_plotly_html(
         from dashml_new.transformers.plotly import PlotlyTransformer
 
         # Ensure data section points to actual CSV
+        # Use just the filename since output.html and data.csv are in the same directory
         if "data" not in spec:
             spec["data"] = {}
         spec["data"]["type"] = "csv"
-        spec["data"]["path"] = csv_path
+        spec["data"]["path"] = Path(csv_path).name
 
         # Ensure required fields
         if "version" not in spec:
@@ -230,31 +231,44 @@ def execute_plotly_code(
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Execute raw Plotly Python code in a subprocess.
-    Returns (success, png_path_or_none, error_or_none).
+    Uses write_html instead of write_image to avoid Kaleido crashes.
+    Returns (success, html_path_or_none, error_or_none).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_png = (output_dir / "output.png").resolve()
+    output_html = (output_dir / "output.html").resolve()
     csv_path_abs = str(Path(csv_path).resolve())
 
     # Build the full script
     # Prepend imports and data loading, fix output path
     script_lines = [
         "import pandas as pd",
+        "import plotly.io as pio",
+        "pio.renderers.default = 'json'",  # suppress interactive display
         f'df = pd.read_csv("{csv_path_abs}")',
         "",
         code,
     ]
 
-    # Replace any write_image call to use our output path
     script = "\n".join(script_lines)
+
+    # Strip fig.show() calls to prevent blocking
+    script = re.sub(r'fig\.show\(\)', '', script)
+
+    # Replace write_image with write_html (avoids Kaleido dependency)
     script = re.sub(
         r'fig\.write_image\(["\'].*?["\']\)',
-        f'fig.write_image("{output_png}")',
+        f'fig.write_html("{output_html}", include_plotlyjs="cdn")',
         script,
     )
-    # If no write_image call exists, add one at the end
-    if "write_image" not in script:
-        script += f'\nfig.write_image("{output_png}")'
+    # Replace any remaining write_html call to use our output path
+    script = re.sub(
+        r'fig\.write_html\(["\'].*?["\']\)',
+        f'fig.write_html("{output_html}", include_plotlyjs="cdn")',
+        script,
+    )
+    # If no output call exists, add write_html at the end
+    if "write_html" not in script and "write_image" not in script:
+        script += f'\nfig.write_html("{output_html}", include_plotlyjs="cdn")'
 
     # Also replace any read_csv call with our path
     script = re.sub(
@@ -282,10 +296,10 @@ def execute_plotly_code(
                 error = error[:500] + "..."
             return False, None, error
 
-        if output_png.exists():
-            return True, str(output_png), None
+        if output_html.exists():
+            return True, str(output_html), None
         else:
-            return False, None, "Code ran but produced no output image"
+            return False, None, "Code ran but produced no output file"
 
     except subprocess.TimeoutExpired:
         return False, None, f"Execution timed out after {timeout}s"
@@ -423,11 +437,18 @@ def run_benchmark(
             output_path = None
             error_msg = None
 
+            # Save task description for reference
+            desc_path = task_dir / "task_description.txt"
+            desc_path.write_text(f"{task_desc}\n\nStyle: {style_desc}")
+
             if arm == "dashml":
                 spec = parse_dashml_prediction(raw_text)
                 parse_ok = spec is not None
                 if parse_ok:
                     stats["parse_ok"] += 1
+                    # Save the raw .dashml YAML
+                    dashml_path = task_dir / "spec.dashml"
+                    dashml_path.write_text(clean_response(raw_text))
 
                 if parse_ok:
                     compile_ok, output_path, error_msg = compile_dashml_to_plotly_html(

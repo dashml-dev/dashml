@@ -66,6 +66,47 @@ charts:
 - `bin`: true - bin the x-axis into ranges
 - `x_type`: "temporal" if x is a date/time column
 - `title`: chart title string
+- `x_scale`: "log" for logarithmic x-axis (default: linear)
+- `y_scale`: "log" for logarithmic y-axis (default: linear)
+- `annotations`: list of text labels overlaid on the chart
+- `reference_lines`: list of horizontal/vertical reference lines
+
+## Multi-Chart Layout (Subplots)
+For tasks requiring multiple subplots or panels, use `pages` with `layout.columns`:
+```yaml
+version: "1.0"
+title: "my_dashboard"
+data:
+  type: csv
+  path: data.csv
+pages:
+  - id: page1
+    title: "Overview"
+    layout:
+      columns: 2
+    charts:
+      - id: chart1
+        type: line
+        ...
+      - id: chart2
+        type: bar
+        ...
+```
+Charts flow left-to-right in the grid. Use `columns: 2` for 2-column layout, `columns: 3` for 3-column, etc.
+
+## Annotations & Reference Lines
+```yaml
+annotations:
+  - text: "Peak"
+    x: "Q3"
+    y: 75000
+    color: "red"
+reference_lines:
+  - axis: y
+    value: 1000
+    label: "Threshold"
+    style: dashed
+```
 
 ## Filter Format
 ```yaml
@@ -91,6 +132,8 @@ Filter operators: eq, ne, gt, lt, gte, lte, in, contains, range
 6. For histogram: x = numeric field, no y needed
 7. Always use data: {type: csv, path: data.csv}
 8. Filters go INSIDE the chart object, not at top level
+9. For multiple subplots/panels, use pages with layout.columns (NOT top-level charts)
+10. Use x_scale/y_scale: "log" when the task specifies logarithmic axes
 
 ## Output
 Output ONLY a single .dashml YAML spec. No explanation, no markdown fences, no comments.
