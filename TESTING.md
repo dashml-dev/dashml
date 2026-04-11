@@ -117,21 +117,21 @@ For each combination, verify:
 
 | Backend | Connector | Build | Render | Charts OK | Notes |
 |---------|-----------|-------|--------|-----------|-------|
-| Streamlit | CSV | | | | |
-| Streamlit | SQL | | | | |
-| Streamlit | BigQuery | | | | |
-| Plotly | CSV | | | | |
-| Plotly | SQL | | | | |
-| Plotly | BigQuery | | | | |
-| Observable | CSV | | | | |
-| Observable | SQL | | | | |
-| Observable | BigQuery | | | | |
-| Grafana | CSV | | | | |
-| Grafana | SQL | | | | |
-| Vega-Lite | CSV | | | | |
-| Vega-Lite | CSV (bare) | | | | |
-| Superset | SQL | | | | |
-| Superset | BigQuery | | | | |
+| Streamlit | CSV | PASS | PASS | PASS | |
+| Streamlit | SQL | PASS | PASS | PASS | |
+| Streamlit | BigQuery | PASS | PASS | PASS | |
+| Plotly | CSV | PASS | PASS | PASS | |
+| Plotly | SQL | PASS | PASS | PASS | |
+| Plotly | BigQuery | PASS | PASS | PASS | |
+| Observable | CSV | PASS | PASS | PASS | |
+| Observable | SQL | PASS | PASS | PASS | |
+| Observable | BigQuery | PASS | PASS | PASS | |
+| Grafana | CSV | PASS | PASS | PASS | |
+| Grafana | SQL | PASS | PASS | PASS | |
+| Vega-Lite | CSV | PASS | PASS | PASS | |
+| Vega-Lite | CSV (bare) | PASS | PASS | PASS | |
+| Superset | SQL | PASS | PASS | PASS | Grouped bar sort direction resets (Superset bug) |
+| Superset | BigQuery | PASS | PASS | PASS | Grouped bar sort direction resets (Superset bug) |
 
 ## Known Limitations
 
@@ -141,7 +141,7 @@ For each combination, verify:
 | **Grafana** | Bubble color: XY chart color field only supports numbers, not categorical strings |
 | **Grafana** | Heatmap: rendered as color-coded table (Grafana's native heatmap is a 2D histogram) |
 | **Grafana** | Geo: markers only, no choropleth fill |
-| **Superset** | Grouped/stacked bar sort direction: `x_axis_sort_asc` is stashed (removed from form_data) on reload due to missing `disableStash: true` on the control definition in Superset's `customControls.tsx`. Falls back to `default: true` (ascending). Superset bug — DashML sets the correct value via API but Superset's control stashing mechanism discards it. |
+| **Superset** | Grouped/stacked bar sort direction: `x_axis_sort_asc` stashed on reload (missing `disableStash: true` in Superset's `customControls.tsx`). Single-series bar sort works via `timeseries_limit_metric` + matching metric label workaround. |
 | **Vega-Lite** | SQL/BigQuery: not supported (no runtime) |
 | **Vega-Lite** | Boxplot in hconcat: crashes Vega renderer, rendered solo |
 | **Superset** | CSV: not supported (Superset manages own data sources) |

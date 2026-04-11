@@ -1062,9 +1062,20 @@ class SupersetTransformer(Transformer):
                 params["x_axis_time_format"] = "%Y-%m-%d"  # ISO date format
 
             # Apply explicit sorting
+            # Use timeseries_limit_metric for SQL-level sort AND x_axis_sort
+            # for frontend-level sort. x_axis_sort must match the metric label
+            # exactly to survive the shouldReset check in XAxisSortControl.
             if sort_field == "y":
-                # Sort by metric value
                 params["order_desc"] = sort_order == "desc"
+                if agg == "count":
+                    metric_label = "COUNT(*)"
+                    metric_ref = {"expressionType": "SQL", "label": metric_label, "sqlExpression": "COUNT(*)"}
+                else:
+                    metric_label = y  # must match the metric's label in params["metrics"]
+                    metric_ref = {"expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": superset_agg, "label": metric_label}
+                params["timeseries_limit_metric"] = metric_ref
+                params["x_axis_sort"] = metric_label
+                params["x_axis_sort_asc"] = sort_order == "asc"
             elif sort_field == "x" and x_type != "date":
                 # For non-date x axis, use orderby
                 params["orderby"] = [[x, sort_order == "asc"]]
@@ -1080,10 +1091,16 @@ class SupersetTransformer(Transformer):
             elif chart_type in ["stacked_bar", "grouped_bar"]:
                 params["seriesType"] = "bar"
                 params["groupby"] = [group] if group else []
-                # Sort grouped/stacked bars by total across all series
+                # Sort grouped/stacked bars
                 if sort_field == "y":
                     params["x_axis_sort"] = "sum"
                     params["x_axis_sort_asc"] = sort_order == "asc"
+                    params["order_desc"] = sort_order == "desc"
+                    # Also set timeseries_limit_metric for SQL-level ordering
+                    if agg == "count":
+                        params["timeseries_limit_metric"] = {"expressionType": "SQL", "label": "COUNT(*)", "sqlExpression": "COUNT(*)"}
+                    else:
+                        params["timeseries_limit_metric"] = {"expressionType": "SIMPLE", "column": {"column_name": y}, "aggregate": superset_agg, "label": y}
                 elif sort_field == "x":
                     params["x_axis_sort"] = "name"
                     params["x_axis_sort_asc"] = sort_order == "asc"

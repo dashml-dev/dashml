@@ -1009,6 +1009,9 @@ def load_data():
             tab_titles.append(f'"{title}"')
 
         tab_vars = ", ".join([f"tab{i+1}" for i in range(len(pages))])
+        # Add trailing comma for single tab to unpack tuple correctly
+        if len(pages) == 1:
+            tab_vars += ","
         tab_list = ", ".join(tab_titles)
         code_parts.append(f'    {tab_vars} = st.tabs([{tab_list}])')
         code_parts.append("")
