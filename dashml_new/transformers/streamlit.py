@@ -229,8 +229,9 @@ def normalize_country(value, encoding):
         .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] [data-testid="stMarkdownContainer"] p {{
             color: {primary_color} !important;
         }}
-        /* Card-like chart containers */
-        [data-testid="stVerticalBlock"] > div {{
+        /* Card-like chart containers — only target elements that hold charts */
+        [data-testid="stVerticalBlock"] > div:has([data-testid="stVegaLiteChart"]),
+        [data-testid="stVerticalBlock"] > div:has([data-testid="stArrowVegaLiteChart"]) {{
             background-color: {card_color};
             border-radius: 8px;
             padding: 1rem;
@@ -688,9 +689,12 @@ def load_data():
         x_encoding_type = ""  # Will be added dynamically at runtime
 
         # Compute Altair x-axis sort parameter based on chart spec sort field
-        # Altair sort accepts channel names ("-y", "y") not column names
+        # For sort-by-y with pre-aggregated SQL data, pass the sorted category list
+        # directly — Altair's sort="y" and EncodingSortField both fail when data is
+        # already grouped. The dataframe is sorted by Python above, so we just read
+        # its order.
         if sort_field == "y":
-            x_sort = '"-y"' if sort_order == "desc" else '"y"'
+            x_sort = f'list(chart_data["{x}"])'
         elif sort_field == "x":
             x_sort = '"ascending"' if sort_order == "asc" else '"descending"'
         else:
@@ -859,7 +863,7 @@ def load_data():
             group_label = self._humanize_column_name(group) if group else group
             # Sort bars within each group by y value
             if sort_field == "y":
-                offset_sort = f'"-y"' if sort_order == "desc" else f'"y"'
+                offset_sort = f'list(chart_data["{group}"].unique())'
             else:
                 offset_sort = "None"
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
