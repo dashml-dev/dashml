@@ -237,10 +237,16 @@ class PlotlyTransformer(Transformer):
         return json.dumps(multi_file_output)
 
     def _generate_flask_app_bigquery(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
-        """Generate Flask backend that connects to BigQuery"""
+        """Generate Flask backend that connects to BigQuery.
+
+        Project ID is required at build time (it is embedded into SQL queries
+        as part of the fully-qualified table reference) and is not a secret —
+        it is a public identifier. Service account credentials path is always
+        read from the DASHML_BQ_CREDENTIALS environment variable at runtime;
+        no credentials are baked into the generated source.
+        """
         db_config = spec["db_config"]
         project = db_config["project"]
-        credentials_path = db_config.get("credentials_path")
 
         dataset = data_spec["bq_dataset"]
         table_name = data_spec["bq_table"]
@@ -281,24 +287,9 @@ class PlotlyTransformer(Transformer):
             derived_cte_resolved = ""
             derived_filter_source = table_ref
 
-        # Build credentials loading code
-        if credentials_path:
-            safe_path = credentials_path.replace(chr(92), '/')
-            credentials_code = f'''
-# Load credentials from service account file
-from google.oauth2 import service_account
-credentials = service_account.Credentials.from_service_account_file(
-    "{safe_path}",
-    scopes=["https://www.googleapis.com/auth/cloud-platform"]
-)
-# Use the service account\'s own project for billing; table refs use PROJECT_ID
-client = bigquery.Client(credentials=credentials)
-'''
-        else:
-            credentials_code = '''
-# Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
-client = bigquery.Client(project=PROJECT_ID)
-'''
+        # Credentials and project are loaded from environment variables.
+        from .secrets import emit_bq_env_loader
+        bq_env_loader = emit_bq_env_loader(project)
 
         return f'''from flask import Flask, jsonify, send_from_directory
 from google.cloud import bigquery
@@ -306,15 +297,15 @@ import json
 import traceback
 from datetime import date, datetime
 from decimal import Decimal
-import os
 
+# BigQuery credentials and project are loaded from environment variables
+# (DASHML_BQ_PROJECT, DASHML_BQ_CREDENTIALS).
+# See SECRETS.md and .env.example next to this file.
+{bq_env_loader}
 app = Flask(__name__)
 
-# BigQuery configuration
-PROJECT_ID = "{project}"
 DATASET = "{dataset}"
 TABLE_NAME = "{table_name}"
-{credentials_code}
 
 # Per-chart SQL queries (generated at compile time)
 {chart_queries_code}
@@ -2168,28 +2159,14 @@ if __name__ == '__main__':
         return f"cd {serve_dir} && echo Dashboard available at: http://localhost:5001 && {sys.executable} -m http.server 5001"
 
     def _generate_flask_app(self, spec: "NormalizedSpec", data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
-        """Generate Flask backend that connects to SQL database"""
-        db_config = spec["db_config"]
-        db_type = db_config["type"]
-        host = db_config["host"]
-        port = db_config["port"]
-        database = db_config["database"]
-        user = db_config["user"]
-        password = db_config["password"]
+        """Generate Flask backend that connects to SQL database.
 
+        Connection string is constructed at runtime from environment variables
+        (DASHML_DB_*); no credentials are baked into the generated source.
+        """
         # Use pre-parsed path components from normalizer
         schema = data_spec["sql_schema"]
         table_name = data_spec["sql_table"]
-
-        # Build connection string based on database type
-        if db_type == "postgresql":
-            conn_str = f"postgresql://{user}:{password}@{host}:{port}/{database}"
-        elif db_type == "mysql":
-            conn_str = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
-        elif db_type == "sqlite":
-            conn_str = f"sqlite:///{database}"
-        else:
-            conn_str = f"{db_type}://{user}:{password}@{host}:{port}/{database}"
 
         # Build table reference for SQL
         table_ref = f"{schema}.{table_name}"
@@ -2228,14 +2205,17 @@ if __name__ == '__main__':
             derived_filter_source = table_ref
 
         # Generate Flask app code
+        from .secrets import emit_sql_env_loader
+        sql_env_loader = emit_sql_env_loader()
         return f'''from flask import Flask, jsonify, send_from_directory, Response
 from sqlalchemy import create_engine
 import pandas as pd
 
+# Database credentials are loaded from environment variables (DASHML_DB_*).
+# See SECRETS.md and .env.example next to this file.
+{sql_env_loader}
 app = Flask(__name__)
 
-# Database configuration
-DATABASE_URL = "{conn_str}"
 SCHEMA = "{schema}"
 TABLE_NAME = "{table_name}"
 

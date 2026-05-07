@@ -287,40 +287,25 @@ def load_data():
         return None, None'''
 
         elif data_type == "sql":
-            if not db_config:
-                return '''@st.cache_data
-def load_data():
-    return None, None'''
-
-            # Extract database config
-            db_type = db_config["type"]
-            host = db_config["host"]
-            port = db_config["port"]
-            database = db_config["database"]
-            user = db_config["user"]
-            password = db_config["password"]
-
             # Use pre-parsed path components from normalizer
             schema = data_spec["sql_schema"]
             table_name = data_spec["sql_table"]
 
-            # Build connection string based on database type
-            if db_type == "postgresql":
-                conn_str = f"postgresql://{user}:{password}@{host}:{port}/{database}"
-            elif db_type == "mysql":
-                conn_str = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
-            elif db_type == "sqlite":
-                conn_str = f"sqlite:///{database}"
-            else:
-                return f'''@st.cache_data
-def load_data():
-    return None, None'''
+            # Connection string is constructed at runtime from environment variables
+            # (DASHML_DB_*); no credentials are baked into the generated source.
+            from .secrets import emit_sql_env_loader
+            sql_env_loader = emit_sql_env_loader()
 
-            # Generate data loading code with schema detection
-            return f'''@st.cache_data
+            # Generate module-level env loader + data loading function with schema detection
+            return f'''# Database credentials are loaded from environment variables (DASHML_DB_*).
+# See SECRETS.md and .env.example next to this file.
+{sql_env_loader}
+_engine = create_engine(DATABASE_URL)
+
+@st.cache_data
 def load_data():
     try:
-        engine = create_engine("{conn_str}")
+        engine = _engine
         df = pd.read_sql("SELECT * FROM {schema}.{table_name}", engine)
 
         # Fetch column types from information_schema for auto type detection
@@ -357,29 +342,18 @@ def load_data():
                 return '''@st.cache_data
 def load_data():
     return None, None'''
-
-            # Extract BigQuery config
+            # Project ID is required at build time — it is embedded into
+            # SQL queries as part of the fully-qualified table reference.
+            # It is not a secret (public identifier).
             project = db_config["project"]
-            credentials_path = db_config.get("credentials_path")
 
             # Use pre-parsed path components from normalizer
             dataset = data_spec["bq_dataset"]
             table_name = data_spec["bq_table"]
 
-            # Build credentials loading code
-            if credentials_path:
-                safe_path = credentials_path.replace(chr(92), '/')
-                credentials_code = f'''
-        from google.oauth2 import service_account
-        credentials = service_account.Credentials.from_service_account_file(
-            "{safe_path}",
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        client = bigquery.Client(credentials=credentials)'''
-            else:
-                credentials_code = f'''
-        # Use default credentials (from gcloud auth or GOOGLE_APPLICATION_CREDENTIALS env var)
-        client = bigquery.Client(project="{project}")'''
+            # Credentials are loaded from environment variables at runtime.
+            from .secrets import emit_bq_env_loader
+            bq_env_loader = emit_bq_env_loader(project)
 
             # Build derived CTE for filter queries
             from dashml_new.core.normalizer import DashMLNormalizer
@@ -392,12 +366,16 @@ def load_data():
                 derived_cte_resolved = ""
                 derived_filter_source = table_ref_bq
 
-            return f'''DERIVED_CTE = """{derived_cte_resolved}"""
+            return f'''# BigQuery credentials and project are loaded from environment variables
+# (DASHML_BQ_PROJECT, DASHML_BQ_CREDENTIALS).
+# See SECRETS.md and .env.example next to this file.
+{bq_env_loader}
+DERIVED_CTE = """{derived_cte_resolved}"""
 DERIVED_FILTER_SOURCE = "{derived_filter_source}"
 
 @st.cache_data(ttl=300)
 def run_query(query_name, filter_clause="1=1"):
-    try:{credentials_code}
+    try:
         query = CHART_QUERIES[query_name].format(filter_clause=filter_clause)
         return client.query(query).to_dataframe()
     except Exception as e:
@@ -407,7 +385,7 @@ def run_query(query_name, filter_clause="1=1"):
 @st.cache_data(ttl=3600)
 def get_filter_options(field):
     """Fetch DISTINCT values for a dashboard filter field."""
-    try:{credentials_code}
+    try:
         query = DERIVED_CTE + " SELECT DISTINCT " + field + " FROM " + DERIVED_FILTER_SOURCE + " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT 500"
         result = client.query(query).to_dataframe()
         return sorted(result.iloc[:, 0].dropna().astype(str).tolist())
@@ -433,7 +411,7 @@ def build_filter_clause(chart_id, dashboard_filters):
 
 @st.cache_data(ttl=3600)
 def get_column_types():
-    try:{credentials_code}
+    try:
         query = """
             SELECT column_name, data_type
             FROM `{project}.{dataset}.INFORMATION_SCHEMA.COLUMNS`

@@ -1,6 +1,6 @@
 # DashML
 
-Declarative YAML-based compiler for generating data visualization dashboards. Write a `.dashml` spec once, compile it to Streamlit, Plotly, Observable Plot, or Apache Superset.
+Declarative YAML-based compiler for generating data visualization dashboards. Write a `.dashml` spec once, compile it to Streamlit, Plotly, Observable Plot, Apache Superset, Vega-Lite, or Grafana.
 
 ## DashML Manifesto
 
@@ -39,10 +39,13 @@ dashml_new/
     base.py           # Abstract Transformer interface + style loading
     constants.py      # Shared constants (chart categories, colors, operators)
     registry.py       # Transformer discovery and registration
+    secrets.py        # Generated env-loader code + .env.example/.gitignore/SECRETS.md emission
     streamlit.py      # Streamlit + Altair code generator
     plotly.py         # Plotly.js HTML generator
     observable.py     # Observable Plot + D3 HTML generator
     superset.py       # Superset REST API integration
+    vegalite.py       # Vega-Lite JSON specification generator
+    grafana.py        # Grafana dashboard JSON generator
   cli.py              # CLI entry point (build, watch, list)
   output/             # Generated multi-file outputs (Flask + HTML for SQL/BQ backends)
 
@@ -70,10 +73,31 @@ YAML files with:
 
 | Backend | Output | Libraries |
 |---------|--------|-----------|
-| **Streamlit** | Python file (CSV) or Flask+HTML (SQL/BQ) | Streamlit, Pandas, Altair |
+| **Streamlit** | Python file (CSV) or Python+SQLAlchemy/BQ-client (SQL/BQ) | Streamlit, Pandas, Altair |
 | **Plotly** | HTML (CSV) or Flask+HTML (SQL/BQ) | Plotly.js, Flask |
 | **Observable** | HTML (CSV) or Flask+HTML (SQL/BQ) | Observable Plot, D3.js, Flask |
 | **Superset** | REST API calls (no files) | requests |
+| **Vega-Lite** | JSON specification (vega-embed compatible) | vega-embed (browser) |
+| **Grafana** | Dashboard JSON for import / provisioning | (Grafana instance) |
+
+## Credentials handling
+
+Generated artifacts for SQL and BigQuery sources never bake credentials into
+source code. The runtime reads connection parameters from environment variables
+(`DASHML_DB_*` for SQL; `DASHML_BQ_PROJECT`, `DASHML_BQ_CREDENTIALS` for BQ),
+optionally loaded from a `.env` file via `python-dotenv` (loader is best-effort
+— missing dotenv is silently OK). Each generated SQL/BQ artifact includes:
+
+- `.env.example` — template with placeholders (or build-time CLI defaults if provided)
+- `.gitignore` — excludes `.env`
+- `SECRETS.md` — operator-facing instructions covering local dev, Docker, K8s, systemd, CI/CD, GCP Workload Identity
+
+CLI args `--db-host` / `--db-port` / `--db-name` / `--db-user` / `--db-password`
+are **optional** for SQL builds (used only as visible defaults in `.env.example`).
+`--bq-project` remains **required** for BigQuery builds because the project ID
+is embedded in compile-time SQL queries (the project ID is a public identifier,
+not a secret). `--bq-credentials` is no longer used at build time — credentials
+path always comes from `DASHML_BQ_CREDENTIALS` at runtime.
 
 ## Commands
 

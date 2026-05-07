@@ -35,36 +35,42 @@ def _build_db_config(args, data_type: str, silent: bool = False):
     Returns:
         dict: Database config, or None for CSV.
         Returns False if required args are missing (error printed unless silent).
+
+    For SQL targets, all credential CLI args (--db-host, --db-user, etc.) are
+    OPTIONAL — the generated artifact reads them from environment variables
+    (DASHML_DB_*) at runtime, not from baked-in literals. CLI args, when
+    provided, are written into a generated .env.example as visible defaults
+    to make local-machine setup a one-step copy.
+
+    For BigQuery, --bq-project is REQUIRED at build time because the project
+    ID is embedded into SQL queries as part of the fully-qualified table
+    reference. Project ID is not a secret (public identifier).
+    Credentials path is always read from env at runtime.
     """
     if data_type == "sql":
-        required_db_args = ["db_type", "db_host", "db_port", "db_name", "db_user", "db_password"]
-        missing_args = [arg for arg in required_db_args if not getattr(args, arg, None)]
-
-        if missing_args:
-            if not silent:
-                print(f"Error: SQL datasource requires database configuration arguments:", file=sys.stderr)
-                for arg in missing_args:
-                    print(f"  --{arg.replace('_', '-')}", file=sys.stderr)
-            return False
-
+        # All SQL credentials are optional at build time — they live in env at runtime.
         return {
-            "type": args.db_type,
-            "host": args.db_host,
-            "port": args.db_port,
-            "database": args.db_name,
-            "user": args.db_user,
-            "password": args.db_password,
+            "type": getattr(args, "db_type", None),
+            "host": getattr(args, "db_host", None),
+            "port": getattr(args, "db_port", None),
+            "database": getattr(args, "db_name", None),
+            "user": getattr(args, "db_user", None),
+            "password": getattr(args, "db_password", None),
         }
 
     elif data_type == "bigquery":
         if not getattr(args, "bq_project", None):
             if not silent:
                 print(f"Error: BigQuery datasource requires --bq-project argument", file=sys.stderr)
+                print(f"  (project ID is embedded into SQL queries at build time and is not a secret;", file=sys.stderr)
+                print(f"   credentials are read from DASHML_BQ_CREDENTIALS env var at runtime)", file=sys.stderr)
             return False
 
         return {
             "type": "bigquery",
             "project": args.bq_project,
+            # credentials_path retained for backward compat in db_config but no longer
+            # baked into generated code — generator always reads from env at runtime.
             "credentials_path": getattr(args, "bq_credentials", None),
         }
 
@@ -243,6 +249,26 @@ def build_command(args):
                             csv_dest = output_dir / Path(csv_path).name
                             shutil.copy2(csv_path, csv_dest)
                             print(f"✓ Copied data file: {csv_dest}")
+
+                # For SQL/BigQuery targets that produce runnable Python (Plotly,
+                # Observable, Streamlit), generate auxiliary files for runtime
+                # secrets management: .env.example, .gitignore, SECRETS.md.
+                if data_type in ("sql", "bigquery") and target in ("plotly", "observable", "streamlit"):
+                    from dashml_new.transformers.secrets import (
+                        emit_env_example, emit_gitignore, emit_secrets_readme,
+                    )
+                    output_dir = Path(output_path)
+                    aux_files = {
+                        ".env.example": emit_env_example(data_type, db_config),
+                        ".gitignore": emit_gitignore(),
+                        "SECRETS.md": emit_secrets_readme(data_type),
+                    }
+                    for name, content in aux_files.items():
+                        if not content:
+                            continue
+                        (output_dir / name).write_text(content, encoding="utf-8")
+                        print(f"✓ Written: {output_dir / name}")
+                    print("ℹ Credentials are read from environment at runtime — see SECRETS.md")
             except Exception as e:
                 print(f"Error writing output: {e}", file=sys.stderr)
                 return 1
@@ -528,42 +554,48 @@ Examples:
         help="Output bare VL objects [{mark, encoding, transform}] for benchmark evaluation (vegalite backend)"
     )
 
-    # Database arguments (for SQL datasources)
+    # Database arguments (for SQL datasources).
+    # All optional — generated artifact reads credentials from environment
+    # variables (DASHML_DB_*) at runtime. CLI values, when provided, are
+    # written into the generated .env.example as visible defaults.
     build_parser.add_argument(
         "--db-type",
         choices=["postgresql", "mysql", "sqlite"],
-        help="Database type (required for SQL datasources)"
+        help="Database type (optional; written into .env.example as default for DASHML_DB_TYPE)"
     )
     build_parser.add_argument(
         "--db-host",
-        help="Database host (required for SQL datasources)"
+        help="Database host (optional; written into .env.example as default for DASHML_DB_HOST)"
     )
     build_parser.add_argument(
         "--db-port",
         type=int,
-        help="Database port (required for SQL datasources)"
+        help="Database port (optional; written into .env.example as default for DASHML_DB_PORT)"
     )
     build_parser.add_argument(
         "--db-name",
-        help="Database name (required for SQL datasources)"
+        help="Database name (optional; written into .env.example as default for DASHML_DB_NAME)"
     )
     build_parser.add_argument(
         "--db-user",
-        help="Database username (required for SQL datasources)"
+        help="Database username (optional; written into .env.example as default for DASHML_DB_USER)"
     )
     build_parser.add_argument(
         "--db-password",
-        help="Database password (required for SQL datasources)"
+        help="Database password (optional; NEVER written to .env.example — supply at runtime via DASHML_DB_PASSWORD)"
     )
 
     # BigQuery arguments (for BigQuery datasources)
+    # --bq-project is required (project ID is embedded in SQL queries at build time).
+    # --bq-credentials is no longer used at build time — credentials are always
+    # read from DASHML_BQ_CREDENTIALS env var at runtime.
     build_parser.add_argument(
         "--bq-project",
-        help="Google Cloud project ID (required for BigQuery datasources)"
+        help="Google Cloud project ID (required for BigQuery datasources; embedded in SQL queries; not a secret)"
     )
     build_parser.add_argument(
         "--bq-credentials",
-        help="Path to service account JSON credentials file (optional, uses default credentials if not provided)"
+        help="Path to service account JSON credentials file (optional, written to .env.example as default for DASHML_BQ_CREDENTIALS)"
     )
 
     # List command
