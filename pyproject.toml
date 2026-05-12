@@ -3,12 +3,47 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dashml"
+name = "dashml-lang"
 version = "0.1.0"
-description = "Declarative YAML-based compiler for data visualization dashboards"
+description = "Declarative YAML-based compiler for data visualization dashboards. Write your dashboard once, compile to Streamlit, Plotly, Observable Plot, Apache Superset, Vega-Lite, or Grafana."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [
+    { name = "Dawid Olejniczak" },
+    { name = "Szymon Nowaczyk" },
+]
+keywords = [
+    "dashboard",
+    "visualization",
+    "dsl",
+    "declarative",
+    "compiler",
+    "yaml",
+    "streamlit",
+    "plotly",
+    "observable-plot",
+    "vega-lite",
+    "grafana",
+    "superset",
+    "bigquery",
+    "business-intelligence",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Compilers",
+]
 dependencies = [
     "pyyaml>=6.0",
 ]
@@ -34,7 +69,13 @@ superset = [
 ]
 dev = [
     "pytest>=7.0.0",
+    "build>=1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/dashml-dev/dashml"
+Repository = "https://github.com/dashml-dev/dashml"
+Issues = "https://github.com/dashml-dev/dashml/issues"
 
 [project.scripts]
 dashml = "dashml_new.cli:main"
@@ -42,3 +83,4 @@ dashml = "dashml_new.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dashml_new*"]
+exclude = ["dashml_new.output*"]
