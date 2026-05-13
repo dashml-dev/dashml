@@ -326,7 +326,14 @@ class DashMLNormalizer:
     def _resolve_style(
         self, style_ref: Optional[str], source_file: str
     ) -> ResolvedStyle:
-        """Load .dmls file, merge with default colors."""
+        """Load .dmls theme, merge with default colors.
+
+        Resolution rules:
+        - Name (no separator, no ``.dmls`` extension): look up a bundled
+          theme that ships with the package.
+        - Path (contains ``/``, ``\\``, or ends with ``.dmls``): resolve
+          on the filesystem, relative to the ``.dashml`` file or absolute.
+        """
         defaults: ResolvedStyle = {
             "primary": DEFAULT_PRIMARY_COLOR,
             "secondary": list(DEFAULT_SECONDARY_COLORS),
@@ -340,29 +347,19 @@ class DashMLNormalizer:
         if not style_ref:
             return defaults
 
-        # Try to find the style file
-        style_path = None
+        style_path: Optional[Path] = None
+        is_path = "/" in style_ref or "\\" in style_ref or style_ref.endswith(".dmls")
 
-        # 1. Check styles/{style_ref}.dmls relative to project root
-        project_root = Path(source_file).parent
-        # Walk up to find styles/ directory (project root is typically dashml_new's parent)
-        for parent in [project_root] + list(project_root.parents):
-            candidate = parent / "styles" / f"{style_ref}.dmls"
+        if is_path:
+            source_dir = Path(source_file).parent
+            candidate = (source_dir / style_ref).resolve() if not Path(style_ref).is_absolute() else Path(style_ref)
             if candidate.exists():
                 style_path = candidate
-                break
-
-        # 2. Check as relative path from source file directory
-        if style_path is None:
-            candidate = project_root / style_ref
-            if candidate.exists():
-                style_path = candidate
-
-        # 3. Check as absolute path
-        if style_path is None:
-            candidate = Path(style_ref)
-            if candidate.exists():
-                style_path = candidate
+        else:
+            # Bundled theme inside the package: dashml_new/styles/<name>.dmls
+            bundled = Path(__file__).resolve().parent.parent / "styles" / f"{style_ref}.dmls"
+            if bundled.exists():
+                style_path = bundled
 
         if style_path is None:
             return defaults
