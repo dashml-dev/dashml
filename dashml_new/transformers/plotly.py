@@ -756,7 +756,7 @@ if __name__ == '__main__':
 
     def _generate_javascript(self, data_spec: Dict[str, Any], charts: list, colors: Dict[str, str]) -> str:
         """Generate JavaScript code for data loading and rendering"""
-        data_path = data_spec["path"]
+        data_path = Path(data_spec.get("csv_path") or data_spec["path"]).name
 
         # Resolve sequential colorscale at code-gen time
         colors = dict(colors)
@@ -1546,7 +1546,7 @@ if __name__ == '__main__':
 
     def _generate_javascript_pages(self, data_spec: Dict[str, Any], pages: list, colors: Dict[str, str], derived_fields: list = None) -> str:
         """Generate JavaScript for multi-page dashboard"""
-        data_path = data_spec["path"]
+        data_path = Path(data_spec.get("csv_path") or data_spec["path"]).name
         colors = dict(colors)
         colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)

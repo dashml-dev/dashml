@@ -287,7 +287,7 @@ class ObservablePlotTransformer(Transformer):
     def _generate_data_loader(self, data_spec: Dict[str, Any], derived_fields: list = None) -> str:
         """Generate JavaScript to load CSV data"""
         data_type = data_spec["type"]
-        path = data_spec["path"]
+        path = Path(data_spec.get("csv_path") or data_spec["path"]).name
 
         if data_type == "csv":
             return f"""

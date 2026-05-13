@@ -3,6 +3,7 @@ Streamlit Transformer - Generates Streamlit Python code from DashML specs
 """
 import re
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Any, List
 from .base import Transformer, TransformerError
 from .constants import (
@@ -250,7 +251,7 @@ def normalize_country(value, encoding):
         derived_fields = derived_fields or []
 
         if data_type == "csv":
-            path = data_spec.get("csv_path", data_spec["path"])
+            path = Path(data_spec.get("csv_path") or data_spec["path"]).name
             # Build derived field computation lines (injected after CSV load)
             derived_lines = ""
             if derived_fields:
