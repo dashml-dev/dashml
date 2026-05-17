@@ -122,7 +122,8 @@ class StreamlitTransformer(Transformer):
     def _generate_imports(self, data_type: str = "csv") -> str:
         imports = """import streamlit as st
 import pandas as pd
-import altair as alt"""
+import altair as alt
+from pathlib import Path"""
 
         if data_type == "sql":
             imports += "\nfrom sqlalchemy import create_engine"
@@ -263,7 +264,7 @@ def normalize_country(value, encoding):
             return f'''@st.cache_data
 def load_data():
     try:
-        df = pd.read_csv("{path}"){derived_lines}
+        df = pd.read_csv(Path(__file__).resolve().parent / "{path}"){derived_lines}
 
         # Infer column types from pandas dtypes for auto type detection
         column_types = {{}}

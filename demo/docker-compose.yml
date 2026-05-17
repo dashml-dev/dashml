@@ -1,0 +1,78 @@
+# Reference demo stack for DashML.
+#
+#   docker compose up -d
+#
+# Brings up:
+#   - Postgres on :5432  (user/password: dashml/dashml, DB: demo)
+#       Seeded with the startup_funding table used by examples/startup_funding_sql.dashml.
+#   - Apache Superset on http://localhost:8088  (admin/admin)
+#   - Grafana on http://localhost:3000  (admin/admin)
+#
+# Superset takes 60-90s on first boot. Watch `docker compose logs -f superset`
+# and wait for "Listening on 0.0.0.0:8088".
+#
+# This stack is for evaluating DashML's --target superset / --target grafana
+# and the generated SQL-backed apps. It is NOT production guidance.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dashml-demo-postgres
+    environment:
+      POSTGRES_USER: dashml
+      POSTGRES_PASSWORD: dashml
+      POSTGRES_DB: demo
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./seed:/docker-entrypoint-initdb.d:ro
+      - ../examples/startup_funding.csv:/tmp/startup_funding.csv:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashml -d demo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  superset:
+    image: apache/superset:4.0.0
+    container_name: dashml-demo-superset
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_SECRET_KEY: "dashml-demo-not-for-production-change-me"
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: admin
+      ADMIN_EMAIL: admin@example.com
+    command: >
+      bash -c "
+        pip install --quiet psycopg2-binary &&
+        superset db upgrade &&
+        (superset fab create-admin
+          --username $$ADMIN_USERNAME
+          --firstname Admin
+          --lastname User
+          --email $$ADMIN_EMAIL
+          --password $$ADMIN_PASSWORD || true) &&
+        superset init &&
+        gunicorn --bind 0.0.0.0:8088 --workers 2 --timeout 60 'superset.app:create_app()'
+      "
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: dashml-demo-grafana
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+      - ./grafana-dashboards:/var/lib/grafana/dashboards

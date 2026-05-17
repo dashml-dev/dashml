@@ -52,6 +52,20 @@ pip install 'dashml-lang[streamlit]'
 
 `dashml list` shows all available transformers; `dashml --help` shows full CLI options.
 
+## Try all 6 backends locally
+
+The repo ships a [`demo/`](demo/) directory with a reproducible reference stack — Postgres, Apache Superset, and Grafana orchestrated by Docker Compose — for evaluating DashML against a real SQL data source.
+
+```bash
+cd demo
+docker compose up -d
+# wait ~60-90s for Superset to initialize on first boot
+```
+
+That gives you Postgres on `:5432` (seeded with `startup_funding`), Superset on http://localhost:8088 (admin/admin), and Grafana on http://localhost:3000 (admin/admin). Then compile [`examples/startup_funding_sql.dashml`](examples/startup_funding_sql.dashml) — the SQL twin of the CSV example — into all six platforms against that single shared database. See [`demo/README.md`](demo/README.md) for the full walkthrough.
+
+The demo stack is for evaluation only, not production guidance.
+
 ## Database credentials
 
 For SQL or BigQuery data sources, the generated artifact reads connection
