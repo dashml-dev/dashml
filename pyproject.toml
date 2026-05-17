@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dashml-lang"
-version = "0.1.4"
+version = "0.1.5"
 description = "Declarative YAML-based compiler for data visualization dashboards. Write your dashboard once, compile to Streamlit, Plotly, Observable Plot, Apache Superset, Vega-Lite, or Grafana."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -49,23 +49,31 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Target runtime bricks
 streamlit = [
     "streamlit>=1.40.0",
     "pandas>=2.0.0",
     "altair>=5.0.0",
     "watchdog>=4.0.0",
 ]
-sql = [
+flask = [
     "flask>=3.0.0",
+]
+# Data-source runtime bricks
+sql = [
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
 ]
 bigquery = [
-    "flask>=3.0.0",
     "google-cloud-bigquery>=3.0.0",
 ]
+# Superset target (no generated app to run; just REST client)
 superset = [
     "requests>=2.32.0",
+]
+# Convenience: install every runtime dependency in one go
+all = [
+    "dashml-lang[streamlit,flask,sql,bigquery,superset]",
 ]
 dev = [
     "pytest>=7.0.0",

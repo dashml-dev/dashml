@@ -44,10 +44,28 @@ dashml build examples/startup_funding.dashml --target superset \
   --superset-user admin --superset-password admin
 ```
 
-For Streamlit, you'll also need the runtime extras:
+### Runtime extras
+
+The base `pip install dashml-lang` gives you the compiler. To actually **run** a generated artifact, you also need the matching runtime libraries. Install one or more extras combining the target with the data source:
+
+| Target | CSV | SQL | BigQuery |
+|---|---|---|---|
+| Streamlit | `[streamlit]` | `[streamlit,sql]` | `[streamlit,bigquery]` |
+| Plotly / Observable | _(no extras — static HTML)_ | `[flask,sql]` | `[flask,bigquery]` |
+| Vega-Lite | _(no extras — JSON only)_ | _(no extras)_ | _(no extras)_ |
+| Grafana | _(no extras — JSON only)_ | _(no extras)_ | _(no extras)_ |
+| Superset | `[superset]` | `[superset]` | `[superset]` |
+
+For example, a Streamlit dashboard that queries Postgres:
 
 ```bash
-pip install 'dashml-lang[streamlit]'
+pip install 'dashml-lang[streamlit,sql]'
+```
+
+Or the all-inclusive variant if you want to try every target and every source:
+
+```bash
+pip install 'dashml-lang[all]'
 ```
 
 `dashml list` shows all available transformers; `dashml --help` shows full CLI options.

@@ -24,8 +24,8 @@ docker compose logs -f superset      # press Ctrl-C once you see "Listening on 0
 The companion spec [`examples/startup_funding_sql.dashml`](../examples/startup_funding_sql.dashml) is the SQL-mode twin of [`startup_funding.dashml`](../examples/startup_funding.dashml) — same charts, same theme, but `data:` points at the Postgres table.
 
 ```bash
-# Make sure DashML is installed
-pip install dashml-lang
+# Install DashML with all runtime extras (the demo exercises every target)
+pip install 'dashml-lang[all]'
 
 # Streamlit (generates a Python app that queries Postgres at runtime)
 dashml build examples/startup_funding_sql.dashml \
