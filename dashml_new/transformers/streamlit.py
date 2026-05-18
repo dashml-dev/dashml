@@ -304,7 +304,7 @@ def load_data():
 {sql_env_loader}
 _engine = create_engine(
     DATABASE_URL,
-    connect_args={"options": "-c lc_messages=C"} if _DB_TYPE == "postgresql" else {},
+    connect_args={{"options": "-c lc_messages=C"}} if _DB_TYPE == "postgresql" else {{}},
 )
 
 @st.cache_data
