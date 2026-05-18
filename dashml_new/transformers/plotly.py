@@ -2220,7 +2220,10 @@ SCHEMA = "{schema}"
 TABLE_NAME = "{table_name}"
 
 # Create database engine
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"options": "-c lc_messages=C"} if _DB_TYPE == "postgresql" else {},
+)
 
 # Per-chart SQL queries (generated at compile time)
 {chart_queries_code}

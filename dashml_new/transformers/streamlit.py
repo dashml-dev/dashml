@@ -302,7 +302,10 @@ def load_data():
             return f'''# Database credentials are loaded from environment variables (DASHML_DB_*).
 # See SECRETS.md next to this file for configuration patterns.
 {sql_env_loader}
-_engine = create_engine(DATABASE_URL)
+_engine = create_engine(
+    DATABASE_URL,
+    connect_args={"options": "-c lc_messages=C"} if _DB_TYPE == "postgresql" else {},
+)
 
 @st.cache_data
 def load_data():
