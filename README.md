@@ -88,16 +88,20 @@ The demo stack is for evaluation only, not production guidance.
 
 For SQL or BigQuery data sources, the generated artifact reads connection
 parameters from environment variables at runtime — never from baked-in literals.
-The generator emits `.env.example`, `.gitignore`, and `SECRETS.md` next to the
-generated `app.py`. Copy `.env.example` to `.env`, fill in the values, and run.
-The same artifact directory is safe to commit to a public repository.
+The generator always emits `.gitignore` and `SECRETS.md` next to the generated
+`app.py`. Pass `--emit-env-example` to additionally get a blank `.env.example`
+template you can copy and fill in. The same artifact directory is safe to commit
+to a public repository.
 
 ```bash
-dashml build dashboard.dashml --target plotly --output app_dir
+dashml build dashboard.dashml --target plotly --output app_dir --emit-env-example
 cd app_dir
-cp .env.example .env       # edit .env, set DASHML_DB_PASSWORD etc.
+cp .env.example .env       # edit .env, set DASHML_DB_* values
 python app.py              # reads from env (or .env via python-dotenv)
 ```
+
+Without `--emit-env-example`, supply the same variables through your shell,
+container, systemd unit, or CI secret store — see `SECRETS.md` in the artifact.
 
 See `SECRETS.md` in any generated SQL/BigQuery artifact for the full list of
 environment variables and recommended deployment patterns (Docker, Kubernetes,

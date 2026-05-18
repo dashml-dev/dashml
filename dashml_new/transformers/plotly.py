@@ -300,7 +300,7 @@ from decimal import Decimal
 
 # BigQuery credentials and project are loaded from environment variables
 # (DASHML_BQ_PROJECT, DASHML_BQ_CREDENTIALS).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {bq_env_loader}
 app = Flask(__name__)
 
@@ -2212,7 +2212,7 @@ from sqlalchemy import create_engine
 import pandas as pd
 
 # Database credentials are loaded from environment variables (DASHML_DB_*).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {sql_env_loader}
 app = Flask(__name__)
 

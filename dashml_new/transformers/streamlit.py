@@ -300,7 +300,7 @@ def load_data():
 
             # Generate module-level env loader + data loading function with schema detection
             return f'''# Database credentials are loaded from environment variables (DASHML_DB_*).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {sql_env_loader}
 _engine = create_engine(DATABASE_URL)
 
@@ -370,7 +370,7 @@ def load_data():
 
             return f'''# BigQuery credentials and project are loaded from environment variables
 # (DASHML_BQ_PROJECT, DASHML_BQ_CREDENTIALS).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {bq_env_loader}
 DERIVED_CTE = """{derived_cte_resolved}"""
 DERIVED_FILTER_SOURCE = "{derived_filter_source}"

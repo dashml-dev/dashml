@@ -29,9 +29,18 @@ pip install 'dashml-lang[all]'
 
 # Streamlit (generates a Python app that queries Postgres at runtime)
 dashml build examples/startup_funding_sql.dashml \
-  --target streamlit --output build/streamlit
-cd build/streamlit && cp .env.example .env && streamlit run app.py
-# .env defaults already match the demo Postgres (dashml/dashml on localhost:5432)
+  --target streamlit --output build/streamlit --emit-env-example
+# Fill in the demo Postgres credentials and run:
+cd build/streamlit
+cp .env.example .env
+# Edit .env and set:
+#   DASHML_DB_TYPE=postgresql
+#   DASHML_DB_HOST=localhost
+#   DASHML_DB_PORT=5432
+#   DASHML_DB_NAME=demo
+#   DASHML_DB_USER=dashml
+#   DASHML_DB_PASSWORD=dashml
+streamlit run app.py
 
 # Plotly (Flask + HTML)
 dashml build examples/startup_funding_sql.dashml \
