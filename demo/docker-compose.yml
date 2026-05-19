@@ -34,7 +34,7 @@ services:
       retries: 10
 
   superset:
-    image: apache/superset:4.0.0
+    image: apache/superset:4.1.1
     container_name: dashml-demo-superset
     depends_on:
       postgres:
@@ -46,17 +46,16 @@ services:
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: admin
       ADMIN_EMAIL: admin@example.com
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+    volumes:
+      - ./superset_config.py:/app/pythonpath/superset_config.py:ro
     command: >
       bash -c "
-        pip install --quiet psycopg2-binary &&
-        superset db upgrade &&
-        (superset fab create-admin
-          --username $$ADMIN_USERNAME
-          --firstname Admin
-          --lastname User
-          --email $$ADMIN_EMAIL
-          --password $$ADMIN_PASSWORD || true) &&
-        superset init &&
+        set -e
+        pip install --quiet psycopg2-binary
+        superset db upgrade
+        superset init
+        superset fab create-admin --username $$ADMIN_USERNAME --firstname Admin --lastname User --email $$ADMIN_EMAIL --password $$ADMIN_PASSWORD || echo '[demo] create-admin failed (user already exists?); continuing'
         gunicorn --bind 0.0.0.0:8088 --workers 2 --timeout 60 'superset.app:create_app()'
       "
 

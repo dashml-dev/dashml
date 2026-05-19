@@ -54,15 +54,24 @@ dashml build examples/startup_funding_sql.dashml \
 dashml build examples/startup_funding_sql.dashml \
   --target vegalite --output build/vegalite
 
-# Superset (pushes via REST API)
+# Superset (pushes via REST API). --db-* flags tell Superset how to reach
+# the demo Postgres. Note: from Superset's container the host is `postgres`
+# (the compose service name on the internal Docker network), NOT `localhost`.
 dashml build examples/startup_funding_sql.dashml \
   --target superset \
   --superset-url http://localhost:8088 \
-  --superset-user admin --superset-password admin
+  --superset-user admin --superset-password admin \
+  --db-type postgresql --db-host postgres --db-port 5432 \
+  --db-name demo --db-user dashml --db-password dashml
 
 # Grafana (drops JSON into the provisioning dir; Grafana auto-imports within ~10s)
+# --grafana-datasource-uid pins the JSON to the demo Postgres datasource UID
+# (set in demo/grafana-provisioning/datasources/postgres.yaml). Without it,
+# the JSON contains a ${DS_DATASOURCE} placeholder that only Grafana's manual
+# import wizard substitutes — provisioning ignores it and panels fail to load.
 dashml build examples/startup_funding_sql.dashml \
-  --target grafana --output demo/grafana-dashboards/startup_funding
+  --target grafana --output demo/grafana-dashboards/startup_funding \
+  --grafana-datasource-uid dashml-demo-postgres
 ```
 
 Open the two browser tabs (Superset at :8088, Grafana at :3000) — the dashboards appear there. The Streamlit / Plotly / Observable apps run locally and read from the same Postgres.
