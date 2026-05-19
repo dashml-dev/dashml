@@ -1870,8 +1870,9 @@ if __name__ == '__main__':
         // World topojson for geo charts
         window.worldTopojson = null;
 
-        // Load world topojson once
-        fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+        // Load world topojson once; expose a promise that any geo chart awaits
+        // before rendering, eliminating the data-vs-topojson race condition.
+        window.worldTopojsonReady = fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
             .then(r => r.json())
             .then(worldData => {
                 window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
@@ -1894,7 +1895,7 @@ if __name__ == '__main__':
             container.innerHTML = '<div class="chart-spinner"><div class="spinner"></div><span>Loading...</span></div>';
             try {
                 const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
-                const resp = await fetch(url);
+                const [resp] = await Promise.all([fetch(url), window.worldTopojsonReady]);
                 if (!resp.ok) {
                     const body = await resp.json().catch(() => ({}));
                     throw new Error(body.error || 'HTTP ' + resp.status);
