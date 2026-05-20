@@ -686,7 +686,7 @@ def load_data():
         # Altair Chart Generation
         if chart_type == "bar":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
         x={x_enc},
         y={y_enc_str},
@@ -695,7 +695,7 @@ def load_data():
 
         elif chart_type == "line":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
         x={x_enc},
         y={y_enc_str},
@@ -704,7 +704,7 @@ def load_data():
 
         elif chart_type == "scatter":
             x_enc_scatter = self._x_encoding_str(x, x_label, chart, type_suffix=":Q", sort_val="None")
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    # Scatter: raw data points
     c = alt.Chart(chart_df).mark_circle(color="{primary_color}", size=60).encode(
         x={x_enc_scatter},
@@ -718,7 +718,7 @@ def load_data():
             size_col = "size" if (sql_mode and size_field in (x, y)) else size_field
             size_label = self._humanize_column_name(size_field)
             x_enc_bubble = self._x_encoding_str(x, x_label, chart, type_suffix=":Q", sort_val="None")
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             if group:
                 group_label = self._humanize_column_name(group)
                 code_parts.append(f'''    # Bubble: 4D visualization (group, x, y, size)
@@ -745,7 +745,7 @@ def load_data():
             heatmap_y_label = self._humanize_column_name(heatmap_y)
             value_field = y  # The value to aggregate for color
             value_label = self._humanize_column_name(value_field)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             if sql_mode:
                 # In SQL mode, chart_df already contains aggregated and renamed data
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity (data pre-aggregated by SQL query)
@@ -779,7 +779,7 @@ def load_data():
 
         elif chart_type == "pie":
             # Use secondary colors from theme for categorical data
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    # Use theme secondary colors for pie chart
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_arc().encode(
@@ -793,7 +793,7 @@ def load_data():
 
         elif chart_type == "area":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
         x={x_enc},
         y={y_enc_str},
@@ -802,7 +802,7 @@ def load_data():
 
         elif chart_type == "histogram":
             # Histogram uses binning on x axis, no aggregation needed
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    # Histogram: bin {x} values into {bins} bins
     c = alt.Chart(chart_df).mark_bar(color="{primary_color}").encode(
         x=alt.X("{x}:Q", bin=alt.Bin(maxbins={bins}), title="{x_label}"),
@@ -812,7 +812,7 @@ def load_data():
 
         elif chart_type == "box":
             # Box plot: shows distribution (min, Q1, median, Q3, max)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    # Box plot: distribution by {x}
     c = alt.Chart(chart_df).mark_boxplot(color="{primary_color}").encode(
         x=alt.X("{x}:N", title="{x_label}"),
@@ -828,7 +828,7 @@ def load_data():
             if chart.get("y_scale") == "log":
                 y_stack_enc += ', scale=alt.Scale(type="log")'
             y_stack_enc += ')'
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    # Stacked bar: stack {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
@@ -850,7 +850,7 @@ def load_data():
             else:
                 offset_sort = "None"
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme="streamlit")'
             code_parts.append(f'''    # Grouped bar: group {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
@@ -912,7 +912,7 @@ def load_data():
         height=450
     )
     c = background + foreground
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    st.altair_chart(c, width="stretch", theme="streamlit")''')
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')
@@ -922,7 +922,7 @@ def load_data():
             overlay_code = self._generate_overlay_code(chart)
             if overlay_code:
                 code_parts.append(overlay_code)
-            code_parts.append('    st.altair_chart(c, use_container_width=True, theme="streamlit")')
+            code_parts.append('    st.altair_chart(c, width="stretch", theme="streamlit")')
 
         return "\n".join(code_parts)
 
