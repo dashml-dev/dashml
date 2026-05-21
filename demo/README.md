@@ -50,9 +50,15 @@ dashml build examples/startup_funding_sql.dashml \
 dashml build examples/startup_funding_sql.dashml \
   --target observable --output build/observable
 
-# Vega-Lite JSON
-dashml build examples/startup_funding_sql.dashml \
-  --target vegalite --output build/vegalite
+# Vega-Lite JSON. Notes: (1) Vega-Lite specs are static (values inlined in JSON),
+# so we build from the CSV variant — SQL/BigQuery would emit an empty dataset.
+# (2) --embed-data inlines the CSV contents into the JSON itself. Without it
+# the spec references the CSV by relative URL ({"url": "startup_funding.csv"}),
+# which fails when imported into Vega Editor (vega.github.io has no access to
+# your local file). --embed-data produces a self-contained spec at the cost
+# of file size.
+dashml build examples/startup_funding.dashml \
+  --target vegalite --output build/vegalite --embed-data
 
 # Superset (pushes via REST API). --db-* flags tell Superset how to reach
 # the demo Postgres. Note: from Superset's container the host is `postgres`

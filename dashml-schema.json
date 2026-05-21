@@ -107,7 +107,8 @@
           "description": "Chart type",
           "enum": [
             "bar", "line", "scatter", "pie", "area", "histogram",
-            "stacked_bar", "grouped_bar", "bubble", "heatmap", "box", "geo"
+            "stacked_bar", "grouped_bar", "bubble", "heatmap", "box", "geo",
+            "metric"
           ]
         },
         "title": {
