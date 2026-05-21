@@ -6,18 +6,23 @@ import sys
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import json
-from .base import Transformer, TransformerError
+from .base import Transformer, TransformerError, humanize_field
 from .constants import (
     CHARTS_NEED_AGGREGATION,
     CHARTS_USE_RAW_DATA,
     DEFAULT_HISTOGRAM_BINS,
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
+    DESIGN_TOKENS,
+    PURPLE_RAMP,
     TEMPORAL_FIELD_NAMES,
     DEFAULT_SORT_ORDER,
     resolve_metric_format,
     country_mapping_as_js,
 )
+
+# Chart types whose x-axis is discrete categorical — axis title is redundant.
+_DISCRETE_X_CHART_TYPES = frozenset({"bar", "stacked_bar", "grouped_bar", "box", "pie", "heatmap"})
 
 if TYPE_CHECKING:
     from ..core.types import NormalizedSpec, ChartSpec
@@ -131,6 +136,11 @@ class ObservablePlotTransformer(Transformer):
         card_color = colors.get("card", bg_color)
         text_color = colors.get("text", "#000000")
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
+        card_alt = DESIGN_TOKENS["card_alt"]
+        line = DESIGN_TOKENS["line"]
+        line_soft = DESIGN_TOKENS["line_soft"]
+        muted = DESIGN_TOKENS["muted"]
+        fg_dim = DESIGN_TOKENS["fg_dim"]
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -142,96 +152,135 @@ class ObservablePlotTransformer(Transformer):
     <script src="https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6"></script>
     <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
     <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-
+        * {{ box-sizing: border-box; }}
+        html, body {{ margin: 0; padding: 0; background: {bg_color}; color: {text_color}; }}
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, sans-serif;
-            background-color: {bg_color};
-            color: {text_color};
-            padding: 2rem;
-            line-height: 1.6;
+            font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            min-height: 100vh;
+            padding: 28px 32px 80px;
         }}
+        .container {{ max-width: 1600px; margin: 0 auto; }}
 
         h1 {{
-            font-size: 2.5rem;
-            margin-bottom: 2rem;
-            font-weight: 600;
-        }}
-
-        h2 {{
-            font-size: 1.5rem;
-            margin-top: 2rem;
-            margin-bottom: 1rem;
-            font-weight: 500;
-        }}
-
-        .card {{
-            margin-bottom: 3rem;
-            background: {card_color};
-            padding: 1.5rem;
-            border-radius: 8px;
-        }}
-
-        .page-tabs {{
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 2rem;
-            border-bottom: 2px solid rgba(128, 128, 128, 0.2);
-            padding-bottom: 0;
-        }}
-
-        .tab-button {{
-            background: none;
-            border: none;
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            margin: 0 0 4px;
             color: {text_color};
-            padding: 0.75rem 1.5rem;
+        }}
+        .sub {{ color: {muted}; font-size: 13px; margin: 0 0 20px; }}
+
+        /* Tabs */
+        .page-tabs {{
+            display: flex; gap: 24px;
+            border-bottom: 1px solid {line};
+            margin-bottom: 18px;
+        }}
+        .tab-button {{
+            background: none; border: 0;
+            color: {fg_dim};
+            font: inherit; font-weight: 500;
+            padding: 10px 2px;
             cursor: pointer;
-            font-size: 1rem;
-            border-bottom: 3px solid transparent;
-            transition: all 0.2s;
-            opacity: 0.6;
+            position: relative;
+            margin-bottom: -1px;
         }}
-
-        .tab-button:hover {{
-            opacity: 0.8;
+        .tab-button:hover {{ color: {text_color}; }}
+        .tab-button.active {{ color: {primary_color}; }}
+        .tab-button.active::after {{
+            content: ""; position: absolute;
+            left: 0; right: 0; bottom: -1px;
+            height: 2px; background: {primary_color}; border-radius: 2px;
         }}
-
-        .tab-button.active {{
-            opacity: 1;
-            border-bottom-color: {primary_color};
-        }}
-
-        .page-content {{
-            display: none;
-        }}
-
-        .page-content.active {{
-            display: block;
-        }}
-
         .page-description {{
+            color: {muted};
+            font-size: 13px;
             font-style: italic;
-            opacity: 0.8;
-            margin-bottom: 1.5rem;
+            margin: 4px 0 18px;
         }}
 
-        /* Observable Plot chart styling */
-        svg {{
-            background: transparent;
+        /* Layout grids — page becomes a 4-col grid; chart cards span 2 cols */
+        .page-content {{ display: none; }}
+        .page-content.active {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            align-items: start;
+            margin-top: 18px;
         }}
+        @media (min-width: 1100px) {{
+            .page-content.active {{ grid-template-columns: repeat(4, 1fr); }}
+        }}
+        .page-content > .filter-bar,
+        .page-content > .page-description {{ grid-column: 1 / -1; }}
+        .page-content > .card:not(.metric-card) {{
+            grid-column: span 2;
+            height: 520px;  /* uniform card height — pie + Plot.plot fit identically */
+        }}
+        .page-content > .card.chart-card {{ display: flex; flex-direction: column; }}
+        .page-content > .card.chart-card > div[id^="chart-"] {{
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }}
+        .page-content > div[style*="grid-template-columns"] {{ grid-column: 1 / -1; }}
+
+        /* Card surface */
+        .card {{
+            background: {card_color};
+            border: 1px solid {line_soft};
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 0;
+            min-width: 0;
+        }}
+        .chart-card .chart-title {{
+            font-size: 14px; font-weight: 600;
+            color: {text_color};
+            margin: 0 0 14px;
+        }}
+        /* Override Observable's default h2 (chart title) since we use chart-title now */
+        .card > h2 {{
+            font-size: 14px; font-weight: 600;
+            color: {text_color};
+            margin: 0 0 14px;
+        }}
+
+        /* KPI metric card */
+        .metric-card {{ padding: 20px; }}
+        .metric-title {{
+            color: {muted};
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }}
+        .metric-value {{
+            font-size: 32px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: {text_color};
+            font-variant-numeric: tabular-nums;
+            line-height: 1.1;
+        }}
+
+        /* Observable Plot SVG */
+        svg {{ background: transparent; }}
+        /* Tooltip readability on dark theme */
+        g[aria-label="tip"] path {{ fill: {bg_color}; stroke: {line}; }}
+        g[aria-label="tip"] text {{ fill: {text_color} !important; }}
 
         .chart-spinner {{
             display: flex; flex-direction: column; align-items: center;
             justify-content: center; min-height: 300px; gap: 12px;
-            color: {text_color}; opacity: 0.6;
+            color: {fg_dim};
         }}
         .chart-spinner .spinner {{
             width: 40px; height: 40px;
-            border: 3px solid {text_color}20;
+            border: 3px solid {line_soft};
             border-top-color: {primary_color};
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
@@ -239,37 +288,131 @@ class ObservablePlotTransformer(Transformer):
         @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
         .chart-error {{
             display: flex; align-items: center; justify-content: center;
-            min-height: 300px; color: #e74c3c;
+            min-height: 300px; color: #ff79c6;
         }}
-        .metric-card {{
-            text-align: center;
-            padding: 24px 20px;
-            min-width: 160px;
-            display: inline-block;
+
+        /* Filter bar — single + multi-select */
+        .filter-bar {{
+            display: flex; align-items: center; gap: 18px;
+            background: {card_color};
+            border: 1px solid {line_soft};
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
         }}
-        .metric-title {{
-            font-size: 13px;
+        .filter-bar-title {{
+            color: {muted};
+            font-size: 11px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.08em;
+            display: inline-flex; align-items: center; gap: 6px;
+            margin-right: 4px;
+        }}
+        .filter-item {{ display: flex; flex-direction: column; gap: 4px; }}
+        .filter-item > label {{
+            color: {muted};
+            font-size: 11px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.08em;
+        }}
+        .filter-select-wrap {{ position: relative; display: inline-flex; align-items: center; }}
+        .filter-select-wrap select,
+        .ms-btn {{
+            background: {card_alt};
             color: {text_color};
-            opacity: 0.65;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.07em;
+            border: 1px solid {line};
+            border-radius: 6px;
+            padding: 6px 28px 6px 10px;
+            font: inherit; font-size: 13px;
+            min-width: 180px;
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            appearance: none; -webkit-appearance: none;
         }}
-        .metric-value {{
-            font-size: 2.6rem;
-            font-weight: 700;
-            color: {primary_color};
-            line-height: 1.1;
+        .filter-select-wrap select:hover, .ms-btn:hover {{ border-color: {muted}; }}
+        .filter-select-wrap select:focus,
+        .ms-btn.ms-open, .ms-btn:focus {{
+            border-color: {primary_color};
+            box-shadow: 0 0 0 1px {primary_color};
         }}
+        .filter-select-wrap .sel-arrow {{
+            position: absolute; right: 9px; pointer-events: none;
+            color: {muted}; flex-shrink: 0;
+        }}
+        .ms-wrap {{ position: relative; min-width: 180px; }}
+        .ms-btn {{
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 10px; padding: 6px 10px;
+            text-align: left; width: 100%;
+        }}
+        .ms-btn .ms-text {{
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            color: {text_color};
+        }}
+        .ms-btn .ms-text.placeholder {{ color: {fg_dim}; }}
+        .ms-arrow {{ color: {muted}; transition: transform 0.15s; flex-shrink: 0; }}
+        .ms-btn.ms-open .ms-arrow {{ transform: rotate(180deg); }}
+        .ms-panel {{
+            position: absolute;
+            top: calc(100% + 4px); left: 0;
+            width: 100%;
+            min-width: 220px;
+            max-height: 280px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            background: {card_alt};
+            border: 1px solid {line};
+            border-radius: 8px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+            padding: 6px;
+            z-index: 50;
+            display: none;
+        }}
+        .ms-panel.ms-open {{ display: block; }}
+        .ms-option {{
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            color: {fg_dim};
+            font-size: 13px;
+            user-select: none;
+            min-width: 0;
+        }}
+        .ms-option > span {{
+            min-width: 0; flex: 1 1 auto;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }}
+        .ms-option:hover {{ background: rgba(189, 147, 249, 0.08); color: {text_color}; }}
+        .ms-option input[type="checkbox"] {{
+            accent-color: {primary_color};
+            width: 14px; height: 14px; flex-shrink: 0; cursor: pointer;
+        }}
+        .filter-reset {{
+            background: none;
+            border: 1px solid {line};
+            color: {fg_dim};
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            margin-left: auto;
+            font-family: inherit;
+            transition: color 0.15s, border-color 0.15s;
+        }}
+        .filter-reset:hover {{ color: {text_color}; border-color: {muted}; }}
     </style>
 </head>"""
 
     def _generate_body_start(self, title: str, colors: Dict[str, str]) -> str:
         return f"""<body>
+  <div class="container">
     <h1>{title}</h1>"""
 
     def _generate_html_footer(self) -> str:
-        return """</body>
+        return """  </div>
+</body>
 </html>"""
 
     @staticmethod
@@ -288,6 +431,7 @@ class ObservablePlotTransformer(Transformer):
         """Generate JavaScript to load CSV data"""
         data_type = data_spec["type"]
         path = data_spec["path"]
+        purple_ramp_js = json.dumps(PURPLE_RAMP)
 
         if data_type == "csv":
             return f"""
@@ -297,12 +441,52 @@ class ObservablePlotTransformer(Transformer):
         // World topojson for geo charts (loaded on demand)
         window.worldTopojson = null;
 
+        // Shared design tokens (transformer-side visual relationships).
+        const PURPLE_RAMP = {purple_ramp_js};
+
+        // Continuous purple ramp interpolation — used for sorted-bar coloring.
+        function purpleRamp(n) {{
+            const stops = PURPLE_RAMP;
+            if (n <= 1) return [stops[Math.floor(stops.length / 2)]];
+            const hexToRgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+            const rgbToHex = rgb => '#' + rgb.map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
+            const lerpAt = t => {{
+                const segments = stops.length - 1;
+                const scaled = Math.max(0, Math.min(segments, t * segments));
+                const idx = Math.min(segments - 1, Math.floor(scaled));
+                const frac = scaled - idx;
+                const a = hexToRgb(stops[idx]);
+                const b = hexToRgb(stops[idx + 1]);
+                return rgbToHex(a.map((v, i) => v + (b[i] - v) * frac));
+            }};
+            return Array.from({{length: n}}, (_, i) => lerpAt(i / (n - 1)));
+        }}
+
         // For CSV, getEffectiveType returns explicit type or detects from data
         function getEffectiveType(column, explicitType) {{
             if (explicitType) return explicitType;
             // For CSV, we don't have schema info, so return undefined
             // The sorting logic will handle runtime type detection
             return undefined;
+        }}
+
+        // Quote-aware CSV line parser
+        function parseCsvLine(line) {{
+            const out = []; let cur = ''; let inQ = false;
+            for (let i = 0; i < line.length; i++) {{
+                const c = line[i];
+                if (inQ) {{
+                    if (c === '"' && line[i + 1] === '"') {{ cur += '"'; i++; }}
+                    else if (c === '"') {{ inQ = false; }}
+                    else {{ cur += c; }}
+                }} else {{
+                    if (c === ',') {{ out.push(cur); cur = ''; }}
+                    else if (c === '"') {{ inQ = true; }}
+                    else {{ cur += c; }}
+                }}
+            }}
+            out.push(cur);
+            return out;
         }}
 
         // Load both data and world topojson in parallel
@@ -315,6 +499,8 @@ class ObservablePlotTransformer(Transformer):
 {self._build_derived_js_code(derived_fields or [], var_name="dashmlData", indent="                ")}
                 // Convert topojson to geojson features for Observable Plot
                 window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
+                window.__dashmlData = dashmlData;
+                if (typeof populateCsvFilters === 'function') populateCsvFilters(dashmlData);
                 renderAllCharts();
             }})
             .catch(error => {{
@@ -324,22 +510,21 @@ class ObservablePlotTransformer(Transformer):
 
         function parseCSV(csvText) {{
             const lines = csvText.trim().split('\\n').filter(line => line.trim());
-            const headers = lines[0].split(',').map(h => h.trim());
+            const headers = parseCsvLine(lines[0]).map(h => h.trim());
             const rows = [];
 
             for (let i = 1; i < lines.length; i++) {{
-                const values = lines[i].split(',');
+                const values = parseCsvLine(lines[i]);
                 if (values.length !== headers.length) continue;
 
                 const row = {{}};
                 headers.forEach((header, index) => {{
-                    const value = values[index] ? values[index].trim() : '';
+                    const value = values[index] != null ? String(values[index]).trim() : '';
                     // Try to parse as number first
                     if (!isNaN(value) && value !== '') {{
                         row[header] = parseFloat(value);
                     }}
                     // Keep dates as ISO strings and other strings as-is
-                    // Observable Plot handles ISO date strings natively with type: "utc"
                     else {{
                         row[header] = value;
                     }}
@@ -376,6 +561,108 @@ class ObservablePlotTransformer(Transformer):
             const decimals = m ? parseInt(m[1]) : 0;
             const str = n.toLocaleString('en-US', {{minimumFractionDigits: decimals, maximumFractionDigits: decimals}});
             return str + (suffix || '');
+        }}
+
+        // ─── Dashboard filter UI (CSV mode) ─────────────────────────────
+        function closeAllMs() {{
+            document.querySelectorAll('.ms-panel.ms-open').forEach(p => p.classList.remove('ms-open'));
+            document.querySelectorAll('.ms-btn.ms-open').forEach(b => b.classList.remove('ms-open'));
+        }}
+        function toggleMs(btn, pageId, field) {{
+            const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+            if (!panel) return;
+            const opening = !panel.classList.contains('ms-open');
+            closeAllMs();
+            if (opening) {{ panel.classList.add('ms-open'); btn.classList.add('ms-open'); }}
+        }}
+        document.addEventListener('click', function(e) {{
+            if (!e.target.closest('.ms-wrap')) closeAllMs();
+        }});
+        document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') closeAllMs(); }});
+
+        function updateMsLabel(pageId, field) {{
+            const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+            const textEl = document.querySelector('#ms-' + pageId + '-' + field + ' .ms-text');
+            if (!panel || !textEl) return;
+            const checked = Array.from(panel.querySelectorAll('input[type="checkbox"]:checked'));
+            const n = checked.length;
+            if (n === 0) {{
+                textEl.textContent = 'All';
+                textEl.classList.add('placeholder');
+            }} else if (n === 1) {{
+                textEl.textContent = checked[0].value;
+                textEl.classList.remove('placeholder');
+            }} else {{
+                textEl.textContent = n + ' selected';
+                textEl.classList.remove('placeholder');
+            }}
+        }}
+
+        function readPageFilters(pageId) {{
+            const out = {{}};
+            document.querySelectorAll('select[id^="filter-' + pageId + '-"]').forEach(sel => {{
+                const m = sel.id.match(/^filter-[^-]+-(.+)$/);
+                if (m && sel.value) out[m[1]] = [sel.value];
+            }});
+            document.querySelectorAll('.ms-panel[id^="ms-panel-' + pageId + '-"]').forEach(panel => {{
+                const m = panel.id.match(/^ms-panel-[^-]+-(.+)$/);
+                if (!m) return;
+                const checked = Array.from(panel.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
+                if (checked.length) out[m[1]] = checked;
+            }});
+            return out;
+        }}
+
+        function applyDashboardFilter(pageId) {{
+            const filters = readPageFilters(pageId);
+            const allData = window.__dashmlData || [];
+            const filtered = allData.filter(row => Object.entries(filters).every(([f, vals]) =>
+                vals.map(String).includes(String(row[f]))));
+            dashmlData = filtered;
+            // Clear ALL chart containers across all pages before re-rendering —
+            // renderAllCharts() rebuilds every chart, so without clearing the
+            // non-active page's containers, new plots get appended on top of
+            // the old ones.
+            document.querySelectorAll('[id^="chart-"]').forEach(el => {{
+                if (!el.classList.contains('metric-value')) el.innerHTML = '';
+            }});
+            renderAllCharts();
+        }}
+
+        function resetFilters(pageId) {{
+            document.querySelectorAll('select[id^="filter-' + pageId + '-"]').forEach(s => {{ s.value = ''; }});
+            document.querySelectorAll('.ms-panel[id^="ms-panel-' + pageId + '-"] input[type=checkbox]').forEach(cb => {{ cb.checked = false; }});
+            document.querySelectorAll('.ms-panel[id^="ms-panel-' + pageId + '-"]').forEach(panel => {{
+                const m = panel.id.match(/^ms-panel-([^-]+)-(.+)$/);
+                if (m) updateMsLabel(m[1], m[2]);
+            }});
+            applyDashboardFilter(pageId);
+        }}
+
+        function populateCsvFilters(data) {{
+            document.querySelectorAll('select[id^="filter-"]').forEach(sel => {{
+                const m = sel.id.match(/^filter-[^-]+-(.+)$/);
+                if (!m) return;
+                const field = m[1];
+                const values = Array.from(new Set(data.map(d => d[field]).filter(v => v !== '' && v != null))).sort();
+                values.forEach(v => {{
+                    const opt = document.createElement('option');
+                    opt.value = v; opt.textContent = v;
+                    sel.appendChild(opt);
+                }});
+            }});
+            document.querySelectorAll('.ms-panel').forEach(panel => {{
+                const m = panel.id.match(/^ms-panel-([^-]+)-(.+)$/);
+                if (!m) return;
+                const pageId = m[1]; const field = m[2];
+                const values = Array.from(new Set(data.map(d => d[field]).filter(v => v !== '' && v != null))).sort();
+                panel.innerHTML = values.map(v => {{
+                    const esc = String(v).replace(/"/g, '&quot;');
+                    return '<label class="ms-option"><input type="checkbox" value="' + esc +
+                           '" onchange="updateMsLabel(\\'' + pageId + '\\',\\'' + field +
+                           '\\');applyDashboardFilter(\\'' + pageId + '\\')"> <span>' + v + '</span></label>';
+                }}).join('');
+            }});
         }}
     </script>"""
 
@@ -439,6 +726,46 @@ class ObservablePlotTransformer(Transformer):
             if description:
                 page_html.append(f'        <p class="page-description">{description}</p>')
 
+            # Page-level filter bar (single-select + multi-select)
+            page_filters = page.get("filters", [])
+            if page_filters:
+                page_html.append(f'        <div class="filter-bar" id="filters-{page_id}">')
+                page_html.append(
+                    '          <div class="filter-bar-title">'
+                    '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">'
+                    '<path d="M1 2h14l-5 7v4l-4-2V9z"/></svg> Filters</div>'
+                )
+                for f in page_filters:
+                    field = f["field"]
+                    label_text = f.get("label", humanize_field(field))
+                    ftype = f.get("type", "select")
+                    if ftype == "multiselect":
+                        page_html.append(
+                            f'          <div class="filter-item">'
+                            f'<label>{label_text}</label>'
+                            f'<div class="ms-wrap" id="ms-{page_id}-{field}">'
+                            f'<button type="button" class="ms-btn" onclick="toggleMs(this,\'{page_id}\',\'{field}\')">'
+                            f'<span class="ms-text placeholder">All</span>'
+                            f'<svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
+                            f'</button>'
+                            f'<div class="ms-panel" id="ms-panel-{page_id}-{field}"></div>'
+                            f'</div></div>'
+                        )
+                    else:
+                        page_html.append(
+                            f'          <div class="filter-item">'
+                            f'<label>{label_text}</label>'
+                            f'<div class="filter-select-wrap">'
+                            f'<select id="filter-{page_id}-{field}" onchange="applyDashboardFilter(\'{page_id}\')">'
+                            f'<option value="">All</option></select>'
+                            f'<svg class="sel-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>'
+                            f'</div></div>'
+                        )
+                page_html.append(
+                    f'          <button class="filter-reset" onclick="resetFilters(\'{page_id}\')">&#x2715; Reset</button>'
+                )
+                page_html.append('        </div>')
+
             # Separate metric cards from regular chart cards
             metric_htmls = []
             regular_htmls = []
@@ -451,8 +778,8 @@ class ObservablePlotTransformer(Transformer):
             <div id="chart-{page_id}-{chart_id}" class="metric-value">—</div>
         </div>""")
                 else:
-                    regular_htmls.append(f"""        <div class="card">
-            <h2>{chart_title}</h2>
+                    regular_htmls.append(f"""        <div class="card chart-card">
+            <h3 class="chart-title">{chart_title}</h3>
             <div id="chart-{page_id}-{chart_id}"></div>
         </div>""")
 
@@ -612,7 +939,7 @@ class ObservablePlotTransformer(Transformer):
 
         # Generate Observable Plot mark based on chart type
         sequential_scheme = colors.get("sequential", "blues")
-        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field, sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"), sort_field=sort_field, sort_order=sort_order)
+        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field, sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"), sort_field=sort_field, sort_order=sort_order, y_scale=chart.get("y_scale"))
 
         # Inject annotation + reference-line marks into the marks array
         mark_code = self._inject_extra_marks(mark_code, chart, data_ref=f"data_{safe_var_name}")
@@ -645,86 +972,158 @@ class ObservablePlotTransformer(Transformer):
 
         # Determine if chart has categorical x-axis (needs more bottom margin for rotated labels)
         categorical_types = {"bar", "grouped_bar", "stacked_bar", "heatmap"}
-        margin_bottom = 100 if chart_type in categorical_types else 40
+        margin_bottom = 130 if chart_type in categorical_types else 48
+        # Bubble needs extra padding all around for labels above bubbles + edge labels.
+        margin_right = 80 if chart_type in {"bubble", "scatter"} else 16
+        margin_top = 56 if chart_type in {"bubble", "scatter"} else 24
+        margin_left = 90 if chart_type in {"bubble", "scatter"} else 80
+
+        # Consolidated x/y axis options. Avoids emitting two `x:` or `y:` keys
+        # in the same object (which silently overrides the earlier one). All
+        # axis decorations — humanized label, log type, utc type — go through
+        # this single point so the resulting Plot.plot config has at most one
+        # of each.
+        x_opts: list[str] = []
+        y_opts: list[str] = []
+        # Humanized labels (drop x-label for discrete categorical charts)
+        if chart_type not in _DISCRETE_X_CHART_TYPES:
+            hx = humanize_field(x)
+            if hx:
+                x_opts.append(f'label: {json.dumps(hx)}')
+        hy = humanize_field(y)
+        if hy and chart_type != "heatmap":
+            y_opts.append(f'label: {json.dumps(hy)}')
+        # Log scale (only if not already declared inside mark_code's x:/y: block)
+        marks_end = mark_code.find(']')
+        after_marks = mark_code[marks_end:] if marks_end != -1 else ""
+        if chart.get("x_scale") == "log" and "x:" not in after_marks:
+            x_opts.append('type: "log"')
+        if chart.get("y_scale") == "log" and "y:" not in after_marks:
+            y_opts.append('type: "log"')
+        # Temporal x (only if mark_code doesn't already declare x:)
+        if is_temporal_x and "x:" not in after_marks:
+            x_opts.append('type: "utc"')
+        # Build the consolidated axis config block
+        axis_config = ""
+        if x_opts:
+            axis_config += f'x: {{ {", ".join(x_opts)} }},\n                '
+        if y_opts:
+            axis_config += f'y: {{ {", ".join(y_opts)} }},\n                '
+
+        # Design-token colors for axes/grid (theme-agnostic visual relationships).
+        line_soft = DESIGN_TOKENS["line_soft"]
+        muted = DESIGN_TOKENS["muted"]
+        fg_dim = DESIGN_TOKENS["fg_dim"]
 
         return f"""            // Chart: {chart_id}
             const data_{safe_var_name} = {data_code};
             const plot_{safe_var_name} = Plot.plot({{
                 {mark_code},
-                {scale_config}marginLeft: 60,
+                {axis_config}marginLeft: {margin_left},
                 marginBottom: {margin_bottom},
+                marginTop: {margin_top},
+                marginRight: {margin_right},
+                height: 380,
                 grid: true,
                 style: {{
                     background: "transparent",
-                    color: "{colors.get('text', '#000000')}"
-                }}
+                    color: "{fg_dim}",
+                    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
+                    fontSize: 11
+                }},
+                width: undefined
             }});
             document.getElementById('{container_id}').appendChild(plot_{safe_var_name});"""
 
     def _generate_d3_pie_chart(self, var_name: str, x: str, y: str, data_code: str, container_id: str, colors: Dict[str, str]) -> str:
-        """Generate D3 pie chart code"""
-        text_color = colors.get('text', '#000000')
-        secondary_colors = colors.get('secondary', DEFAULT_SECONDARY_COLORS)
+        """Generate D3 pie chart code with light→dark purple ramp + on-slice labels.
+
+        Uses the global `PURPLE_RAMP` constant emitted by the data loader so
+        the colors stay in sync with the bar-chart ramp (no hardcoded list).
+        """
+        card_bg = colors.get('card', '#2e3040')
         return f"""            // D3 Pie Chart
             const data_{var_name} = {data_code};
-            const pieWidth = 400;
-            const pieHeight = 400;
-            const legendWidth = 150;
-            const totalWidth = pieWidth + legendWidth;
-            const radius = Math.min(pieWidth, pieHeight) / 2 - 10;
+            // Fixed render size — keeps text sized predictably regardless of card width
+            const pieSize_{var_name} = 360;
+            const radius_{var_name} = pieSize_{var_name} / 2 - 10;
 
-            const pie = d3.pie().value(d => d.{y});
-            const arc = d3.arc().innerRadius(0).outerRadius(radius);
+            const pie_{var_name} = d3.pie().value(d => d.{y}).sort(null);
+            const arc_{var_name} = d3.arc().innerRadius(0).outerRadius(radius_{var_name});
+            const labelArc_{var_name} = d3.arc()
+                .innerRadius(radius_{var_name} * 0.6)
+                .outerRadius(radius_{var_name} * 0.6);
 
-            // Use theme secondary colors for categorical data
-            const themeColors = {secondary_colors};
-            const color = d3.scaleOrdinal()
-                .domain(data_{var_name}.map(d => d.{x}))
-                .range(themeColors);
+            // Reuse the dashboard's PURPLE_RAMP (emitted in data loader) so
+            // pie colors stay consistent with the bar ramp.
+            function rampAt_{var_name}(t) {{
+                const stops = PURPLE_RAMP;
+                const segments = stops.length - 1;
+                const scaled = Math.max(0, Math.min(segments, t * segments));
+                const idx = Math.min(segments - 1, Math.floor(scaled));
+                const frac = scaled - idx;
+                const a = d3.color(stops[idx]);
+                const b = d3.color(stops[idx + 1]);
+                return d3.interpolateRgb(a, b)(frac);
+            }}
+            const sliceColors_{var_name} = data_{var_name}.map((_, i) =>
+                rampAt_{var_name}(i / Math.max(1, data_{var_name}.length - 1)));
 
-            const svg = d3.create("svg")
-                .attr("width", totalWidth)
-                .attr("height", pieHeight)
-                .attr("viewBox", [0, 0, totalWidth, pieHeight])
-                .attr("style", "max-width: 100%; height: auto;");
+            const totalY_{var_name} = d3.sum(data_{var_name}, d => d.{y});
 
-            // Pie chart group (centered in left portion)
-            const pieGroup = svg.append("g")
-                .attr("transform", `translate(${{pieWidth / 2}}, ${{pieHeight / 2}})`);
+            const svg_{var_name} = d3.create("svg")
+                .attr("width", pieSize_{var_name})
+                .attr("height", pieSize_{var_name})
+                .attr("viewBox", [-pieSize_{var_name} / 2, -pieSize_{var_name} / 2, pieSize_{var_name}, pieSize_{var_name}])
+                .attr("style", "display: block; margin: 0 auto;");
 
-            pieGroup.selectAll("path")
-                .data(pie(data_{var_name}))
+            const slices_{var_name} = svg_{var_name}.selectAll("path")
+                .data(pie_{var_name}(data_{var_name}))
                 .join("path")
-                .attr("fill", d => color(d.data.{x}))
-                .attr("d", arc)
-                .attr("stroke", "white")
-                .attr("stroke-width", 2)
-                .append("title")
+                .attr("fill", (d, i) => sliceColors_{var_name}[i])
+                .attr("d", arc_{var_name})
+                .attr("stroke", "{card_bg}")
+                .attr("stroke-width", 1);
+            slices_{var_name}.append("title")
                 .text(d => `${{d.data.{x}}}: ${{d.data.{y}}}`);
 
-            // Legend (positioned on the right)
-            const legend = svg.append("g")
-                .attr("transform", `translate(${{pieWidth + 10}}, 20)`);
+            // Radial labels: rotate each label along the slice's centroid angle
+            // so small slices get tilted text instead of overlapping with neighbors
+            // (matches Plotly's `insidetextorientation: "radial"`).
+            const labelGroups_{var_name} = svg_{var_name}.selectAll("g.label")
+                .data(pie_{var_name}(data_{var_name}))
+                .join("g")
+                .attr("class", "label")
+                .attr("transform", d => {{
+                    const [cx, cy] = labelArc_{var_name}.centroid(d);
+                    const angleRad = (d.startAngle + d.endAngle) / 2;
+                    let rotDeg = (angleRad * 180 / Math.PI) - 90;
+                    // Flip so text never appears upside down
+                    if (rotDeg > 90) rotDeg -= 180;
+                    if (rotDeg < -90) rotDeg += 180;
+                    return `translate(${{cx}}, ${{cy}}) rotate(${{rotDeg}})`;
+                }})
+                .style("display", d => (d.endAngle - d.startAngle) < 0.18 ? "none" : null);
 
-            data_{var_name}.forEach((d, i) => {{
-                const legendRow = legend.append("g")
-                    .attr("transform", `translate(0, ${{i * 25}})`);
+            labelGroups_{var_name}.append("text")
+                .attr("text-anchor", "middle")
+                .attr("dy", "-0.25em")
+                .style("font-size", "11px")
+                .style("font-weight", "600")
+                .style("fill", "#1a1b24")
+                .text(d => d.data.{x});
 
-                legendRow.append("rect")
-                    .attr("width", 15)
-                    .attr("height", 15)
-                    .attr("fill", color(d.{x}))
-                    .attr("rx", 2);
+            labelGroups_{var_name}.append("text")
+                .attr("text-anchor", "middle")
+                .attr("dy", "0.9em")
+                .style("font-size", "11px")
+                .style("fill", "#1a1b24")
+                .text(d => {{
+                    const pct = (d.data.{y} / totalY_{var_name}) * 100;
+                    return pct.toFixed(1) + "%";
+                }});
 
-                legendRow.append("text")
-                    .attr("x", 22)
-                    .attr("y", 12)
-                    .attr("fill", "{text_color}")
-                    .style("font-size", "13px")
-                    .text(d.{x});
-            }});
-
-            document.getElementById('{container_id}').appendChild(svg.node());"""
+            document.getElementById('{container_id}').appendChild(svg_{var_name}.node());"""
 
     def _get_aggregation_code(self, x: str, y: str, agg: str, x_type: str = None,
                                y_type: str = None, filters: List = None,
@@ -1065,7 +1464,7 @@ class ObservablePlotTransformer(Transformer):
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc") -> str:
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc", y_scale: str = None) -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -1073,11 +1472,21 @@ class ObservablePlotTransformer(Transformer):
         Fix: _get_bar_mark(), _get_line_mark(), _get_scatter_mark(), etc.
         """
         if chart_type == "bar":
+            # When sorted by y with no group, color bars with a continuous
+            # purple ramp so rank reads as a free second visual channel.
+            # Note: use `.at(i)` not `[i]` — `]` inside the marks array would
+            # confuse _inject_extra_marks which looks for the first `]` to
+            # insert reference-line marks.
+            use_ramp = sort_field == "y"
+            if use_ramp:
+                fill_expr = f"(d, i) => purpleRamp(data_{data_var}.length).at(i)"
+            else:
+                fill_expr = f'"{color}"'
             return f"""marks: [
                     Plot.barY(data_{data_var}, {{
                         x: "{x}",
                         y: "{y}",
-                        fill: "{color}",
+                        fill: {fill_expr},
                         sort: null,
                         tip: true
                     }}),
@@ -1085,7 +1494,7 @@ class ObservablePlotTransformer(Transformer):
                 ],
                 x: {{
                     domain: data_{data_var}.map(d => d.{x}),
-                    tickRotate: -45
+                    tickRotate: -35
                 }}"""
 
         elif chart_type == "line":
@@ -1129,24 +1538,38 @@ class ObservablePlotTransformer(Transformer):
                         x: "{x}",
                         y: "{y}",
                         fill: "{group}",
-                        r: d => {{
-                            const maxVal = d3.max(data_{data_var}, d => Math.abs(d["{size_ref}"]));
-                            return 5 + (Math.abs(d["{size_ref}"]) / maxVal) * 25;
-                        }},
+                        r: "{size_ref}",
                         tip: true
                     }}),
-                    Plot.text(data_{data_var}, {{
-                        x: "{x}",
-                        y: "{y}",
-                        text: "{group}",
-                        dy: -12,
-                        fontSize: 10
-                    }}),
-                    Plot.ruleY([0])
+                    Plot.text(
+                        (() => {{
+                            const m_{data_var} = d3.max(data_{data_var}, dd => Math.abs(dd["{size_ref}"]));
+                            return data_{data_var}.filter(d => Math.sqrt(Math.abs(d["{size_ref}"]) / m_{data_var}) > 0.6);
+                        }})(),
+                        {{ x: "{x}", y: "{y}", text: "{group}", dy: -36, fontSize: 11 }}
+                    ),
+                    Plot.text(
+                        (() => {{
+                            const m_{data_var} = d3.max(data_{data_var}, dd => Math.abs(dd["{size_ref}"]));
+                            return data_{data_var}.filter(d => {{
+                                const r = Math.sqrt(Math.abs(d["{size_ref}"]) / m_{data_var});
+                                return r > 0.3 && r <= 0.6;
+                            }});
+                        }})(),
+                        {{ x: "{x}", y: "{y}", text: "{group}", dy: -24, fontSize: 11 }}
+                    ),
+                    Plot.text(
+                        (() => {{
+                            const m_{data_var} = d3.max(data_{data_var}, dd => Math.abs(dd["{size_ref}"]));
+                            return data_{data_var}.filter(d => Math.sqrt(Math.abs(d["{size_ref}"]) / m_{data_var}) <= 0.3);
+                        }})(),
+                        {{ x: "{x}", y: "{y}", text: "{group}", dy: -14, fontSize: 11 }}
+                    )
                 ],
+                r: {{ range: [6, 28] }},
                 color: {{
-                    domain: [...new Set(data_{data_var}.map(d => d.{group}))],
-                    range: {color_scale_json}
+                    domain: data_{data_var}.map(d => d.{group}),
+                    range: purpleRamp(data_{data_var}.length)
                 }}"""
             else:
                 return f"""marks: [
@@ -1196,6 +1619,17 @@ class ObservablePlotTransformer(Transformer):
                 ]"""
 
         elif chart_type == "histogram":
+            # On log y, rect baseline (y1=0) is undefined; use y1=1 and drop the
+            # y=0 rule so the y-domain doesn't get extended to -∞.
+            if y_scale == "log":
+                return f"""marks: [
+                    Plot.rectY(data_{data_var}, Plot.binX({{y2: "count", thresholds: {bins}}}, {{
+                        x: "{x}",
+                        y1: () => 1,
+                        fill: "{color}",
+                        tip: true
+                    }}))
+                ]"""
             return f"""marks: [
                     Plot.rectY(data_{data_var}, Plot.binX({{y: "count", thresholds: {bins}}}, {{
                         x: "{x}",
@@ -2232,48 +2666,59 @@ if __name__ == '__main__':
         """Return JS snippet(s) for Plot.ruleY() / Plot.ruleX() reference-line marks.
 
         Each ref line is: {axis, value, label (optional), color (optional), style (optional)}.
+        Defaults to the design-token amber so benchmark lines don't read as errors.
         style mapping: solid → (none), dashed → "4,4", dotted → "1,3".
         """
         ref_lines = chart.get("reference_lines")
         if not ref_lines:
             return ""
         _dash_map = {"solid": "", "dashed": "4,4", "dotted": "1,3"}
+        amber = DESIGN_TOKENS["amber"]
         parts = []
         for rl in ref_lines:
             axis = rl.get("axis", "y")
             value = rl["value"]
-            color = rl.get("color", "red")
+            color = rl.get("color", amber)
             style = rl.get("style", "dashed")
             dash = _dash_map.get(style, "4,4")
             rule_fn = "Plot.ruleY" if axis == "y" else "Plot.ruleX"
-            opts = f'stroke: "{color}"'
+            opts = f'stroke: "{color}", strokeWidth: 2'
             if dash:
                 opts += f', strokeDasharray: "{dash}"'
             parts.append(f'{rule_fn}([{json.dumps(value)}], {{{opts}}})')
-            # Optional label next to the line
+            # Optional label — right-anchored on the chart edge with a stroke
+            # halo (using the card surface color) so it reads against any data
+            # behind it.
+            card_bg = DESIGN_TOKENS["card_alt"]
             label = rl.get("label")
             if label:
-                label_js = json.dumps(label)
+                label_js = json.dumps(f"  {label}  ")
                 if axis == "y":
                     parts.append(
                         f'Plot.text([{{y: {json.dumps(value)}}}], '
                         f'{{y: "y", text: d => {label_js}, '
-                        f'fontSize: 10, fill: "{color}", dx: 4, frameAnchor: "left"}})'
+                        f'fontSize: 12, fill: "{color}", fontWeight: 700, '
+                        f'stroke: "{card_bg}", strokeWidth: 4, paintOrder: "stroke", '
+                        f'frameAnchor: "right", dx: -4, dy: -6}})'
                     )
                 else:
                     parts.append(
                         f'Plot.text([{{x: {json.dumps(value)}}}], '
                         f'{{x: "x", text: d => {label_js}, '
-                        f'fontSize: 10, fill: "{color}", dy: -8, frameAnchor: "top"}})'
+                        f'fontSize: 12, fill: "{color}", fontWeight: 700, '
+                        f'stroke: "{card_bg}", strokeWidth: 4, paintOrder: "stroke", '
+                        f'frameAnchor: "top", dx: 4, dy: 10}})'
                     )
         return ",\n                    ".join(parts)
 
     def _inject_extra_marks(self, mark_code: str, chart: Dict[str, Any], data_ref: str = "data") -> str:
         """Append annotation + reference-line marks into an existing mark_code string.
 
-        *mark_code* has the form ``marks: [...], x: {...}, ...``.
-        We locate the **first** ``]`` that closes the marks array and insert
-        the extra marks just before it.
+        *mark_code* has the form ``marks: [...], x: {...}, ...``. We need the
+        ``]`` that closes the marks **array**, not the first one in the string
+        (inner mark calls like ``Plot.ruleY([0])`` or array subscripts like
+        ``data.at(0)`` would otherwise split the injected snippet). Bracket-
+        match from the marks array's opening ``[``.
         """
         extras = []
         ann = self._annotation_marks_js(chart, data_ref)
@@ -2285,11 +2730,29 @@ if __name__ == '__main__':
         if not extras:
             return mark_code
         extra_str = ",\n                    ".join(extras)
-        # Find the first ']' that closes the marks array
-        idx = mark_code.find(']')
-        if idx == -1:
+        start = mark_code.find('[')
+        if start == -1:
             return mark_code
-        return mark_code[:idx] + ",\n                    " + extra_str + "\n                " + mark_code[idx:]
+        depth = 0
+        end = -1
+        in_str = None
+        for i in range(start, len(mark_code)):
+            ch = mark_code[i]
+            if in_str:
+                if ch == in_str and mark_code[i - 1] != '\\':
+                    in_str = None
+            elif ch in ('"', "'"):
+                in_str = ch
+            elif ch == '[':
+                depth += 1
+            elif ch == ']':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end == -1:
+            return mark_code
+        return mark_code[:end] + ",\n                    " + extra_str + "\n                " + mark_code[end:]
 
     def _axis_scale_options_js(self, chart: Dict[str, Any]) -> str:
         """Return JS options for log-scale axes to merge into Plot.plot() options.

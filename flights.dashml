@@ -1,0 +1,24 @@
+version: 0.1
+title: Flight Delay Analysis
+style: dracula
+data:
+  type: csv
+  path: flights.csv
+
+charts:
+  - id: delays_by_airline
+    type: bar
+    title: Average Delay by Airline
+    x: airline_name
+    y: average_delay_mins
+    agg: mean
+    sort: y
+    sort_order: desc
+    limit: 10
+
+  - id: cancellations_map
+    type: geo
+    title: Cancelled Flights by Country
+    x: origin_country
+    y: cancelled
+    agg: count

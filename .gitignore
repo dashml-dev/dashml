@@ -65,4 +65,5 @@ benchmark/audit_results.json
 # Generated test outputs
 generated_dashboard.html
 /output_*/
+/out_*/
 

@@ -4,7 +4,7 @@ Streamlit Transformer - Generates Streamlit Python code from DashML specs
 import re
 import sys
 from typing import TYPE_CHECKING, Dict, Any, List
-from .base import Transformer, TransformerError
+from .base import Transformer, TransformerError, humanize_field
 from .constants import (
     CHARTS_NEED_AGGREGATION,
     CHARTS_USE_RAW_DATA,
@@ -12,6 +12,7 @@ from .constants import (
     AGG_METHODS,
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
+    DESIGN_TOKENS,
     resolve_metric_format,
     country_mapping_as_python,
 )
@@ -88,6 +89,11 @@ class StreamlitTransformer(Transformer):
             # Apply CSS Styling (if style has non-default colors)
             style_config = {"colors": colors}
             code_parts.append(self._generate_css_injection(style_config))
+
+            # Register a custom Altair theme so chart bodies match the dashboard
+            # palette (card bg, design-token grid/axis colors) instead of
+            # Streamlit's default light/dark theme.
+            code_parts.append(self._generate_altair_theme(style_config))
 
             # Title
             code_parts.append(f'    st.title("{title}")')
@@ -208,6 +214,11 @@ def normalize_country(value, encoding):
         text_color = colors.get('text', '#000000')
         card_color = colors.get('card', bg_color)
         primary_color = colors.get('primary', '#29b5e8')
+        card_alt = DESIGN_TOKENS["card_alt"]
+        line = DESIGN_TOKENS["line"]
+        line_soft = DESIGN_TOKENS["line_soft"]
+        muted = DESIGN_TOKENS["muted"]
+        fg_dim = DESIGN_TOKENS["fg_dim"]
 
         return f'''    # Apply Custom Styling
     st.markdown("""
@@ -216,12 +227,41 @@ def normalize_country(value, encoding):
             background-color: {bg_color};
             color: {text_color};
         }}
-        h1, h2, h3, p, li, .stMarkdown, .stMetricValue, .stMetricLabel {{
+        /* Remove the "card-on-card" feel from Streamlit's main container so the
+           dashboard reads as a full-bleed page (matches Plotly/Observable). */
+        .main, .block-container,
+        [data-testid="stMainBlockContainer"],
+        [data-testid="stAppViewContainer"] > .main {{
+            background-color: transparent !important;
+            border: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            padding: 4rem 2rem 2rem !important;  /* clear room for Streamlit header */
+            max-width: 100% !important;
+        }}
+        /* Streamlit header strip */
+        [data-testid="stHeader"] {{ background-color: {bg_color} !important; }}
+        h1 {{
+            font-size: 22px !important;
+            font-weight: 700 !important;
+            letter-spacing: -0.01em;
+            color: {text_color} !important;
+        }}
+        h2, h3 {{
+            font-weight: 600 !important;
+            color: {text_color} !important;
+        }}
+        p, li, .stMarkdown, .stMetricValue, .stMetricLabel {{
             color: {text_color} !important;
         }}
         /* Tabs styling */
+        .stTabs [data-baseweb="tab-list"] {{
+            border-bottom: 1px solid {line};
+            gap: 24px;
+        }}
         .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {{
-            color: {text_color};
+            color: {fg_dim};
+            font-weight: 500;
         }}
         .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {{
             border-bottom-color: {primary_color} !important;
@@ -233,16 +273,64 @@ def normalize_country(value, encoding):
         [data-testid="stVerticalBlock"] > div:has([data-testid="stVegaLiteChart"]),
         [data-testid="stVerticalBlock"] > div:has([data-testid="stArrowVegaLiteChart"]) {{
             background-color: {card_color};
-            border-radius: 8px;
-            padding: 1rem;
+            border: 1px solid {line_soft};
+            border-radius: 10px;
+            padding: 20px;
             margin-bottom: 0.5rem;
         }}
         /* Divider color */
         hr {{
-            border-color: {text_color}20 !important;
+            border-color: {line_soft} !important;
+        }}
+        /* Filter / select widgets */
+        [data-baseweb="select"] {{
+            background-color: {card_alt} !important;
+            border-color: {line} !important;
+            border-radius: 6px !important;
+        }}
+        /* Subheaders inside charts */
+        h3, .stMarkdown h3 {{
+            font-size: 14px !important;
+            color: {text_color} !important;
+            margin: 0 0 14px !important;
         }}
         </style>
     """, unsafe_allow_html=True)'''
+
+    def _generate_altair_theme(self, style_config: Dict) -> str:
+        """Emit code that registers an Altair theme matching the dashboard palette."""
+        colors = style_config.get("colors", {})
+        card_bg = colors.get("card", "#2e3040")
+        text_color = colors.get("text", "#f8f8f2")
+        line_soft = DESIGN_TOKENS["line_soft"]
+        muted = DESIGN_TOKENS["muted"]
+        fg_dim = DESIGN_TOKENS["fg_dim"]
+        return f'''    # Register Altair theme to match the dashboard palette
+    def _dashml_alt_theme():
+        return {{
+            "config": {{
+                "background": "{card_bg}",
+                "view": {{"fill": "{card_bg}", "stroke": "{line_soft}", "strokeWidth": 0}},
+                "axis": {{
+                    "gridColor": "{line_soft}", "domainColor": "{line_soft}",
+                    "tickColor": "{line_soft}",
+                    "labelColor": "{fg_dim}", "titleColor": "{muted}",
+                    "labelFontSize": 11, "titleFontSize": 11,
+                    "titleFontWeight": "normal",
+                }},
+                "legend": {{
+                    "labelColor": "{fg_dim}", "titleColor": "{muted}",
+                    "labelFontSize": 11, "titleFontSize": 11,
+                }},
+                "title": {{
+                    "color": "{text_color}", "fontSize": 14,
+                    "fontWeight": 600, "anchor": "start",
+                }},
+            }}
+        }}
+    alt.themes.register("dashml_dracula", _dashml_alt_theme)
+    alt.themes.enable("dashml_dracula")
+'''
 
     def _generate_data_loading(self, data_spec: Dict[str, Any], db_config: Dict[str, Any] = None, derived_fields: list = None) -> str:
         data_type = data_spec.get("type", "csv")
@@ -513,9 +601,13 @@ def load_data():
             code_parts.append(f'        _metric_formatted = f"{{_metric_val:{format_str}}}"' + (f' + "{suffix}"' if suffix else ''))
             code_parts.append(f'    else:')
             code_parts.append(f'        _metric_formatted = "N/A"')
-            code_parts.append(f'    st.markdown(f\'\'\'<div style="background:rgba(255,255,255,0.05);border-radius:8px;padding:16px 20px;text-align:center;">')
-            code_parts.append(f'        <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;opacity:0.6;margin-bottom:8px;">{title}</div>')
-            code_parts.append(f'        <div style="font-size:2rem;font-weight:700;color:{primary_color};">{{_metric_formatted}}</div>')
+            card_bg = colors.get('card', '#2e3040') if isinstance(colors, dict) else '#2e3040'
+            line_soft = DESIGN_TOKENS["line_soft"]
+            muted = DESIGN_TOKENS["muted"]
+            text_color = colors.get('text', '#f8f8f2') if isinstance(colors, dict) else '#f8f8f2'
+            code_parts.append(f'    st.markdown(f\'\'\'<div style="background:{card_bg};border:1px solid {line_soft};border-radius:10px;padding:20px;">')
+            code_parts.append(f'        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:{muted};margin-bottom:10px;">{title}</div>')
+            code_parts.append(f'        <div style="font-size:32px;font-weight:600;letter-spacing:-0.02em;color:{text_color};font-variant-numeric:tabular-nums;line-height:1.1;">{{_metric_formatted}}</div>')
             code_parts.append(f'    </div>\'\'\', unsafe_allow_html=True)')
             return "\n".join(code_parts)
 
@@ -681,8 +773,20 @@ def load_data():
         # Altair Chart Generation
         if chart_type == "bar":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
-            code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            use_purple_ramp = sort_field == "y" and not group
+            if use_purple_ramp:
+                # Add a 0-based _rank column so bars get a light→dark purple ramp.
+                code_parts.append('    chart_data = chart_data.reset_index(drop=True)')
+                code_parts.append('    chart_data["_rank"] = range(len(chart_data))')
+                code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar().encode(
+        x={x_enc},
+        y={y_enc_str},
+        color=alt.Color("_rank:Q", scale=alt.Scale(scheme="purples"), legend=None),
+        tooltip=["{x}", "{y}"]
+    ){render_line}''')
+            else:
+                code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar(color="{primary_color}").encode(
         x={x_enc},
         y={y_enc_str},
         tooltip=["{x}", "{y}"]
@@ -690,7 +794,7 @@ def load_data():
 
         elif chart_type == "line":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
         x={x_enc},
         y={y_enc_str},
@@ -699,7 +803,7 @@ def load_data():
 
         elif chart_type == "scatter":
             x_enc_scatter = self._x_encoding_str(x, x_label, chart, type_suffix=":Q", sort_val="None")
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             code_parts.append(f'''    # Scatter: raw data points
     c = alt.Chart(chart_df).mark_circle(color="{primary_color}", size=60).encode(
         x={x_enc_scatter},
@@ -713,16 +817,22 @@ def load_data():
             size_col = "size" if (sql_mode and size_field in (x, y)) else size_field
             size_label = self._humanize_column_name(size_field)
             x_enc_bubble = self._x_encoding_str(x, x_label, chart, type_suffix=":Q", sort_val="None")
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             if group:
                 group_label = self._humanize_column_name(group)
-                code_parts.append(f'''    # Bubble: 4D visualization (group, x, y, size)
-    c = alt.Chart(chart_data).mark_circle().encode(
-        x={x_enc_bubble},
-        y={y_enc_str},
-        size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[50, 500]), legend=alt.Legend(title="{size_label}")),
-        color=alt.Color("{group}:N", legend=alt.Legend(title="{group_label}")),
+                code_parts.append(f'''    # Bubble: 4D viz with purple ramp by rank + on-top labels
+    chart_data = chart_data.reset_index(drop=True)
+    chart_data["_rank"] = range(len(chart_data))
+    _bub_base = alt.Chart(chart_data).encode(
+        x=alt.X("{x}:Q", title="{x_label}", scale=alt.Scale(zero=False, nice=True)),
+        y=alt.Y("{y}:Q", title="{y_label}", scale=alt.Scale(zero=False, nice=True)),
+    )
+    c = _bub_base.mark_circle(stroke="#2e3040", strokeWidth=1).encode(
+        size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[100, 1500]), legend=None),
+        color=alt.Color("_rank:O", scale=alt.Scale(scheme="purples"), legend=None),
         tooltip=["{group}", "{x}", "{y}", "{size_col}"]
+    ) + _bub_base.mark_text(dy=-22, fontSize=11, color="#c8cadf").encode(
+        text="{group}:N"
     ){render_line}''')
             else:
                 code_parts.append(f'''    # Bubble: scatter with size encoding
@@ -740,7 +850,7 @@ def load_data():
             heatmap_y_label = self._humanize_column_name(heatmap_y)
             value_field = y  # The value to aggregate for color
             value_label = self._humanize_column_name(value_field)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             if sql_mode:
                 # In SQL mode, chart_df already contains aggregated and renamed data
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity (data pre-aggregated by SQL query)
@@ -773,22 +883,31 @@ def load_data():
     ).properties(width=600, height=400){render_line}''')
 
         elif chart_type == "pie":
-            # Use secondary colors from theme for categorical data
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
-            code_parts.append(f'''    # Use theme secondary colors for pie chart
-    theme_colors = {secondary_colors}
-    c = alt.Chart(chart_data).mark_arc().encode(
-        theta=alt.Theta("{y}:Q"),
-        color=alt.Color("{x}:N",
-            scale=alt.Scale(range=theme_colors),
-            legend=alt.Legend(title="{x_label}")
+            # Sorted pie → purple ramp by rank, with a right-side legend showing
+            # "NAME  PCT%" labels (Altair pie text inside slices is fragile).
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            arc_stroke = colors.get("card", "#2e3040")
+            code_parts.append(f'''    # Build "NAME  PCT%" legend labels in rank order
+    chart_data = chart_data.reset_index(drop=True)
+    chart_data["_rank"] = range(len(chart_data))
+    _pie_total = chart_data["{y}"].sum() or 1
+    chart_data["_pct"] = (chart_data["{y}"] / _pie_total * 100).round(1)
+    chart_data["_legend_label"] = chart_data["{x}"].astype(str) + "  " + chart_data["_pct"].astype(str) + "%"
+    _legend_order = chart_data["_legend_label"].tolist()
+    c = alt.Chart(chart_data).mark_arc(stroke="{arc_stroke}", strokeWidth=1).encode(
+        theta=alt.Theta("{y}:Q", stack=True),
+        color=alt.Color(
+            "_legend_label:N",
+            scale=alt.Scale(domain=_legend_order, scheme="purples"),
+            legend=alt.Legend(title=None, orient="right", labelLimit=240, labelFontSize=11, symbolSize=120)
         ),
+        order=alt.Order("_rank:Q", sort="ascending"),
         tooltip=["{x}", "{y}"]
     ){render_line}''')
 
         elif chart_type == "area":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
         x={x_enc},
         y={y_enc_str},
@@ -797,7 +916,7 @@ def load_data():
 
         elif chart_type == "histogram":
             # Histogram uses binning on x axis, no aggregation needed
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             code_parts.append(f'''    # Histogram: bin {x} values into {bins} bins
     c = alt.Chart(chart_df).mark_bar(color="{primary_color}").encode(
         x=alt.X("{x}:Q", bin=alt.Bin(maxbins={bins}), title="{x_label}"),
@@ -807,7 +926,7 @@ def load_data():
 
         elif chart_type == "box":
             # Box plot: shows distribution (min, Q1, median, Q3, max)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             code_parts.append(f'''    # Box plot: distribution by {x}
     c = alt.Chart(chart_df).mark_boxplot(color="{primary_color}").encode(
         x=alt.X("{x}:N", title="{x_label}"),
@@ -823,7 +942,7 @@ def load_data():
             if chart.get("y_scale") == "log":
                 y_stack_enc += ', scale=alt.Scale(type="log")'
             y_stack_enc += ')'
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             code_parts.append(f'''    # Stacked bar: stack {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
@@ -845,7 +964,7 @@ def load_data():
             else:
                 offset_sort = "None"
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme="streamlit")'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
             code_parts.append(f'''    # Grouped bar: group {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
@@ -879,17 +998,17 @@ def load_data():
 
     # Create choropleth map (two layers: background + data)
     background = alt.Chart(countries).mark_geoshape(
-        fill="#e0e0e0",
-        stroke="#aaa",
+        fill="{DESIGN_TOKENS["geo_land"]}",
+        stroke="{DESIGN_TOKENS["geo_border"]}",
         strokeWidth=0.5
     ).project(
         type="naturalEarth1"
     ).properties(
-        width=800,
-        height=450
+        width=720,
+        height=350
     )
     foreground = alt.Chart(countries).mark_geoshape(
-        stroke="#aaa",
+        stroke="{DESIGN_TOKENS["geo_border"]}",
         strokeWidth=0.5
     ).encode(
         color=alt.Color("{y}:Q",
@@ -903,11 +1022,11 @@ def load_data():
     ).project(
         type="naturalEarth1"
     ).properties(
-        width=800,
-        height=450
+        width=720,
+        height=350
     )
     c = background + foreground
-    st.altair_chart(c, use_container_width=True, theme="streamlit")''')
+    st.altair_chart(c, use_container_width=True, theme=None)''')
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')
@@ -917,7 +1036,7 @@ def load_data():
             overlay_code = self._generate_overlay_code(chart)
             if overlay_code:
                 code_parts.append(overlay_code)
-            code_parts.append('    st.altair_chart(c, use_container_width=True, theme="streamlit")')
+            code_parts.append('    st.altair_chart(c, use_container_width=True, theme=None)')
 
         return "\n".join(code_parts)
 
@@ -940,8 +1059,10 @@ def load_data():
 
         n = len(filters)
         col_vars = ", ".join(f"_filter_col{i}" for i in range(n))
-        parts.append("        # Dashboard filters")
-        parts.append(f"        {col_vars} = st.columns({n})")
+        parts.append("        # Dashboard filters — wrapped in a bordered container so the")
+        parts.append("        # widget row reads as a card (parallels Plotly/Observable filter bars).")
+        parts.append("        with st.container(border=True):")
+        parts.append(f"            {col_vars} = st.columns({n})")
 
         for i, f in enumerate(filters):
             field = f["field"]
@@ -950,7 +1071,7 @@ def load_data():
             key = f"filter_{page_id}_{field}"
             static_values = f.get("values")
 
-            parts.append(f"        with _filter_col{i}:")
+            parts.append(f"            with _filter_col{i}:")
 
             if static_values is not None:
                 opts_code = repr(static_values)
@@ -960,9 +1081,9 @@ def load_data():
                 opts_code = f'sorted(df["{field}"].dropna().astype(str).unique().tolist())'
 
             if ftype == "select":
-                parts.append(f'            _filter_{field} = st.selectbox("{label}", options=[""] + {opts_code}, key="{key}")')
+                parts.append(f'                _filter_{field} = st.selectbox("{label}", options=[""] + {opts_code}, key="{key}")')
             else:  # multiselect
-                parts.append(f'            _filter_{field} = st.multiselect("{label}", options={opts_code}, key="{key}")')
+                parts.append(f'                _filter_{field} = st.multiselect("{label}", options={opts_code}, key="{key}")')
 
         parts.append("        _dashboard_filters = {}")
         if not sql_mode:
@@ -1021,6 +1142,12 @@ def load_data():
 
             page_charts = page.get("charts", [])
             grid_columns = page.get("layout", {}).get("columns")
+            # Default: if no explicit layout.columns and the page has 2+ non-metric
+            # charts, lay them out 2-per-row (parallels Plotly/Observable default).
+            if grid_columns is None:
+                non_metric_count = sum(1 for c in page_charts if c.get("type") != "metric")
+                if non_metric_count >= 2:
+                    grid_columns = 2
 
             # Metrics are grouped into a single compact columns row;
             # regular charts use grid layout (if specified) or full-width rows.
@@ -1082,26 +1209,28 @@ def load_data():
 
         parts: list[str] = []
 
+        amber = DESIGN_TOKENS["amber"]
         for idx, rl in enumerate(ref_lines):
             axis = rl.get("axis", "y")
             value = rl["value"]
-            color = rl.get("color", "red")
+            color = rl.get("color", amber)
             style = rl.get("style", "solid")
             stroke_dash = "[6, 4]" if style == "dashed" else "[1, 0]"
 
             if axis == "y":
                 parts.append(
                     f'    _rl{idx} = alt.Chart(pd.DataFrame({{"_v": [{value}]}})).mark_rule('
-                    f'color="{color}", strokeDash={stroke_dash}).encode(y="_v:Q")'
+                    f'color="{color}", strokeWidth=2, strokeDash={stroke_dash}).encode(y="_v:Q")'
                 )
             else:
                 parts.append(
                     f'    _rl{idx} = alt.Chart(pd.DataFrame({{"_v": [{repr(value)}]}})).mark_rule('
-                    f'color="{color}", strokeDash={stroke_dash}).encode(x="_v:Q")'
+                    f'color="{color}", strokeWidth=2, strokeDash={stroke_dash}).encode(x="_v:Q")'
                 )
             parts.append(f'    c = alt.layer(c, _rl{idx})')
 
-            # Add label if present
+            # Add label — simple left-aligned inline label (matches original
+            # behavior; Altair lacks a true frame-anchor for paper coordinates).
             label = rl.get("label")
             if label:
                 if axis == "y":
@@ -1156,11 +1285,20 @@ def load_data():
         When *type_suffix* is provided (e.g. ":Q"), it is appended directly.
         Otherwise *suffix_var* (a runtime Python variable name like
         ``x_encoding_suffix``) is concatenated.
+
+        For discrete categorical charts (bar / stacked_bar / grouped_bar / box /
+        heatmap / pie), drops the axis title (redundant with tick labels) and
+        rotates labels -35° instead of Altair's default 270°.
         """
+        chart_type = chart.get("type", "")
+        is_categorical = chart_type in {"bar", "stacked_bar", "grouped_bar", "box", "heatmap"}
         field_expr = f'"{x}{type_suffix}"' if type_suffix else f'"{x}" + {suffix_var}'
-        base = f'alt.X({field_expr}, sort={sort_val}, title="{x_label}"'
+        title_arg = "None" if is_categorical else f'"{x_label}"'
+        base = f'alt.X({field_expr}, sort={sort_val}, title={title_arg}'
         if chart.get("x_scale") == "log":
             base += ', scale=alt.Scale(type="log")'
+        if is_categorical:
+            base += ', axis=alt.Axis(labelAngle=-35, labelLimit=200)'
         return base + ")"
 
     @property

@@ -57,6 +57,31 @@ DEFAULT_SECONDARY_COLORS = [
     '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
 ]
 
+# Visual design tokens shared across transformers.
+# Theme-agnostic UI surface/border/text colors that augment the per-theme
+# palette (background, card, primary, text) loaded from .dmls files.
+# Kept transformer-side because they encode visual relationships
+# (hover surface, soft border, dim foreground, benchmark amber) that the
+# user is unlikely to want to override per-spec.
+DESIGN_TOKENS = {
+    "card_alt":  "#353749",  # inner panel / hover surface
+    "line":      "#44475a",  # borders, axis lines
+    "line_soft": "#3a3c4e",  # card border, chart grid
+    "muted":     "#6272a4",  # axis title text, secondary muted
+    "fg_dim":    "#c8cadf",  # dim foreground (tick labels, unit suffix)
+    "amber":     "#ffb86c",  # benchmark / reference-line color (dracula orange — more legible than desaturated amber)
+    "geo_land":  "#f0f0f5",  # choropleth land fill for countries with no data (light, contrasts dark card bg)
+    "geo_border":"#aaaaaa",  # choropleth country borders on light land
+    "pie_label": "#1a1b24",  # dark text for inside-pie labels (readable on light purple slices)
+}
+
+# Light → dark purple intensity ramp for ordinal categorical encoding
+# (used when a bar chart is sorted by y with no explicit group).
+PURPLE_RAMP = [
+    "#e9d8ff", "#d4b9fb", "#bd93f9",
+    "#a378ee", "#8b62d8", "#735ac4",
+]
+
 def resolve_metric_format(fmt: str) -> str:
     """Convert human-friendly metric format names to Python/D3 format spec.
 
@@ -376,11 +401,19 @@ def build_iso3_to_topojson() -> dict[str, str]:
 
 
 def build_alias_to_topojson() -> dict[str, str]:
-    """Lowercase alias → TopoJSON name."""
+    """Lowercase alias → TopoJSON name.
+
+    Also maps each TopoJSON name's lowercase form to itself so that input
+    like "SPAIN", "Spain", or "spain" all normalize to "Spain".
+    """
     iso2_to_topo = build_iso2_to_topojson()
-    return {alias.lower(): iso2_to_topo[iso2]
-            for alias, iso2 in COUNTRY_ALIASES.items()
-            if iso2 in iso2_to_topo}
+    result = {alias.lower(): iso2_to_topo[iso2]
+              for alias, iso2 in COUNTRY_ALIASES.items()
+              if iso2 in iso2_to_topo}
+    # Identity entries: each topojson name maps to itself (case-insensitive)
+    for topo_name in iso2_to_topo.values():
+        result.setdefault(topo_name.lower(), topo_name)
+    return result
 
 
 def build_iso2_to_plotly() -> dict[str, str]:
@@ -394,11 +427,18 @@ def build_iso3_to_plotly() -> dict[str, str]:
 
 
 def build_alias_to_plotly() -> dict[str, str]:
-    """Lowercase alias → Plotly name."""
+    """Lowercase alias → Plotly name.
+
+    Also maps each Plotly name's lowercase form to itself so that input
+    like "SPAIN", "Spain", or "spain" all normalize to "Spain".
+    """
     iso2_to_plotly = build_iso2_to_plotly()
-    return {alias.lower(): iso2_to_plotly[iso2]
-            for alias, iso2 in COUNTRY_ALIASES.items()
-            if iso2 in iso2_to_plotly}
+    result = {alias.lower(): iso2_to_plotly[iso2]
+              for alias, iso2 in COUNTRY_ALIASES.items()
+              if iso2 in iso2_to_plotly}
+    for plotly_name in iso2_to_plotly.values():
+        result.setdefault(plotly_name.lower(), plotly_name)
+    return result
 
 
 def _dict_to_js(d: dict[str, str], name: str) -> str:

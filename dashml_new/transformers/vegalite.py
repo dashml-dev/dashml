@@ -14,11 +14,12 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .base import Transformer
+from .base import Transformer, humanize_field
 from .constants import (
     resolve_metric_format,
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
+    DESIGN_TOKENS,
     COUNTRY_DATA,
     build_alias_to_topojson,
     build_iso2_to_topojson,
@@ -100,7 +101,60 @@ class VegaLiteTransformer(Transformer):
         else:
             result = self._build_dashboard(spec)
 
-        return json.dumps(result, indent=2)
+        spec_json = json.dumps(result, indent=2)
+
+        # Emit both the bare spec and a renderer index.html so the dashboard
+        # can be viewed locally with vega-embed (no need for the Vega Editor,
+        # which chokes on long gzipped URLs).
+        title = spec.get("title", "Dashboard")
+        bg = style.get("background", "#21222c")
+        text = style.get("text", "#f8f8f2")
+        renderer_html = self._build_renderer_html(title, bg, text)
+        return json.dumps({
+            "type": "multi-file",
+            "files": {
+                "dashboard.vl.json": spec_json,
+                "index.html": renderer_html,
+            },
+        }, indent=2)
+
+    def _build_renderer_html(self, title: str, bg: str, text: str) -> str:
+        """Standalone HTML page that fetches dashboard.vl.json and renders via vega-embed."""
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{title}</title>
+  <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+  <style>
+    html, body {{
+      margin: 0; padding: 0;
+      background: {bg}; color: {text};
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    }}
+    .container {{ max-width: 1600px; margin: 0 auto; padding: 28px 32px 80px; }}
+    h1 {{ font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 18px; }}
+    #vis {{ width: 100%; }}
+    .vega-actions a {{ color: {text} !important; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>{title}</h1>
+    <div id="vis"></div>
+  </div>
+  <script>
+    fetch('dashboard.vl.json')
+      .then(r => r.json())
+      .then(spec => vegaEmbed('#vis', spec, {{ actions: false, renderer: 'svg' }}))
+      .catch(err => {{
+        document.getElementById('vis').innerHTML = '<p style="color:#ff79c6">Error loading spec: ' + err.message + '</p>';
+      }});
+  </script>
+</body>
+</html>"""
 
     # ── Bare (nvBench-compatible) output ────────────────────────────
 
@@ -246,13 +300,35 @@ class VegaLiteTransformer(Transformer):
         """Build a composed dashboard with vconcat of hconcat rows."""
         pages = spec.get("pages", [])
         rows = []
+        muted = DESIGN_TOKENS["muted"]
 
-        for page in pages:
+        for p_idx, page in enumerate(pages):
             charts = page.get("charts", [])
             layout = page.get("layout", {})
             charts_per_row = layout.get("columns", 2)
             metrics = [c for c in charts if c.get("type") == "metric"]
             non_metrics = [c for c in charts if c.get("type") != "metric"]
+
+            # Page-section header: render the page title as a text mark so
+            # multi-page dashboards have visible section boundaries when
+            # concat'd into a single vega-lite spec.
+            page_title = page.get("title", page.get("id", ""))
+            if page_title:
+                rows.append({
+                    "mark": {
+                        "type": "text",
+                        "text": page_title,
+                        "align": "left",
+                        "baseline": "top",
+                        "fontSize": 16,
+                        "fontWeight": 600,
+                        "color": "#f8f8f2",
+                        "dx": 0, "dy": 0,
+                    },
+                    "view": {"stroke": None},
+                    "height": 24,
+                    "width": 800,
+                })
 
             # Metrics row: up to 4 per hconcat (unaffected by layout.columns)
             for i in range(0, len(metrics), 4):
@@ -332,7 +408,23 @@ class VegaLiteTransformer(Transformer):
         transforms = vl.get("transform", [])
         filter_transforms = self._build_filter_transforms(chart)
         if filter_transforms:
-            vl["transform"] = filter_transforms + transforms
+            transforms = filter_transforms + transforms
+
+        # Add derived_field transforms — convert templated expressions like
+        # "100 - {pct_delayed_15plus}" into Vega-Lite calculate transforms
+        # "100 - datum.pct_delayed_15plus" so charts can reference the
+        # computed columns (e.g. `on_time_rate`) without NaN.
+        derived = spec.get("derived_fields", [])
+        if derived:
+            import re as _re
+            calc_transforms = []
+            for f in derived:
+                expr = _re.sub(r'\{(\w+)\}', r'datum.\1', f["expression"])
+                calc_transforms.append({"calculate": expr, "as": f["name"]})
+            transforms = calc_transforms + transforms
+
+        if transforms:
+            vl["transform"] = transforms
 
         return vl
 
@@ -346,40 +438,46 @@ class VegaLiteTransformer(Transformer):
 
         layers = [vl]
 
-        # Reference lines as rule marks
+        # Reference lines as rule marks — default color is the design's amber
+        # benchmark token (not red, which reads as an error).
+        amber = DESIGN_TOKENS["amber"]
         for rl in ref_lines:
             axis = rl.get("axis", "y")
-            rule: dict = {"mark": "rule", "encoding": {}}
+            color = rl.get("color", amber)
+            rule: dict = {"mark": {"type": "rule", "color": color, "strokeWidth": 2}, "encoding": {}}
             if axis == "y":
                 rule["encoding"]["y"] = {"datum": rl["value"]}
             else:
                 rule["encoding"]["x"] = {"datum": rl["value"]}
-            if rl.get("color"):
-                rule["encoding"]["color"] = {"value": rl["color"]}
             if rl.get("style") == "dashed":
-                rule["mark"] = {"type": "rule", "strokeDash": [6, 4]}
-                if rl.get("color"):
-                    rule["mark"]["color"] = rl["color"]
+                rule["mark"]["strokeDash"] = [6, 4]
+            elif rl.get("style") == "dotted":
+                rule["mark"]["strokeDash"] = [1, 3]
             layers.append(rule)
 
             # Add label as text layer if present
             if rl.get("label"):
                 label_layer: dict = {
-                    "mark": {"type": "text", "align": "left", "dx": 4, "dy": -8, "fontSize": 11},
+                    "mark": {
+                        "type": "text", "align": "right", "baseline": "bottom",
+                        "dx": -4, "dy": -4, "fontSize": 11, "fontWeight": 600,
+                        "color": color,
+                    },
                     "encoding": {"text": {"value": rl["label"]}},
                 }
                 if axis == "y":
                     label_layer["encoding"]["y"] = {"datum": rl["value"]}
                 else:
                     label_layer["encoding"]["x"] = {"datum": rl["value"]}
-                if rl.get("color"):
-                    label_layer["encoding"]["color"] = {"value": rl["color"]}
                 layers.append(label_layer)
 
-        # Annotations as text marks
+        # Annotations as text marks — default color = amber for consistency
         for ann in annotations:
             text_layer: dict = {
-                "mark": {"type": "text", "fontSize": 12, "dy": -8},
+                "mark": {
+                    "type": "text", "fontSize": 12, "dy": -8,
+                    "color": ann.get("color", amber),
+                },
                 "encoding": {},
             }
             if ann.get("x") is not None:
@@ -387,8 +485,6 @@ class VegaLiteTransformer(Transformer):
             if ann.get("y") is not None:
                 text_layer["encoding"]["y"] = {"datum": ann["y"]}
             text_layer["encoding"]["text"] = {"value": ann["text"]}
-            if ann.get("color"):
-                text_layer["encoding"]["color"] = {"value": ann["color"]}
             layers.append(text_layer)
 
         return {"layer": layers}
@@ -575,17 +671,30 @@ class VegaLiteTransformer(Transformer):
     def _build_bar(self, chart: dict, spec: "NormalizedSpec") -> dict:
         style = spec.get("style", {})
         primary = style.get("primary", DEFAULT_PRIMARY_COLOR)
-        vl = {
-            "mark": {"type": "bar", "color": primary},
-            "encoding": {
-                "x": self._x_encoding(chart),
-                "y": self._y_encoding(chart),
-                "tooltip": [
-                    {"field": chart.get("x", "x")},
-                    self._y_encoding(chart),
-                ],
-            },
+        # When sorted by y with no group, color bars with a light→dark purple
+        # ramp keyed by rank — matches Plotly/Observable/Streamlit behavior.
+        use_ramp = chart.get("sort") == "y" and not chart.get("group")
+        y_field = chart.get("y", "y")
+        encoding = {
+            "x": self._x_encoding(chart),
+            "y": self._y_encoding(chart),
+            "tooltip": [
+                {"field": chart.get("x", "x")},
+                self._y_encoding(chart),
+            ],
         }
+        if use_ramp:
+            encoding["color"] = {
+                "field": y_field,
+                "type": "quantitative",
+                "aggregate": chart.get("agg", "sum"),
+                "scale": {"scheme": "purples"},
+                "legend": None,
+            }
+            mark = {"type": "bar"}
+        else:
+            mark = {"type": "bar", "color": primary}
+        vl = {"mark": mark, "encoding": encoding}
         self._apply_limit(vl, chart)
         return vl
 
@@ -990,24 +1099,56 @@ class VegaLiteTransformer(Transformer):
     # ── Config (theme) ─────────────────────────────────────────────
 
     def _build_config(self, spec: "NormalizedSpec") -> dict:
-        """Build Vega-Lite config block from style."""
+        """Build Vega-Lite config block from style + design tokens."""
         style = spec.get("style", {})
         primary = style.get("primary", DEFAULT_PRIMARY_COLOR)
         secondary = style.get("secondary", DEFAULT_SECONDARY_COLORS)
         background = style.get("background")
         text_color = style.get("text")
+        card_bg = style.get("card", background)
+        line_soft = DESIGN_TOKENS["line_soft"]
+        muted = DESIGN_TOKENS["muted"]
+        fg_dim = DESIGN_TOKENS["fg_dim"]
 
-        config = {}
+        config: dict = {}
 
         if isinstance(secondary, list) and secondary:
             config["range"] = {"category": secondary}
 
         if background:
             config["background"] = background
+        if card_bg:
+            # Per-chart "card": fill is the card surface, stroke is a clear
+            # 1px line in the soft-border token so each chart reads as its
+            # own bordered card against the page bg.
+            config["view"] = {"fill": card_bg, "stroke": line_soft, "strokeWidth": 1}
+            config["padding"] = {"top": 12, "bottom": 12, "left": 12, "right": 12}
+            config["concat"] = {"spacing": 16}
 
+        # Axis / grid styling driven by design tokens — gives a three-tier hierarchy
+        # (grid faint, ticks dim, axis title muted) instead of a flat single-color.
+        config["axis"] = {
+            "gridColor": line_soft,
+            "domainColor": line_soft,
+            "tickColor": line_soft,
+            "labelColor": fg_dim,
+            "titleColor": muted,
+            "labelFontSize": 11,
+            "titleFontSize": 11,
+            "titleFontWeight": "normal",
+        }
+        config["legend"] = {
+            "labelColor": fg_dim,
+            "titleColor": muted,
+            "labelFontSize": 11,
+            "titleFontSize": 11,
+        }
         if text_color:
-            config["title"] = {"color": text_color}
-            config["axis"] = {"labelColor": text_color, "titleColor": text_color}
-            config["legend"] = {"labelColor": text_color, "titleColor": text_color}
+            config["title"] = {
+                "color": text_color,
+                "fontSize": 14,
+                "fontWeight": 600,
+                "anchor": "start",
+            }
 
         return config

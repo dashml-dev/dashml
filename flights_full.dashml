@@ -1,0 +1,105 @@
+version: 0.1
+title: Flight Punctuality Dashboard
+style: dracula
+
+data:
+  type: csv
+  path: flights.csv
+
+derived_fields:
+  - name: on_time_rate
+    expression: "100 - {pct_delayed_15plus}"
+  - name: delay_index
+    expression: "({average_delay_mins} + {pct_delayed_15plus}) / 2"
+
+pages:
+  - id: overview
+    title: Overview
+    description: Headline KPIs and airline ranking
+    layout:
+      columns: 2
+    filters:
+      - field: scheduled_charter
+        type: select
+        label: Type
+      - field: airline_name
+        type: multiselect
+        label: Airline
+    charts:
+      - id: total_flights_kpi
+        type: metric
+        title: Total Flights
+        y: total_flights
+        agg: sum
+        format: integer
+
+      - id: avg_delay_kpi
+        type: metric
+        title: Avg Delay
+        y: average_delay_mins
+        agg: mean
+        format: "decimal:1"
+        suffix: " mins"
+
+      - id: pct_delayed_kpi
+        type: metric
+        title: "% Delayed 15+ mins"
+        y: pct_delayed_15plus
+        agg: mean
+        format: "decimal:1"
+        suffix: "%"
+
+      - id: on_time_rate_kpi
+        type: metric
+        title: On-Time Rate
+        y: on_time_rate
+        agg: mean
+        format: "decimal:1"
+        suffix: "%"
+
+      - id: delays_by_airline
+        type: bar
+        title: Average Delay by Airline
+        x: airline_name
+        y: average_delay_mins
+        agg: mean
+        sort: y
+        sort_order: desc
+        limit: 10
+        reference_lines:
+          - axis: y
+            value: 15
+            label: "15-min industry target"
+            style: dashed
+
+      - id: flights_by_country
+        type: bar
+        title: Total Flights by Country
+        x: origin_country
+        y: total_flights
+        agg: sum
+        sort: y
+        sort_order: desc
+        limit: 12
+
+  - id: trends
+    title: Trends & Distribution
+    description: Monthly volume and country share
+    charts:
+      - id: flights_over_time
+        type: line
+        title: Flights Over Time
+        x: reporting_month
+        y: total_flights
+        agg: sum
+        x_type: date
+
+      - id: top_origin_share
+        type: pie
+        title: Top 5 Origin Countries (share of flights)
+        x: origin_country
+        y: total_flights
+        agg: sum
+        sort: y
+        sort_order: desc
+        limit: 5

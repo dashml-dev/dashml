@@ -14,7 +14,7 @@ import json
 from typing import TYPE_CHECKING
 
 from .base import Transformer
-from .constants import resolve_metric_format, DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLORS
+from .constants import resolve_metric_format, DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLORS, DESIGN_TOKENS
 
 if TYPE_CHECKING:
     from ..core.types import NormalizedSpec
@@ -1113,13 +1113,14 @@ class GrafanaTransformer(Transformer):
         if not ref_lines:
             return
 
+        amber = DESIGN_TOKENS["amber"]
         steps = [{"color": "transparent", "value": None}]
         has_y = False
         for rl in ref_lines:
             if rl.get("axis") == "y":
                 has_y = True
                 steps.append({
-                    "color": rl.get("color", "red"),
+                    "color": rl.get("color", amber),
                     "value": rl["value"],
                 })
             else:

@@ -6,7 +6,7 @@ import sys
 from typing import TYPE_CHECKING, Dict, Any, List
 from pathlib import Path
 import json
-from .base import Transformer, TransformerError
+from .base import Transformer, TransformerError, humanize_field
 from .constants import (
     CHARTS_NEED_AGGREGATION,
     CHARTS_USE_RAW_DATA,
@@ -14,10 +14,16 @@ from .constants import (
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
     DEFAULT_SORT_ORDER,
+    DESIGN_TOKENS,
+    PURPLE_RAMP,
     resolve_metric_format,
     resolve_plotly_colorscale,
     country_mapping_as_js,
 )
+
+# Chart types whose x-axis is discrete categorical — axis title is redundant
+# with the tick labels and should be dropped unless explicitly overridden.
+_DISCRETE_X_CHART_TYPES = frozenset({"bar", "stacked_bar", "grouped_bar", "box", "pie", "heatmap"})
 
 if TYPE_CHECKING:
     from ..core.types import NormalizedSpec
@@ -90,12 +96,13 @@ class PlotlyTransformer(Transformer):
         annotations = chart.get("annotations")
         if not annotations:
             return ""
+        amber = DESIGN_TOKENS["amber"]
         items = []
         for ann in annotations:
             x_val = json.dumps(ann.get("x", ""))
             y_val = json.dumps(ann.get("y", 0))
             text = json.dumps(ann.get("text", ""))
-            color = json.dumps(ann.get("color", "red"))
+            color = json.dumps(ann.get("color", amber))
             items.append(
                 f"{{ x: {x_val}, y: {y_val}, text: {text}, showarrow: true, arrowhead: 2, font: {{ color: {color} }} }}"
             )
@@ -105,49 +112,62 @@ class PlotlyTransformer(Transformer):
     def _reference_lines_js(chart: dict) -> str:
         """Build a JS snippet that sets ``layout.shapes`` from the chart spec.
 
+        Reference lines default to the design's amber benchmark color
+        (not red — red reads as an error state). Per-line ``color`` overrides
+        the default. Labels render as right-anchored chips on the chart edge
+        so they don't collide with the data.
+
         Returns an empty string when there are no reference lines.
         """
         ref_lines = chart.get("reference_lines")
         if not ref_lines:
             return ""
         style_map = {"solid": "solid", "dashed": "dash", "dotted": "dot"}
+        amber = DESIGN_TOKENS["amber"]
+        line_soft = DESIGN_TOKENS["line_soft"]
         items = []
         for rl in ref_lines:
             axis = rl.get("axis", "y")
             value = json.dumps(rl.get("value", 0))
-            label = rl.get("label", "")
             dash = style_map.get(rl.get("style", "dashed"), "dash")
+            color = json.dumps(rl.get("color", amber))
             if axis == "y":
                 shape = (
                     f"{{ type: 'line', yref: 'y', y0: {value}, y1: {value}, "
-                    f"xref: 'paper', x0: 0, x1: 1, "
-                    f"line: {{ color: 'red', width: 1.5, dash: '{dash}' }} }}"
+                    f"xref: 'paper', x0: 0, x1: 1, layer: 'above', "
+                    f"line: {{ color: {color}, width: 2.5, dash: '{dash}' }} }}"
                 )
             else:
                 shape = (
                     f"{{ type: 'line', xref: 'x', x0: {value}, x1: {value}, "
-                    f"yref: 'paper', y0: 0, y1: 1, "
-                    f"line: {{ color: 'red', width: 1.5, dash: '{dash}' }} }}"
+                    f"yref: 'paper', y0: 0, y1: 1, layer: 'above', "
+                    f"line: {{ color: {color}, width: 2.5, dash: '{dash}' }} }}"
                 )
             items.append(shape)
-        # If any reference line has a label, also add annotations for them
+        # Reference-line labels: right-anchored chip (xref: paper, x: 1).
         ann_items = []
+        line_soft_json = json.dumps(line_soft)
         for rl in ref_lines:
             label = rl.get("label", "")
             if not label:
                 continue
             axis = rl.get("axis", "y")
             value = json.dumps(rl.get("value", 0))
-            label_json = json.dumps(label)
+            color = json.dumps(rl.get("color", amber))
+            label_json = json.dumps(f"  {label}  ")
             if axis == "y":
                 ann_items.append(
-                    f"{{ x: 1, xref: 'paper', y: {value}, yref: 'y', text: {label_json}, "
-                    f"showarrow: false, font: {{ color: 'red', size: 11 }}, xanchor: 'left' }}"
+                    f"{{ xref: 'paper', x: 1, xanchor: 'right', y: {value}, yref: 'y', "
+                    f"yanchor: 'bottom', text: {label_json}, showarrow: false, "
+                    f"font: {{ color: {color}, size: 12, weight: 600 }}, "
+                    f"bgcolor: theme.card, bordercolor: {color}, borderwidth: 1, borderpad: 3 }}"
                 )
             else:
                 ann_items.append(
-                    f"{{ y: 1, yref: 'paper', x: {value}, xref: 'x', text: {label_json}, "
-                    f"showarrow: false, font: {{ color: 'red', size: 11 }}, yanchor: 'bottom' }}"
+                    f"{{ yref: 'paper', y: 1, yanchor: 'top', x: {value}, xref: 'x', "
+                    f"xanchor: 'left', text: {label_json}, showarrow: false, "
+                    f"font: {{ color: {color}, size: 12, weight: 600 }}, "
+                    f"bgcolor: theme.card, bordercolor: {color}, borderwidth: 1, borderpad: 3 }}"
                 )
         result = "\n      layout.shapes = [" + ", ".join(items) + "];"
         if ann_items:
@@ -441,18 +461,18 @@ if __name__ == '__main__':
 '''
 
     def _generate_html_header(self, title: str, colors: Dict[str, str]) -> str:
-        """Generate HTML header with dynamic CSS based on theme"""
+        """Generate HTML header with dynamic CSS based on theme."""
+        # Theme-controlled palette (from .dmls file)
         bg = colors["background"]
         card_bg = colors["card"]
         text = colors["text"]
         primary = colors["primary"]
-
-        # If background is dark (simple heuristic), make shadow lighter or different
-        # TODO: [Complexity] Complex conditional for dark color detection - extract to helper function
-        # Fix: def is_dark_color(hex_color: str) -> bool:
-        #          return hex_color.startswith("#") and len(hex_color) == 7 and int(hex_color[1:3], 16) < 100
-        is_dark = bg.startswith("#") and len(bg) == 7 and int(bg[1:3], 16) < 100
-        shadow = "0 2px 4px rgba(255,255,255,0.1)" if is_dark else "0 2px 4px rgba(0,0,0,0.1)"
+        # Visual design tokens (transformer-side, theme-agnostic relationships)
+        card_alt = DESIGN_TOKENS["card_alt"]
+        line = DESIGN_TOKENS["line"]
+        line_soft = DESIGN_TOKENS["line_soft"]
+        muted = DESIGN_TOKENS["muted"]
+        fg_dim = DESIGN_TOKENS["fg_dim"]
 
         return f'''<!DOCTYPE html>
 <html lang="en">
@@ -462,98 +482,116 @@ if __name__ == '__main__':
   <title>{title}</title>
   <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
   <style>
+    * {{ box-sizing: border-box; }}
+    html, body {{ margin: 0; padding: 0; background: {bg}; color: {text}; }}
     body {{
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      margin: 0;
-      padding: 20px;
-      background-color: {bg};
-      color: {text};
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      padding: 28px 32px 80px;
     }}
-    .container {{
-      max-width: 1200px;
-      margin: 0 auto;
-      background-color: {bg};
-      padding: 0;
-    }}
-    .card {{
-      background-color: {card_bg};
-      padding: 30px;
-      border-radius: 8px;
-      box-shadow: {shadow};
-      margin-bottom: 20px;
-    }}
+    .container {{ max-width: 1600px; margin: 0 auto; }}
+
     h1 {{
-      margin-top: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin: 0 0 4px;
       color: {text};
     }}
-    #chart {{
-      margin-top: 20px;
-      min-height: 500px;
-    }}
-    .chart-selector {{
-      margin: 20px 0;
-    }}
-    select {{
-      padding: 8px 12px;
-      font-size: 14px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      background-color: {card_bg};
-      color: {text};
-    }}
-    label {{
-      margin-right: 10px;
-      font-weight: 500;
-      color: {text};
-    }}
+    .sub {{ color: {muted}; font-size: 13px; margin: 0 0 20px; }}
+
+    /* Tabs */
     .page-tabs {{
-      display: flex;
-      gap: 10px;
-      margin: 20px 0;
-      border-bottom: 2px solid {text}40; /* 40 = 25% opacity hex */
-      padding-bottom: 0;
+      display: flex; gap: 24px;
+      border-bottom: 1px solid {line};
+      margin-bottom: 18px;
     }}
     .tab-button {{
-      padding: 10px 20px;
-      background-color: transparent;
-      border: none;
-      border-bottom: 3px solid transparent;
+      background: none; border: 0;
+      color: {fg_dim};
+      font: inherit; font-weight: 500;
+      padding: 10px 2px;
       cursor: pointer;
-      font-size: 16px;
-      font-weight: 500;
-      color: {text};
-      opacity: 0.7;
-      transition: all 0.2s;
+      position: relative;
+      margin-bottom: -1px;
     }}
-    .tab-button:hover {{
-      opacity: 1;
-      background-color: {text}10; /* 10 = ~6% opacity */
-    }}
-    .tab-button.active {{
-      color: {primary};
-      border-bottom-color: {primary};
-      opacity: 1;
-    }}
-    .page-container {{
-      margin-top: 20px;
+    .tab-button:hover {{ color: {text}; }}
+    .tab-button.active {{ color: {primary}; }}
+    .tab-button.active::after {{
+      content: ""; position: absolute;
+      left: 0; right: 0; bottom: -1px;
+      height: 2px; background: {primary}; border-radius: 2px;
     }}
     .page-description {{
+      color: {muted};
+      font-size: 13px;
+      font-style: italic;
+      margin: 4px 0 18px;
+    }}
+
+    /* Layout grids */
+    .page-container {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      align-items: start;
+      margin-top: 18px;
+    }}
+    @media (min-width: 1100px) {{
+      .page-container {{ grid-template-columns: repeat(4, 1fr); }}
+    }}
+    .page-container > .filter-bar,
+    .page-container > .page-description {{ grid-column: 1 / -1; }}
+    .page-container > .card:not(.metric-card) {{ grid-column: span 2; }}
+    /* Nested layout-columns wrapper emitted by `layout.columns:` spans the row */
+    .page-container > div[style*="grid-template-columns"] {{ grid-column: 1 / -1; }}
+    .page-container.hidden {{ display: none; }}
+
+    /* Card surface */
+    .card {{
+      background: {card_bg};
+      border: 1px solid {line_soft};
+      border-radius: 10px;
+      padding: 20px;
+      min-width: 0;
+    }}
+
+    /* KPI metric card */
+    .metric-card {{
+      padding: 20px;
+    }}
+    .metric-title {{
+      color: {muted};
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }}
+    .metric-value {{
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
       color: {text};
-      opacity: 0.8;
-      margin-bottom: 20px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
     }}
-    .chart-container {{
-      margin: 20px 0;
-      min-height: 400px;
+
+    /* Chart container */
+    .chart-card .chart-title {{
+      font-size: 14px; font-weight: 600;
+      color: {text};
+      margin: 0 0 14px;
     }}
+    .chart-container {{ margin: 0; min-height: 360px; }}
     .chart-spinner {{
       display: flex; flex-direction: column; align-items: center;
       justify-content: center; min-height: 300px; gap: 12px;
-      color: {text}; opacity: 0.6;
+      color: {fg_dim};
     }}
     .chart-spinner .spinner {{
       width: 40px; height: 40px;
-      border: 3px solid {text}20;
+      border: 3px solid {line_soft};
       border-top-color: {primary};
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
@@ -561,181 +599,143 @@ if __name__ == '__main__':
     @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
     .chart-error {{
       display: flex; align-items: center; justify-content: center;
-      min-height: 300px; color: #e74c3c;
+      min-height: 300px; color: #ff79c6;
     }}
-    .metric-card {{
-      text-align: center;
-      padding: 24px 20px;
-      min-width: 160px;
-      display: inline-block;
-    }}
-    .metric-title {{
-      font-size: 13px;
-      color: {text};
-      opacity: 0.65;
-      margin-bottom: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-    }}
-    .metric-value {{
-      font-size: 2.6rem;
-      font-weight: 700;
-      color: {primary};
-      line-height: 1.1;
-    }}
+
+    /* Filter bar */
     .filter-bar {{
-      display: flex;
-      gap: 16px;
-      align-items: flex-end;
-      flex-wrap: wrap;
-      padding: 14px 18px;
+      display: flex; align-items: center; gap: 18px;
       background: {card_bg};
+      border: 1px solid {line_soft};
       border-radius: 10px;
-      margin-bottom: 20px;
-      border: 1px solid rgba(128,128,128,0.12);
-      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
     }}
     .filter-bar-title {{
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 10px;
-      font-weight: 600;
+      color: {muted};
+      font-size: 11px; font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: .1em;
-      opacity: .4;
-      align-self: center;
-      padding-bottom: 2px;
-      white-space: nowrap;
+      letter-spacing: 0.08em;
+      display: inline-flex; align-items: center; gap: 6px;
       margin-right: 4px;
-      color: {text};
     }}
-    .filter-item {{
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-    }}
+    .filter-item {{ display: flex; flex-direction: column; gap: 4px; }}
     .filter-item > label {{
-      font-size: 10px;
-      font-weight: 600;
+      color: {muted};
+      font-size: 11px; font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: .07em;
-      opacity: .55;
-      color: {text};
+      letter-spacing: 0.08em;
     }}
-    .filter-select-wrap {{
-      position: relative;
-      display: inline-flex;
-      align-items: center;
-    }}
-    .filter-select-wrap select {{
-      appearance: none;
-      -webkit-appearance: none;
-      background: rgba(128,128,128,0.08);
-      color: {text};
-      border: 1px solid rgba(128,128,128,0.22);
-      border-radius: 7px;
-      padding: 7px 32px 7px 12px;
-      font-size: 13px;
-      cursor: pointer;
-      min-width: 150px;
-      outline: none;
-      transition: border-color 0.15s, box-shadow 0.15s;
-      font-family: inherit;
-    }}
-    .filter-select-wrap select:hover {{ border-color: rgba(128,128,128,0.45); }}
-    .filter-select-wrap select:focus {{ border-color: {primary}; box-shadow: 0 0 0 2px {primary}33; }}
-    .filter-select-wrap .sel-arrow {{
-      position: absolute;
-      right: 9px;
-      pointer-events: none;
-      opacity: .45;
-      flex-shrink: 0;
-      color: {text};
-    }}
-    .ms-wrap {{ position: relative; }}
+    .filter-select-wrap {{ position: relative; display: inline-flex; align-items: center; }}
+    .filter-select-wrap select,
     .ms-btn {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      background: rgba(128,128,128,0.08);
+      background: {card_alt};
       color: {text};
-      border: 1px solid rgba(128,128,128,0.22);
-      border-radius: 7px;
-      padding: 7px 10px 7px 12px;
-      font-size: 13px;
-      cursor: pointer;
-      min-width: 150px;
+      border: 1px solid {line};
+      border-radius: 6px;
+      padding: 6px 28px 6px 10px;
+      font: inherit; font-size: 13px;
+      min-width: 180px;
       outline: none;
+      cursor: pointer;
       transition: border-color 0.15s, box-shadow 0.15s;
-      white-space: nowrap;
-      font-family: inherit;
+      appearance: none; -webkit-appearance: none;
     }}
-    .ms-btn:hover {{ border-color: rgba(128,128,128,0.45); }}
-    .ms-btn.ms-open, .ms-btn:focus {{ border-color: {primary}; box-shadow: 0 0 0 2px {primary}33; }}
+    .filter-select-wrap select:hover, .ms-btn:hover {{ border-color: {muted}; }}
+    .filter-select-wrap select:focus,
+    .ms-btn.ms-open, .ms-btn:focus {{
+      border-color: {primary};
+      box-shadow: 0 0 0 1px {primary};
+    }}
+    .filter-select-wrap .sel-arrow,
+    .ms-arrow {{
+      position: absolute; right: 9px; pointer-events: none;
+      color: {muted};
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }}
+    .ms-arrow {{ position: static; }}
+    .ms-btn.ms-open .ms-arrow {{ transform: rotate(180deg); }}
+    .ms-wrap {{ position: relative; min-width: 180px; }}
+    .ms-btn {{
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 6px 10px;
+      text-align: left; width: 100%;
+    }}
+    .ms-btn .ms-text {{
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: {text};
+    }}
+    .ms-btn .ms-text.placeholder {{ color: {fg_dim}; }}
     .ms-count {{
-      background: {primary};
-      color: #fff;
+      background: {primary}; color: #fff;
       border-radius: 10px;
       padding: 1px 7px;
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 11px; font-weight: 600;
       display: none;
     }}
     .ms-count.visible {{ display: inline; }}
-    .ms-arrow {{ opacity: .45; transition: transform 0.15s; flex-shrink: 0; }}
-    .ms-btn.ms-open .ms-arrow {{ transform: rotate(180deg); }}
+
     .ms-panel {{
       position: absolute;
-      top: calc(100% + 5px);
-      left: 0;
-      z-index: 200;
-      background: {bg};
-      border: 1px solid rgba(128,128,128,0.25);
-      border-radius: 9px;
-      padding: 6px;
-      min-width: 190px;
-      max-height: 230px;
+      top: calc(100% + 4px); left: 0;
+      width: 100%;
+      min-width: 220px;
+      max-height: 280px;
       overflow-y: auto;
-      box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+      overflow-x: hidden;
+      background: {card_alt};
+      border: 1px solid {line};
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+      padding: 6px;
+      z-index: 50;
       display: none;
     }}
     .ms-panel.ms-open {{ display: block; }}
+    .ms-panel::-webkit-scrollbar {{ width: 10px; }}
+    .ms-panel::-webkit-scrollbar-track {{ background: transparent; }}
+    .ms-panel::-webkit-scrollbar-thumb {{
+      background: {line}; border-radius: 6px; border: 2px solid {card_alt};
+    }}
+    .ms-panel::-webkit-scrollbar-thumb:hover {{ background: {muted}; }}
+
     .ms-option {{
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      padding: 7px 9px;
-      border-radius: 6px;
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px;
+      border-radius: 5px;
       cursor: pointer;
+      color: {fg_dim};
       font-size: 13px;
       user-select: none;
-      transition: background 0.1s;
-      color: {text};
+      min-width: 0;
     }}
-    .ms-option:hover {{ background: rgba(128,128,128,0.1); }}
+    .ms-option > span {{
+      min-width: 0; flex: 1 1 auto;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
+    .ms-option:hover {{ background: rgba(189, 147, 249, 0.08); color: {text}; }}
     .ms-option input[type="checkbox"] {{
       accent-color: {primary};
-      width: 14px;
-      height: 14px;
-      cursor: pointer;
-      flex-shrink: 0;
+      width: 14px; height: 14px; flex-shrink: 0; cursor: pointer;
     }}
+    .ms-option input[type="checkbox"]:checked + span {{ color: {text}; }}
+
     .filter-reset {{
-      align-self: flex-end;
       background: none;
-      border: 1px solid rgba(128,128,128,0.2);
-      color: {text};
-      padding: 7px 14px;
-      border-radius: 7px;
-      font-size: 12px;
+      border: 1px solid {line};
+      color: {fg_dim};
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
       cursor: pointer;
-      opacity: .55;
-      transition: opacity 0.15s, border-color 0.15s;
+      margin-left: auto;
       font-family: inherit;
+      transition: color 0.15s, border-color 0.15s;
     }}
-    .filter-reset:hover {{ opacity: 1; border-color: rgba(128,128,128,0.5); }}
+    .filter-reset:hover {{ color: {text}; border-color: {muted}; }}
   </style>
 </head>'''
 
@@ -1229,7 +1229,8 @@ if __name__ == '__main__':
           textposition: 'top center',
           marker: {{
             size: normalizedSizes,
-            color: theme.secondary ? bubbleData.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
+            color: purpleRamp(bubbleData.length),
+            line: {{ color: theme.card, width: 1 }},
             sizemode: 'diameter'
           }},
           hovertemplate: bubbleData.map(d => `${{d.group}}<br>${{chart.x}}: ${{d.x}}<br>${{chart.y}}: ${{d.y}}<br>${{chart.size || chart.y}}: ${{d.size}}<extra></extra>`)
@@ -1300,7 +1301,12 @@ if __name__ == '__main__':
           trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
           break;
         case 'pie':
-          trace = {{ labels: xValues, values: yValues, type: 'pie', marker: {{ colors: theme.secondary }} }};
+          trace = {{ labels: xValues, values: yValues, type: 'pie',
+                     marker: {{ colors: purpleRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
+                     textinfo: 'label+percent',
+                     textposition: 'inside',
+                     insidetextorientation: 'radial',
+                     insidetextfont: {{ color: '#1a1b24', size: 11 }} }};
           break;
         case 'area':
           trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
@@ -1449,10 +1455,10 @@ if __name__ == '__main__':
         containers = []
         for i, page in enumerate(pages):
             page_id = page["id"]
-            display_style = '' if i == 0 else ' style="display:none"'
+            page_class = "page-container" if i == 0 else "page-container hidden"
             description = page.get("description", "")
 
-            container_parts = [f'    <div id="page-{page_id}" class="page-container"{display_style}>']
+            container_parts = [f'    <div id="page-{page_id}" class="{page_class}">']
 
             if description:
                 container_parts.append(f'      <p class="page-description"><em>{description}</em></p>')
@@ -1511,8 +1517,10 @@ if __name__ == '__main__':
                     metric_parts.append(f'        <div class="metric-value" id="metric-{chart_id}">—</div>')
                     metric_parts.append(f'      </div>')
                 else:
-                    regular_parts.append(f'      <div class="card">')
-                    regular_parts.append(f'        <div id="chart-{chart_id}"></div>')
+                    chart_title = chart.get("title", chart_id)
+                    regular_parts.append(f'      <div class="card chart-card">')
+                    regular_parts.append(f'        <h3 class="chart-title">{chart_title}</h3>')
+                    regular_parts.append(f'        <div id="chart-{chart_id}" class="chart-container"></div>')
                     regular_parts.append(f'      </div>')
 
             # Metric cards first (they display inline via CSS)
@@ -1586,6 +1594,17 @@ if __name__ == '__main__':
             y_scale_type = self._axis_type_js(chart, "y")
             annotations_snippet = self._annotations_js(chart)
             ref_lines_snippet = self._reference_lines_js(chart)
+            # Axis titles: drop x-title for discrete categorical charts where
+            # tick labels already carry the field info; otherwise humanize.
+            x_title = "" if chart_type in _DISCRETE_X_CHART_TYPES else humanize_field(x)
+            y_title = humanize_field(y)
+            # Bar color: use ordinal purple ramp when sorted by y with no group.
+            use_purple_ramp_for_bar = (
+                chart_type == "bar" and sort_field == "y" and not group
+            )
+            bar_color_js = (
+                "purpleRamp(xValues.length)" if use_purple_ramp_for_bar else "theme.primary"
+            )
 
             # Build options object for aggregation
             options_obj = {
@@ -1632,15 +1651,15 @@ if __name__ == '__main__':
         }});
       }});
 
-      const layout = {{
-        title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-        yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
+      const layout = baseLayout({{
+        xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}' }},
+        yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
         barmode: '{barmode}',
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};
+        showlegend: true,
+        legend: {{ font: {{ color: designTokens.fg_dim, size: 11 }} }},
+      }});
+      if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
+      if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);
 
       // Sort x categories by aggregate y total
       if ('{sort_field}' === 'y') {{
@@ -1672,20 +1691,19 @@ if __name__ == '__main__':
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: theme.secondary ? bubbleData.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
+          color: purpleRamp(bubbleData.length),
+          line: {{ color: theme.card, width: 1 }},
           sizemode: 'diameter'
         }},
         hovertemplate: bubbleData.map(d => d.group + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>{size_field or y}: ' + d.size + '<extra></extra>')
       }};
 
-      const layout = {{
-        title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-        yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};{annotations_snippet}{ref_lines_snippet}
+      const layout = baseLayout({{
+        xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}' }},
+        yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
+      }});
+      if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
+      if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);{annotations_snippet}{ref_lines_snippet}
 
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
@@ -1707,14 +1725,10 @@ if __name__ == '__main__':
 
       const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
 
-      const layout = {{
-        title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text }},
-        yaxis: {{ title: '{heatmap_y}', type: '{y_scale_type}', color: theme.text }},
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};{annotations_snippet}{ref_lines_snippet}
+      const layout = baseLayout({{
+        xaxis: {{ title: {{ text: '' }} }},
+        yaxis: {{ title: {{ text: '' }} }},
+      }});{annotations_snippet}{ref_lines_snippet}
 
       Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
     }}''')
@@ -1746,19 +1760,31 @@ if __name__ == '__main__':
       let traces = [];
       switch ('{chart_type}') {{
         case 'line':
-          trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: {{ color: theme.primary }} }};
+          trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers',
+                     line: {{ color: theme.primary, width: 2 }},
+                     marker: {{ color: theme.primary, size: 4 }},
+                     fill: 'tozeroy',
+                     fillcolor: theme.primary + '1a' }};
           break;
         case 'scatter':
           trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: {{ color: theme.primary }} }};
           break;
         case 'pie':
-          trace = {{ labels: xValues, values: yValues, type: 'pie', marker: {{ colors: theme.secondary }} }};
+          trace = {{ labels: xValues, values: yValues, type: 'pie',
+                     marker: {{ colors: purpleRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
+                     textinfo: 'label+percent',
+                     textposition: 'inside',
+                     insidetextorientation: 'radial',
+                     insidetextfont: {{ color: '#1a1b24', size: 11 }} }};
           break;
         case 'area':
           trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
           break;
         case 'histogram':
-          trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
+          // Native Plotly histogram — handles log y correctly. Per-bin colors
+          // aren't supported on this trace type, so we use flat primary purple.
+          trace = {{ x: xValues, type: 'histogram', nbinsx: {bins},
+                     marker: {{ color: theme.primary, line: {{ color: theme.card, width: 1 }} }} }};
           break;
         case 'box':
           // Box plot: shows distribution (min, Q1, median, Q3, max)
@@ -1781,7 +1807,9 @@ if __name__ == '__main__':
               z: yValues,
               locationmode: 'ISO-3',
               colorscale: theme.sequential || 'Blues',
-              colorbar: {{ title: '{y}' }}
+              zmin: 0,
+              zmax: (() => {{ const s = [...yValues].sort((a,b)=>b-a); return s[1] || s[0]; }})(),
+              colorbar: {{ title: {{ text: '{y_title}' }} }}
             }};
           }} else {{
             const normalizedX_{chart_id.replace('-', '_')} = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_{chart_id.replace('-', '_')}));
@@ -1791,57 +1819,78 @@ if __name__ == '__main__':
               z: yValues,
               locationmode: 'country names',
               colorscale: theme.sequential || 'Blues',
-              colorbar: {{ title: '{y}' }}
+              zmin: 0,
+              zmax: (() => {{ const s = [...yValues].sort((a,b)=>b-a); return s[1] || s[0]; }})(),
+              colorbar: {{ title: {{ text: '{y_title}' }} }}
             }};
           }}
           break;
         default:
-          trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
+          trace = {{ x: xValues, y: yValues, type: 'bar',
+                     marker: {{ color: {bar_color_js}, line: {{ width: 0 }} }} }};
       }}
 
       if (trace) traces.push(trace);
 
       let layout;
       if ('{chart_type}' === 'geo') {{
-        layout = {{
-          title: {{ text: '{title}', font: {{ color: theme.text }} }},
+        layout = baseLayout({{
           geo: {{
             showframe: false,
+            showland: true,
             showcoastlines: true,
+            coastlinecolor: designTokens.geo_border,
+            showcountries: true,
+            countrycolor: designTokens.geo_border,
+            landcolor: designTokens.geo_land,
+            oceancolor: theme.card,
+            showocean: true,
             projection: {{ type: 'natural earth' }},
-            bgcolor: 'rgba(0,0,0,0)'
+            bgcolor: theme.card,
           }},
-          margin: {{ t: 60, r: 0, b: 0, l: 0 }},
-          paper_bgcolor: 'rgba(0,0,0,0)'
-        }};
+          margin: {{ t: 8, r: 0, b: 0, l: 0 }},
+        }});
       }} else {{
-        layout = {{
-          title: {{ text: '{title}', font: {{ color: theme.text }} }},
-          xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-          yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-          margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: 'rgba(0,0,0,0)'
-        }};
+        layout = baseLayout({{
+          xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}' }},
+          yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
+          margin: {{ b: ('{chart_type}' === 'bar' || '{chart_type}' === 'box') ? 100 : 56 }},
+        }});
+        if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
+        if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);
+        if ('{chart_type}' === 'bar' || '{chart_type}' === 'box') {{
+          layout.xaxis.tickangle = -35;
+          layout.xaxis.gridcolor = 'rgba(0,0,0,0)';
+        }}
       }}{annotations_snippet}{ref_lines_snippet}
 
       Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
     }}''')
 
-        # Generate page show function
-        page_show_function = f'''
-    function showPage(pageId, clickedButton) {{
-      document.querySelectorAll('.page-container').forEach(page => {{
-        page.style.display = 'none';
-      }});
-      document.querySelectorAll('.tab-button').forEach(tab => {{
+        # Generate page show function — uses .hidden class so the page-container's
+        # `display: grid` survives tab switches (inline `style.display = 'block'`
+        # would override the grid layout and cause cards to stack vertically).
+        page_show_function = '''
+    function showPage(pageId, clickedButton) {
+      document.querySelectorAll('.page-container').forEach(page => {
+        page.classList.add('hidden');
+      });
+      document.querySelectorAll('.tab-button').forEach(tab => {
         tab.classList.remove('active');
-      }});
-      document.getElementById('page-' + pageId).style.display = 'block';
-      if (clickedButton) {{
+      });
+      const activePage = document.getElementById('page-' + pageId);
+      if (activePage) activePage.classList.remove('hidden');
+      if (clickedButton) {
         clickedButton.classList.add('active');
-      }}
-    }}'''
+      }
+      // Plotly needs a relayout when its container becomes visible again.
+      requestAnimationFrame(() => {
+        if (!window.Plotly) return;
+        document.querySelectorAll('#page-' + pageId + ' .chart-container').forEach(el => {
+          if (el.offsetParent) Plotly.Plots.resize(el);
+        });
+      });
+    }'''
 
         render_pages = []
         for page in pages:
@@ -1858,10 +1907,224 @@ if __name__ == '__main__':
         if any(c.get("type") == "geo" for c in all_charts):
             geo_js_block = "\n    " + self._generate_geo_js_helpers(target="plotly").replace("\n", "\n    ") + "\n"
 
+        # Design tokens emitted as JS constants (theme-agnostic visual relationships)
+        design_tokens_js = json.dumps(DESIGN_TOKENS)
+        purple_ramp_js = json.dumps(PURPLE_RAMP)
+
         # Use the same full-featured aggregation functions as single-page mode
         return f'''  <script>
     const theme = {theme_json};
+    const designTokens = {design_tokens_js};
+    const PURPLE_RAMP = {purple_ramp_js};
 {geo_js_block}
+    // Quote-aware CSV line parser (handles airline names with commas, etc.)
+    function parseCsvLine(line) {{
+      const out = []; let cur = ''; let inQ = false;
+      for (let i = 0; i < line.length; i++) {{
+        const c = line[i];
+        if (inQ) {{
+          if (c === '"' && line[i + 1] === '"') {{ cur += '"'; i++; }}
+          else if (c === '"') {{ inQ = false; }}
+          else {{ cur += c; }}
+        }} else {{
+          if (c === ',') {{ out.push(cur); cur = ''; }}
+          else if (c === '"') {{ inQ = true; }}
+          else {{ cur += c; }}
+        }}
+      }}
+      out.push(cur);
+      return out;
+    }}
+
+    // Light → dark purple intensity ramp for ordinal bar encoding.
+    // Continuous RGB interpolation between stops so any bar count produces
+    // a uniformly smooth gradient (no stepped clusters at n=12, 18, etc.).
+    function purpleRamp(n) {{
+      const stops = PURPLE_RAMP;
+      if (n <= 1) return [stops[Math.floor(stops.length / 2)]];
+      const hexToRgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+      const rgbToHex = rgb => '#' + rgb.map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
+      const lerpAt = t => {{
+        const segments = stops.length - 1;
+        const scaled = Math.max(0, Math.min(segments, t * segments));
+        const idx = Math.min(segments - 1, Math.floor(scaled));
+        const frac = scaled - idx;
+        const a = hexToRgb(stops[idx]);
+        const b = hexToRgb(stops[idx + 1]);
+        return rgbToHex(a.map((v, i) => v + (b[i] - v) * frac));
+      }};
+      return Array.from({{length: n}}, (_, i) => lerpAt(i / (n - 1)));
+    }}
+
+    // snake_case / camelCase → Title Case for axis labels.
+    function humanizeField(name) {{
+      if (!name) return '';
+      const parts = name.replace(/-/g, '_').split('_');
+      const expanded = [];
+      for (const part of parts) {{
+        if (!part) continue;
+        let cur = part[0];
+        for (let i = 1; i < part.length; i++) {{
+          const ch = part[i];
+          if (ch >= 'A' && ch <= 'Z' && cur && cur[cur.length - 1] >= 'a' && cur[cur.length - 1] <= 'z') {{
+            expanded.push(cur); cur = ch;
+          }} else {{ cur += ch; }}
+        }}
+        expanded.push(cur);
+      }}
+      return expanded.filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+    }}
+
+    // Build a Plotly layout dict with theme-driven paper/plot/axis/font defaults.
+    // Per-chart code spreads `extra` over the result for chart-specific overrides.
+    function baseLayout(extra) {{
+      const base = {{
+        paper_bgcolor: theme.card,
+        plot_bgcolor:  theme.card,
+        font: {{ family: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif', color: designTokens.fg_dim, size: 12 }},
+        margin: {{ l: 56, r: 16, t: 16, b: 56 }},
+        showlegend: false,
+        hoverlabel: {{
+          bgcolor: '#1a1b24',
+          bordercolor: designTokens.line_soft,
+          font: {{ color: theme.text, size: 12 }}
+        }},
+        xaxis: {{
+          gridcolor: designTokens.line_soft,
+          linecolor: designTokens.line_soft,
+          zerolinecolor: designTokens.line_soft,
+          tickcolor: designTokens.line_soft,
+          tickfont: {{ color: designTokens.fg_dim, size: 11 }},
+          title: {{ font: {{ color: designTokens.muted, size: 11 }} }},
+          automargin: true,
+        }},
+        yaxis: {{
+          gridcolor: designTokens.line_soft,
+          linecolor: designTokens.line_soft,
+          zerolinecolor: designTokens.line_soft,
+          tickcolor: designTokens.line_soft,
+          tickfont: {{ color: designTokens.fg_dim, size: 11 }},
+          title: {{ font: {{ color: designTokens.muted, size: 11 }} }},
+          automargin: true,
+        }},
+      }};
+      // Deep merge xaxis/yaxis so per-chart overrides preserve theme defaults.
+      const merged = Object.assign({{}}, base, extra || {{}});
+      if (extra && extra.xaxis) merged.xaxis = Object.assign({{}}, base.xaxis, extra.xaxis);
+      if (extra && extra.yaxis) merged.yaxis = Object.assign({{}}, base.yaxis, extra.yaxis);
+      if (extra && extra.margin) merged.margin = Object.assign({{}}, base.margin, extra.margin);
+      return merged;
+    }}
+
+    // Apply log-scale polish (dtick, power exponent, kill 1/2/5 minor ticks).
+    function applyLogPolish(axis) {{
+      return Object.assign(axis, {{
+        type: 'log',
+        dtick: 1,
+        exponentformat: 'power',
+        showexponent: 'all',
+        minor: {{ ticks: '', showgrid: false }},
+      }});
+    }}
+
+    // Dashboard filter UI (CSV mode — populated from loaded CSV after fetch).
+    function closeAllMs() {{
+      document.querySelectorAll('.ms-panel.ms-open').forEach(p => p.classList.remove('ms-open'));
+      document.querySelectorAll('.ms-btn.ms-open').forEach(b => b.classList.remove('ms-open'));
+    }}
+    function toggleMs(btn, pageId, field) {{
+      const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+      if (!panel) return;
+      const opening = !panel.classList.contains('ms-open');
+      closeAllMs();
+      if (opening) {{ panel.classList.add('ms-open'); btn.classList.add('ms-open'); }}
+    }}
+    document.addEventListener('click', function(e) {{
+      if (!e.target.closest('.ms-wrap')) closeAllMs();
+    }});
+    document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') closeAllMs(); }});
+
+    function updateMsLabel(pageId, field) {{
+      const panel = document.getElementById('ms-panel-' + pageId + '-' + field);
+      const textEl = document.querySelector('#ms-' + pageId + '-' + field + ' .ms-text');
+      const countEl = document.getElementById('ms-count-' + pageId + '-' + field);
+      if (!panel || !textEl) return;
+      const checked = Array.from(panel.querySelectorAll('input[type="checkbox"]:checked'));
+      const n = checked.length;
+      if (n === 0) {{
+        textEl.textContent = 'All';
+        textEl.classList.add('placeholder');
+        if (countEl) {{ countEl.textContent = ''; countEl.classList.remove('visible'); }}
+      }} else if (n === 1) {{
+        textEl.textContent = checked[0].value;
+        textEl.classList.remove('placeholder');
+        if (countEl) {{ countEl.textContent = ''; countEl.classList.remove('visible'); }}
+      }} else {{
+        textEl.textContent = n + ' selected';
+        textEl.classList.remove('placeholder');
+        if (countEl) {{ countEl.textContent = ''; countEl.classList.remove('visible'); }}
+      }}
+    }}
+
+    function readPageFilters(pageId) {{
+      const out = {{}};
+      document.querySelectorAll('select[id^="filter-' + pageId + '-"]').forEach(sel => {{
+        const m = sel.id.match(/^filter-[^-]+-(.+)$/);
+        if (m && sel.value) out[m[1]] = [sel.value];
+      }});
+      document.querySelectorAll('.ms-panel[id^="ms-panel-' + pageId + '-"]').forEach(panel => {{
+        const m = panel.id.match(/^ms-panel-[^-]+-(.+)$/);
+        if (!m) return;
+        const checked = Array.from(panel.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
+        if (checked.length) out[m[1]] = checked;
+      }});
+      return out;
+    }}
+
+    function applyDashboardFilter(pageId) {{
+      const filters = readPageFilters(pageId);
+      const data = window.__dashmlData || [];
+      const filtered = data.filter(row => Object.entries(filters).every(([f, vals]) =>
+        vals.map(String).includes(String(row[f]))));
+      renderAllPages(filtered);
+    }}
+
+    function resetFilters(pageId) {{
+      document.querySelectorAll('select[id^="filter-' + pageId + '-"]').forEach(s => {{ s.value = ''; }});
+      document.querySelectorAll('.ms-panel[id^="ms-panel-' + pageId + '-"] input[type=checkbox]').forEach(cb => {{ cb.checked = false; }});
+      document.querySelectorAll('.ms-panel[id^="ms-panel-' + pageId + '-"]').forEach(panel => {{
+        const m = panel.id.match(/^ms-panel-([^-]+)-(.+)$/);
+        if (m) updateMsLabel(m[1], m[2]);
+      }});
+      applyDashboardFilter(pageId);
+    }}
+
+    function populateCsvFilters(data) {{
+      document.querySelectorAll('select[id^="filter-"]').forEach(sel => {{
+        const m = sel.id.match(/^filter-[^-]+-(.+)$/);
+        if (!m) return;
+        const field = m[1];
+        const values = Array.from(new Set(data.map(d => d[field]).filter(v => v !== '' && v != null))).sort();
+        values.forEach(v => {{
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = v;
+          sel.appendChild(opt);
+        }});
+      }});
+      document.querySelectorAll('.ms-panel').forEach(panel => {{
+        const m = panel.id.match(/^ms-panel-([^-]+)-(.+)$/);
+        if (!m) return;
+        const pageId = m[1]; const field = m[2];
+        const values = Array.from(new Set(data.map(d => d[field]).filter(v => v !== '' && v != null))).sort();
+        panel.innerHTML = values.map(v => {{
+          const esc = String(v).replace(/"/g, '&quot;');
+          return '<label class="ms-option"><input type="checkbox" value="' + esc +
+                 '" onchange="updateMsLabel(\\'' + pageId + '\\',\\'' + field +
+                 '\\');applyDashboardFilter(\\'' + pageId + '\\')"> <span>' + v + '</span></label>';
+        }}).join('');
+      }});
+    }}
+
     // Apply filters to data
     function applyFilters(data, filters) {{
       if (!filters || filters.length === 0) return data;
@@ -2126,20 +2389,22 @@ if __name__ == '__main__':
       .then(response => response.text())
       .then(csv => {{
         const lines = csv.trim().split('\\n').filter(line => line.trim());
-        const headers = lines[0].split(',').map(h => h.trim());
+        const headers = parseCsvLine(lines[0]).map(h => h.trim());
         const data = lines.slice(1)
           .map(line => {{
-            const values = line.split(',');
+            const values = parseCsvLine(line);
             if (values.length !== headers.length) return null;
             const row = {{}};
             headers.forEach((header, i) => {{
-              const val = values[i] ? values[i].trim() : '';
+              const val = values[i] != null ? String(values[i]).trim() : '';
               row[header] = (val !== '' && !isNaN(val)) ? parseFloat(val) : val;
             }});
             return row;
           }})
           .filter(row => row !== null);
 {self._build_derived_js_code(derived_fields or [], var_name="data", indent="        ")}
+        window.__dashmlData = data;
+        populateCsvFilters(data);
         renderAllPages(data);
       }})
       .catch(error => console.error('Error loading data:', error));
@@ -2537,7 +2802,8 @@ if __name__ == '__main__':
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: theme.secondary ? data.map((_, i) => theme.secondary[i % theme.secondary.length]) : theme.primary,
+          color: purpleRamp(data.length),
+          line: {{ color: theme.card, width: 1 }},
           sizemode: 'diameter'
         }},
         hovertemplate: data.map(d => d.grp + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>size: ' + d.size + '<extra></extra>')
@@ -2591,7 +2857,12 @@ if __name__ == '__main__':
           trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: {{ color: theme.primary }} }};
           break;
         case 'pie':
-          trace = {{ labels: xValues, values: yValues, type: 'pie', marker: {{ colors: theme.secondary }} }};
+          trace = {{ labels: xValues, values: yValues, type: 'pie',
+                     marker: {{ colors: purpleRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
+                     textinfo: 'label+percent',
+                     textposition: 'inside',
+                     insidetextorientation: 'radial',
+                     insidetextfont: {{ color: '#1a1b24', size: 11 }} }};
           break;
         case 'area':
           trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};

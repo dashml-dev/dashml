@@ -1,0 +1,11 @@
+version: 0.1
+title: Demo
+data:
+  type: csv
+  path: flights.csv
+charts:
+  - id: delays_by_airline
+    type: piee
+    x: airline_name
+    y: average_delay_mins
+    agg: mean

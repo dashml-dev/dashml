@@ -170,6 +170,15 @@ class SupersetTransformer(Transformer):
 
             # Use resolved style from normalizer
             style_config = {"colors": spec["style"]}
+            # Superset's dashboard chrome (page bg, card bg, fonts, etc.) is
+            # controlled by the Superset instance theme — most palette tokens
+            # the spec carries are ignored. We pass `primary` / `secondary`
+            # through label colors below, but everything else is instance-level.
+            self.warn(
+                "Superset dashboard chrome is instance-level — "
+                "page/card backgrounds, axis colors, and fonts are not "
+                "controlled by the .dashml style (only label colors are)."
+            )
 
             # Store db_config for internal methods that need it
             self._db_config = spec.get("db_config", {})

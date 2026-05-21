@@ -1,0 +1,46 @@
+version: 0.1
+title: Flight Punctuality
+style: dracula
+data:
+  type: csv
+  path: flights.csv
+
+charts:
+  - id: flights_by_airline
+    type: bar
+    title: Total Flights by Airline
+    x: airline_name
+    y: total_flights
+    agg: sum
+    sort: y
+    sort_order: desc
+    limit: 10
+
+  - id: cancellations_map
+    type: geo
+    title: Cancelled Flights by Country
+    x: origin_country
+    y: cancelled
+    agg: count
+
+  - id: airports_share
+    type: pie
+    title: Top 8 Airports by Flight Volume
+    x: reporting_airport
+    y: total_flights
+    agg: sum
+    sort: y
+    sort_order: desc
+    limit: 8
+
+  - id: airport_quality
+    type: bubble
+    title: Airport Quality — Volume vs Delay Rate
+    x: total_flights
+    y: pct_delayed_15plus
+    size: cancelled
+    group: reporting_airport
+    agg: mean
+    sort: x
+    sort_order: desc
+    limit: 12

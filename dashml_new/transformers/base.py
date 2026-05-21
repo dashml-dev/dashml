@@ -129,3 +129,38 @@ class Transformer(ABC):
 class TransformerError(Exception):
     """Raised when transformer fails to generate code"""
     pass
+
+
+def humanize_field(name: str) -> str:
+    """Convert a column/field name to a human-readable label.
+
+    Splits on underscores and camelCase boundaries, then title-cases each
+    word. Used as a fallback when a chart spec doesn't provide an explicit
+    axis title.
+
+    Examples:
+        "airline_name"          -> "Airline Name"
+        "average_delay_mins"    -> "Average Delay Mins"
+        "pct_delayed_15plus"    -> "Pct Delayed 15plus"
+        "reportingMonth"        -> "Reporting Month"
+    """
+    if not name:
+        return ""
+    # snake_case → spaces
+    parts = name.replace("-", "_").split("_")
+    # camelCase → split at lowercase→uppercase boundary inside each part
+    expanded: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        chunks: list[str] = []
+        cur = part[0]
+        for ch in part[1:]:
+            if ch.isupper() and cur and cur[-1].islower():
+                chunks.append(cur)
+                cur = ch
+            else:
+                cur += ch
+        chunks.append(cur)
+        expanded.extend(chunks)
+    return " ".join(w[:1].upper() + w[1:] for w in expanded if w)
