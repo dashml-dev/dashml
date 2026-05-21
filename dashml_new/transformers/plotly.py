@@ -320,7 +320,7 @@ from decimal import Decimal
 
 # BigQuery credentials and project are loaded from environment variables
 # (DASHML_BQ_PROJECT, DASHML_BQ_CREDENTIALS).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {bq_env_loader}
 app = Flask(__name__)
 
@@ -756,7 +756,7 @@ if __name__ == '__main__':
 
     def _generate_javascript(self, data_spec: Dict[str, Any], charts: list, colors: Dict[str, str]) -> str:
         """Generate JavaScript code for data loading and rendering"""
-        data_path = data_spec["path"]
+        data_path = Path(data_spec.get("csv_path") or data_spec["path"]).name
 
         # Resolve sequential colorscale at code-gen time
         colors = dict(colors)
@@ -1554,7 +1554,7 @@ if __name__ == '__main__':
 
     def _generate_javascript_pages(self, data_spec: Dict[str, Any], pages: list, colors: Dict[str, str], derived_fields: list = None) -> str:
         """Generate JavaScript for multi-page dashboard"""
-        data_path = data_spec["path"]
+        data_path = Path(data_spec.get("csv_path") or data_spec["path"]).name
         colors = dict(colors)
         colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
         theme_json = json.dumps(colors)
@@ -2477,7 +2477,7 @@ from sqlalchemy import create_engine
 import pandas as pd
 
 # Database credentials are loaded from environment variables (DASHML_DB_*).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {sql_env_loader}
 app = Flask(__name__)
 
@@ -2485,7 +2485,10 @@ SCHEMA = "{schema}"
 TABLE_NAME = "{table_name}"
 
 # Create database engine
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={{"options": "-c lc_messages=C"}} if _DB_TYPE == "postgresql" else {{}},
+)
 
 # Per-chart SQL queries (generated at compile time)
 {chart_queries_code}

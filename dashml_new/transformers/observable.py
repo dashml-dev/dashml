@@ -430,7 +430,7 @@ class ObservablePlotTransformer(Transformer):
     def _generate_data_loader(self, data_spec: Dict[str, Any], derived_fields: list = None) -> str:
         """Generate JavaScript to load CSV data"""
         data_type = data_spec["type"]
-        path = data_spec["path"]
+        path = Path(data_spec.get("csv_path") or data_spec["path"]).name
         purple_ramp_js = json.dumps(PURPLE_RAMP)
 
         if data_type == "csv":
@@ -1828,14 +1828,17 @@ from sqlalchemy import create_engine
 import pandas as pd
 
 # Database credentials are loaded from environment variables (DASHML_DB_*).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {sql_env_loader}
 app = Flask(__name__)
 
 SCHEMA = "{schema}"
 TABLE_NAME = "{table_name}"
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={{"options": "-c lc_messages=C"}} if _DB_TYPE == "postgresql" else {{}},
+)
 
 # Per-chart SQL queries (generated at compile time)
 {chart_queries_code}
@@ -1997,7 +2000,7 @@ from decimal import Decimal
 
 # BigQuery credentials and project are loaded from environment variables
 # (DASHML_BQ_PROJECT, DASHML_BQ_CREDENTIALS).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {bq_env_loader}
 app = Flask(__name__)
 
@@ -2301,8 +2304,9 @@ if __name__ == '__main__':
         // World topojson for geo charts
         window.worldTopojson = null;
 
-        // Load world topojson once
-        fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+        // Load world topojson once; expose a promise that any geo chart awaits
+        // before rendering, eliminating the data-vs-topojson race condition.
+        window.worldTopojsonReady = fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
             .then(r => r.json())
             .then(worldData => {
                 window.worldTopojson = topojson.feature(worldData, worldData.objects.countries);
@@ -2325,7 +2329,7 @@ if __name__ == '__main__':
             container.innerHTML = '<div class="chart-spinner"><div class="spinner"></div><span>Loading...</span></div>';
             try {
                 const url = '/api/chart/' + chartId + (extraParams ? '?' + extraParams : '');
-                const resp = await fetch(url);
+                const [resp] = await Promise.all([fetch(url), window.worldTopojsonReady]);
                 if (!resp.ok) {
                     const body = await resp.json().catch(() => ({}));
                     throw new Error(body.error || 'HTTP ' + resp.status);

@@ -3,6 +3,7 @@ Streamlit Transformer - Generates Streamlit Python code from DashML specs
 """
 import re
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Any, List
 from .base import Transformer, TransformerError, humanize_field
 from .constants import (
@@ -127,7 +128,8 @@ class StreamlitTransformer(Transformer):
     def _generate_imports(self, data_type: str = "csv") -> str:
         imports = """import streamlit as st
 import pandas as pd
-import altair as alt"""
+import altair as alt
+from pathlib import Path"""
 
         if data_type == "sql":
             imports += "\nfrom sqlalchemy import create_engine"
@@ -338,7 +340,7 @@ def normalize_country(value, encoding):
         derived_fields = derived_fields or []
 
         if data_type == "csv":
-            path = data_spec.get("csv_path", data_spec["path"])
+            path = Path(data_spec.get("csv_path") or data_spec["path"]).name
             # Build derived field computation lines (injected after CSV load)
             derived_lines = ""
             if derived_fields:
@@ -350,7 +352,7 @@ def normalize_country(value, encoding):
             return f'''@st.cache_data
 def load_data():
     try:
-        df = pd.read_csv("{path}"){derived_lines}
+        df = pd.read_csv(Path(__file__).resolve().parent / "{path}"){derived_lines}
 
         # Infer column types from pandas dtypes for auto type detection
         column_types = {{}}
@@ -386,9 +388,12 @@ def load_data():
 
             # Generate module-level env loader + data loading function with schema detection
             return f'''# Database credentials are loaded from environment variables (DASHML_DB_*).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {sql_env_loader}
-_engine = create_engine(DATABASE_URL)
+_engine = create_engine(
+    DATABASE_URL,
+    connect_args={{"options": "-c lc_messages=C"}} if _DB_TYPE == "postgresql" else {{}},
+)
 
 @st.cache_data
 def load_data():
@@ -456,7 +461,7 @@ def load_data():
 
             return f'''# BigQuery credentials and project are loaded from environment variables
 # (DASHML_BQ_PROJECT, DASHML_BQ_CREDENTIALS).
-# See SECRETS.md and .env.example next to this file.
+# See SECRETS.md next to this file for configuration patterns.
 {bq_env_loader}
 DERIVED_CTE = """{derived_cte_resolved}"""
 DERIVED_FILTER_SOURCE = "{derived_filter_source}"
@@ -773,7 +778,7 @@ def load_data():
         # Altair Chart Generation
         if chart_type == "bar":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             use_purple_ramp = sort_field == "y" and not group
             if use_purple_ramp:
                 # Add a 0-based _rank column so bars get a light→dark purple ramp.
@@ -794,7 +799,7 @@ def load_data():
 
         elif chart_type == "line":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_line(color="{primary_color}", point=True).encode(
         x={x_enc},
         y={y_enc_str},
@@ -803,7 +808,7 @@ def load_data():
 
         elif chart_type == "scatter":
             x_enc_scatter = self._x_encoding_str(x, x_label, chart, type_suffix=":Q", sort_val="None")
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             code_parts.append(f'''    # Scatter: raw data points
     c = alt.Chart(chart_df).mark_circle(color="{primary_color}", size=60).encode(
         x={x_enc_scatter},
@@ -817,7 +822,7 @@ def load_data():
             size_col = "size" if (sql_mode and size_field in (x, y)) else size_field
             size_label = self._humanize_column_name(size_field)
             x_enc_bubble = self._x_encoding_str(x, x_label, chart, type_suffix=":Q", sort_val="None")
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             if group:
                 group_label = self._humanize_column_name(group)
                 code_parts.append(f'''    # Bubble: 4D viz with purple ramp by rank + on-top labels
@@ -850,7 +855,7 @@ def load_data():
             heatmap_y_label = self._humanize_column_name(heatmap_y)
             value_field = y  # The value to aggregate for color
             value_label = self._humanize_column_name(value_field)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             if sql_mode:
                 # In SQL mode, chart_df already contains aggregated and renamed data
                 code_parts.append(f'''    # Heatmap: 2D grid with color intensity (data pre-aggregated by SQL query)
@@ -885,7 +890,7 @@ def load_data():
         elif chart_type == "pie":
             # Sorted pie → purple ramp by rank, with a right-side legend showing
             # "NAME  PCT%" labels (Altair pie text inside slices is fragile).
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             arc_stroke = colors.get("card", "#2e3040")
             code_parts.append(f'''    # Build "NAME  PCT%" legend labels in rank order
     chart_data = chart_data.reset_index(drop=True)
@@ -907,7 +912,7 @@ def load_data():
 
         elif chart_type == "area":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             code_parts.append(f'''    c = alt.Chart(chart_data).mark_area(color="{primary_color}", opacity=0.7).encode(
         x={x_enc},
         y={y_enc_str},
@@ -916,7 +921,7 @@ def load_data():
 
         elif chart_type == "histogram":
             # Histogram uses binning on x axis, no aggregation needed
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             code_parts.append(f'''    # Histogram: bin {x} values into {bins} bins
     c = alt.Chart(chart_df).mark_bar(color="{primary_color}").encode(
         x=alt.X("{x}:Q", bin=alt.Bin(maxbins={bins}), title="{x_label}"),
@@ -926,7 +931,7 @@ def load_data():
 
         elif chart_type == "box":
             # Box plot: shows distribution (min, Q1, median, Q3, max)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             code_parts.append(f'''    # Box plot: distribution by {x}
     c = alt.Chart(chart_df).mark_boxplot(color="{primary_color}").encode(
         x=alt.X("{x}:N", title="{x_label}"),
@@ -942,7 +947,7 @@ def load_data():
             if chart.get("y_scale") == "log":
                 y_stack_enc += ', scale=alt.Scale(type="log")'
             y_stack_enc += ')'
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             code_parts.append(f'''    # Stacked bar: stack {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
@@ -964,7 +969,7 @@ def load_data():
             else:
                 offset_sort = "None"
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
-            render_line = '' if has_overlays else '\n    st.altair_chart(c, use_container_width=True, theme=None)'
+            render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             code_parts.append(f'''    # Grouped bar: group {y} by {group}
     theme_colors = {secondary_colors}
     c = alt.Chart(chart_data).mark_bar().encode(
@@ -1026,7 +1031,7 @@ def load_data():
         height=350
     )
     c = background + foreground
-    st.altair_chart(c, use_container_width=True, theme=None)''')
+    st.altair_chart(c, width="stretch", theme=None)''')
 
         else:
             code_parts.append(f'    st.warning("Unsupported chart type: {chart_type}")')
@@ -1036,7 +1041,7 @@ def load_data():
             overlay_code = self._generate_overlay_code(chart)
             if overlay_code:
                 code_parts.append(overlay_code)
-            code_parts.append('    st.altair_chart(c, use_container_width=True, theme=None)')
+            code_parts.append('    st.altair_chart(c, width="stretch", theme=None)')
 
         return "\n".join(code_parts)
 

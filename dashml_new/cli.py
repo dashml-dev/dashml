@@ -259,10 +259,11 @@ def build_command(args):
                     )
                     output_dir = Path(output_path)
                     aux_files = {
-                        ".env.example": emit_env_example(data_type, db_config),
                         ".gitignore": emit_gitignore(),
                         "SECRETS.md": emit_secrets_readme(data_type),
                     }
+                    if getattr(args, "emit_env_example", False):
+                        aux_files[".env.example"] = emit_env_example(data_type)
                     for name, content in aux_files.items():
                         if not content:
                             continue
@@ -596,6 +597,11 @@ Examples:
     build_parser.add_argument(
         "--bq-credentials",
         help="Path to service account JSON credentials file (optional, written to .env.example as default for DASHML_BQ_CREDENTIALS)"
+    )
+    build_parser.add_argument(
+        "--emit-env-example",
+        action="store_true",
+        help="Emit .env.example template (blank values) alongside the artifact. Off by default; .gitignore and SECRETS.md are always emitted for SQL/BigQuery targets."
     )
 
     # List command

@@ -51,7 +51,7 @@ _missing = [v for v in _required if not os.environ.get(v)]
 if _missing:
     raise RuntimeError(
         "Missing required environment variables: " + ", ".join(_missing) +
-        ". See .env.example next to this file."
+        ". See SECRETS.md next to this file for configuration patterns."
     )
 
 _DB_TYPE = os.environ["DASHML_DB_TYPE"].lower()
@@ -113,15 +113,15 @@ else:
 '''
 
 
-def emit_env_example(data_type: str, db_config: Optional[Dict[str, Any]]) -> str:
+def emit_env_example(data_type: str, db_config: Optional[Dict[str, Any]] = None) -> str:
     """
-    Generate a .env.example file listing required env variables.
+    Generate a .env.example file listing required env variables, all blank.
 
-    If db_config is provided (i.e. user passed --db-* flags at build time),
-    those values are inlined as visible defaults to make local-machine setup
-    a one-step copy: `cp .env.example .env` and the dashboard runs.
-
-    For password fields the value is always blank — the user must fill it in.
+    All-or-nothing: emitting partial defaults (some vars filled, others left as
+    placeholders) is misleading — the user always has to read the file and edit
+    it anyway. So we just emit every variable with an empty value and let the
+    user fill them in. The db_config parameter is accepted for backward
+    compatibility but ignored.
     """
     lines = [
         "# DashML — environment configuration for the generated dashboard.",
@@ -131,31 +131,16 @@ def emit_env_example(data_type: str, db_config: Optional[Dict[str, Any]]) -> str
     ]
 
     if data_type == "sql":
-        cfg = db_config or {}
-        defaults = {
-            "DASHML_DB_TYPE": cfg.get("type") or "postgresql",
-            "DASHML_DB_HOST": cfg.get("host") or "localhost",
-            "DASHML_DB_PORT": str(cfg.get("port") or "5432"),
-            "DASHML_DB_NAME": cfg.get("database") or "your_database",
-            "DASHML_DB_USER": cfg.get("user") or "your_user",
-            "DASHML_DB_PASSWORD": "",
-        }
-        for var, hint in SQL_ENV_VARS:
-            value = defaults.get(var, "")
-            lines.append(f"# {hint}")
-            lines.append(f"{var}={value}")
-            lines.append("")
+        env_vars = SQL_ENV_VARS
     elif data_type == "bigquery":
-        cfg = db_config or {}
-        defaults = {
-            "DASHML_BQ_PROJECT": cfg.get("project") or "your-gcp-project",
-            "DASHML_BQ_CREDENTIALS": cfg.get("credentials_path") or "",
-        }
-        for var, hint in BQ_ENV_VARS:
-            value = defaults.get(var, "")
-            lines.append(f"# {hint}")
-            lines.append(f"{var}={value}")
-            lines.append("")
+        env_vars = BQ_ENV_VARS
+    else:
+        return "\n".join(lines)
+
+    for var, hint in env_vars:
+        lines.append(f"# {hint}")
+        lines.append(f"{var}=")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -176,11 +161,13 @@ once the environment is populated.
 
 ## Quick start (local development)
 
-1. Copy the template:
+1. Create a `.env` file in this directory with the six `DASHML_DB_*` variables
+   (see table below). If you rebuilt with `--emit-env-example`, a blank
+   `.env.example` template is sitting next to this file — copy it:
 
        cp .env.example .env
 
-2. Edit `.env` and fill in the values (especially `DASHML_DB_PASSWORD`).
+2. Edit `.env` and fill in every value.
 
 3. Run the dashboard. If `python-dotenv` is installed, `.env` is loaded
    automatically. Otherwise export the variables in your shell first:
@@ -221,7 +208,8 @@ machine once the environment is populated.
 
 ## Quick start (local development)
 
-1. Copy the template:
+1. Create a `.env` file in this directory. If you rebuilt with
+   `--emit-env-example`, a blank template is sitting next to this file:
 
        cp .env.example .env
 
