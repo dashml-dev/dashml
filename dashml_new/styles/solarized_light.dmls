@@ -7,9 +7,3 @@ colors:
   text: "#657b83"
   buttons: "#2aa198"
   sequential: "blues"
-  secondary:
-    - "#859900"  # Green
-    - "#b58900"  # Yellow
-    - "#cb4b16"  # Orange
-    - "#dc322f"  # Red
-    - "#6c71c4"  # Violet

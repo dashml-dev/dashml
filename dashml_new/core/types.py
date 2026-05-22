@@ -14,7 +14,7 @@ class StyleColors(TypedDict, total=False):
     primary: str
     text: str
     buttons: str
-    secondary: List[str]
+    sequential: str
 
 
 class StyleSpec(TypedDict):
@@ -104,7 +104,7 @@ class ChartSpec(TypedDict, total=False):
     - bubble: Bubble chart (scatter with size encoding, requires 'size' field)
     - heatmap: Heatmap (2D grid with color intensity, x and y are both categorical)
     - box: Box plot (shows distribution: min, Q1, median, Q3, max)
-    - pie: Pie chart (uses secondary colors)
+    - pie: Pie chart (slices colored from the sequential ramp)
     - area: Filled area chart
     - histogram: Distribution histogram
     - stacked_bar: Stacked bars (requires 'group' field)
@@ -231,7 +231,6 @@ class ResolvedStyle(TypedDict, total=False):
     text: str
     buttons: str
     sequential: str
-    secondary: List[str]
 
 
 class NormalizedSpec(TypedDict, total=False):

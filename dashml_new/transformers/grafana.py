@@ -14,7 +14,7 @@ import json
 from typing import TYPE_CHECKING
 
 from .base import Transformer
-from .constants import resolve_metric_format, DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLORS, DESIGN_TOKENS
+from .constants import resolve_metric_format, DEFAULT_PRIMARY_COLOR, DESIGN_TOKENS
 
 if TYPE_CHECKING:
     from ..core.types import NormalizedSpec
@@ -1142,10 +1142,13 @@ class GrafanaTransformer(Transformer):
     # ── Theme / color application ──────────────────────────────────
 
     def _apply_theme(self, panel: dict, chart: dict, spec: "NormalizedSpec") -> None:
-        """Apply style.primary / style.secondary colors to panel fieldConfig."""
+        """Apply style.primary to panel fieldConfig.
+
+        Multi-series charts fall back to Grafana's palette-classic — categorical
+        colors are owned by the Grafana instance theme, not the .dashml style.
+        """
         style = spec.get("style", {})
         primary = style.get("primary", DEFAULT_PRIMARY_COLOR)
-        secondary = style.get("secondary", DEFAULT_SECONDARY_COLORS)
         chart_type = chart.get("type", "")
 
         # Skip theme for text panels (box placeholder)

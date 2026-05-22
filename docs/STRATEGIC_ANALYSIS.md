@@ -370,7 +370,7 @@ class ResolvedStyle(TypedDict, total=False):
     primary: str
     text: str
     buttons: str
-    secondary: List[str]
+    sequential: str
 
 class NormalizedSpec(TypedDict, total=False):
     version: str                 # always coerced to string

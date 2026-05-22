@@ -12,7 +12,6 @@ from .constants import (
     DEFAULT_HISTOGRAM_BINS,
     AGG_METHODS,
     DEFAULT_PRIMARY_COLOR,
-    DEFAULT_SECONDARY_COLORS,
     DESIGN_TOKENS,
     resolve_metric_format,
     country_mapping_as_python,
@@ -556,7 +555,6 @@ def load_data():
 
         # Extract colors using constants
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
-        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
 
         # Humanize column names for axis labels
         x_label = self._humanize_column_name(x) if x else ""

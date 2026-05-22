@@ -12,7 +12,6 @@ from .constants import (
     CHARTS_USE_RAW_DATA,
     DEFAULT_HISTOGRAM_BINS,
     DEFAULT_PRIMARY_COLOR,
-    DEFAULT_SECONDARY_COLORS,
     DESIGN_TOKENS,
     TEMPORAL_FIELD_NAMES,
     DEFAULT_SORT_ORDER,
@@ -864,7 +863,6 @@ class ObservablePlotTransformer(Transformer):
         size_field = chart.get("size")  # Optional: size field for bubble charts
 
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
-        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
         format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
         suffix = chart.get("suffix", "")          # metric: unit text
 
@@ -971,11 +969,10 @@ class ObservablePlotTransformer(Transformer):
         size_field = chart.get("size")
 
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
-        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
         sequential_scheme = colors.get("sequential", "blues")
 
         mark_code = self._get_plot_mark(
-            chart_type, x, y, group, primary_color, secondary_colors,
+            chart_type, x, y, group, primary_color,
             safe_var_name, bins, size_field=size_field,
             sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"),
             sort_field=sort_field, sort_order=sort_order,
@@ -1493,7 +1490,7 @@ class ObservablePlotTransformer(Transformer):
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc", y_scale: str = None, *, bg_color: str, card_bg: str) -> str:
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc", y_scale: str = None, *, bg_color: str, card_bg: str) -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -1560,7 +1557,6 @@ class ObservablePlotTransformer(Transformer):
         elif chart_type == "bubble":
             # Bubble chart: 4D visualization (group, x, y, size)
             size_ref = size_field if size_field else y
-            color_scale_json = str(secondary_colors).replace("'", '"')
             if group:
                 return f"""marks: [
                     Plot.dot(data_{data_var}, {{
@@ -2465,7 +2461,6 @@ __SQL_VISUAL_HELPERS__
     def _generate_sql_pages_structure(self, pages: list, colors: Dict[str, str]) -> str:
         """Generate multi-page structure with async per-chart loading for SQL/BQ mode"""
         primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
-        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
         text_color = colors.get("text", "#000000")
 
         tabs = []

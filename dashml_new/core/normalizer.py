@@ -22,7 +22,6 @@ try:
         DEFAULT_HISTOGRAM_BINS,
         DEFAULT_SORT_ORDER,
         DEFAULT_PRIMARY_COLOR,
-        DEFAULT_SECONDARY_COLORS,
     )
 except ImportError:
     from transformers.constants import (  # type: ignore[no-redef]
@@ -31,7 +30,6 @@ except ImportError:
         DEFAULT_HISTOGRAM_BINS,
         DEFAULT_SORT_ORDER,
         DEFAULT_PRIMARY_COLOR,
-        DEFAULT_SECONDARY_COLORS,
     )
 
 
@@ -336,7 +334,6 @@ class DashMLNormalizer:
         """
         defaults: ResolvedStyle = {
             "primary": DEFAULT_PRIMARY_COLOR,
-            "secondary": list(DEFAULT_SECONDARY_COLORS),
             "background": "#0e1117",
             "text": "#fafafa",
             "card": "#262730",
