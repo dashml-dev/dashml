@@ -125,9 +125,9 @@ class VegaLiteTransformer(Transformer):
 <head>
   <meta charset="UTF-8">
   <title>{title}</title>
-  <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
-  <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
-  <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega@6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@7"></script>
   <style>
     html, body {{
       margin: 0; padding: 0;
@@ -135,14 +135,12 @@ class VegaLiteTransformer(Transformer):
       font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
     }}
     .container {{ max-width: 1600px; margin: 0 auto; padding: 28px 32px 80px; }}
-    h1 {{ font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 18px; }}
     #vis {{ width: 100%; }}
     .vega-actions a {{ color: {text} !important; }}
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>{title}</h1>
     <div id="vis"></div>
   </div>
   <script>
@@ -311,9 +309,14 @@ class VegaLiteTransformer(Transformer):
 
             # Page-section header: render the page title as a text mark so
             # multi-page dashboards have visible section boundaries when
-            # concat'd into a single vega-lite spec.
+            # concat'd into a single vega-lite spec. Skip when there's a
+            # single page whose title matches the dashboard's — otherwise
+            # the title would appear twice (dashboard.title + page header).
             page_title = page.get("title", page.get("id", ""))
-            if page_title:
+            single_page_dup = (
+                len(pages) == 1 and page_title == spec.get("title")
+            )
+            if page_title and not single_page_dup:
                 rows.append({
                     "mark": {
                         "type": "text",
@@ -337,7 +340,12 @@ class VegaLiteTransformer(Transformer):
                 if len(row_specs) == 1:
                     rows.append(row_specs[0])
                 else:
-                    rows.append({"hconcat": row_specs})
+                    rows.append({
+                        "hconcat": row_specs,
+                        # Independent scales per chart so a bar's [1..1.6M]
+                        # domain doesn't flatten a geo choropleth into one shade.
+                        "resolve": {"scale": {"color": "independent", "size": "independent"}},
+                    })
 
             # Chart rows: N per hconcat (boxplot must be solo — crashes in hconcat with other marks)
             SOLO_TYPES = {"box"}
@@ -359,19 +367,30 @@ class VegaLiteTransformer(Transformer):
                         rows.append(self._build_chart_spec(batch[0], spec, top_level=False))
                     else:
                         row_specs = [self._build_chart_spec(c, spec, top_level=False) for c in batch]
-                        rows.append({"hconcat": row_specs})
+                        rows.append({
+                        "hconcat": row_specs,
+                        # Independent scales per chart so a bar's [1..1.6M]
+                        # domain doesn't flatten a geo choropleth into one shade.
+                        "resolve": {"scale": {"color": "independent", "size": "independent"}},
+                    })
 
         dashboard = {
             "$schema": VEGALITE_SCHEMA,
             "title": spec.get("title", "DashML Dashboard"),
             "vconcat": rows,
             "config": self._build_config(spec),
+            # Per-chart scales — without this, vconcat / hconcat siblings share
+            # color/size domains. Concrete fallout: a geo choropleth in the
+            # same hconcat row as a bar chart inherits the bar's [1, 1.6M]
+            # domain and every country lands on the lightest shade.
+            "resolve": {"scale": {"color": "independent", "size": "independent"}},
         }
 
-        # Add data at top level
-        data_block = self._build_data(spec)
-        if data_block:
-            dashboard["data"] = data_block
+        # Data is attached to each child chart, not at the dashboard level.
+        # Top-level data in a vconcat + layered composition can shadow per-layer
+        # data sources — geo choropleths in particular render gray when the
+        # outer data block "wins" against the layer's CSV+lookup pipeline.
+        # Each chart builder calls `_build_data` for itself.
 
         return dashboard
 
@@ -398,8 +417,11 @@ class VegaLiteTransformer(Transformer):
         vl.setdefault("width", 400)
         vl.setdefault("height", 300)
 
-        # Add data if not already set (geo sets its own); skip for child specs in compositions
-        if top_level and "data" not in vl:
+        # Attach data per-chart (geo already sets its own at the layer level).
+        # We do this unconditionally — even for child specs in a vconcat — so
+        # the dashboard composition does not rely on top-level data inheritance
+        # which Vega-Lite handles inconsistently for layered geo charts.
+        if "data" not in vl:
             data_block = self._build_data(spec)
             if data_block:
                 vl["data"] = data_block
@@ -734,24 +756,87 @@ class VegaLiteTransformer(Transformer):
         }
 
     def _build_pie(self, chart: dict, spec: "NormalizedSpec") -> dict:
-        y_enc = self._y_encoding(chart)
-        color_enc = {"field": chart.get("x", "x"), "type": "nominal"}
+        # Tonal shades from theme.sequential — same ramp the sorted-bar / bubble
+        # use. Color is keyed by the categorical x field; the sequential scheme
+        # maps category index to a light→dark progression (data is sorted by y
+        # desc, so largest slice gets the darkest shade).
+        #
+        # Labels are baked INTO each slice as a text layer (category name + %),
+        # rotated radially so they fan out from the centre — same affordance
+        # the Plotly / Observable transformers give. The shared color legend
+        # is therefore suppressed: identity already shows on the slice itself.
         style = spec.get("style", {})
-        secondary = style.get("secondary", DEFAULT_SECONDARY_COLORS)
-        if isinstance(secondary, list) and secondary:
-            color_enc["scale"] = {"range": secondary}
+        sequential = style.get("sequential", "blues")
+        scheme = SEQUENTIAL_SCHEMES.get(sequential, "blues")
+        x_field = chart.get("x", "x")
+        y_field = chart.get("y", "y")
+        agg = chart.get("agg", "sum")
+        y_enc = self._y_encoding(chart)
 
-        return {
-            "mark": "arc",
+        color_enc = {
+            "field": x_field,
+            "type": "nominal",
+            "scale": {"scheme": scheme},
+            "legend": None,
+        }
+
+        outer_r = 150
+        label_r = 105
+
+        # Compute pct via a window transform so the text layer can show
+        # "<name>  NN.N%" right inside each slice.
+        pct_transform = [
+            {
+                "joinaggregate": [{"op": agg, "field": y_field, "as": "_total"}],
+            },
+            {
+                "calculate": f"datum['{y_field}'] / datum._total * 100",
+                "as": "_pct",
+            },
+            {
+                "calculate": f"datum['{x_field}'] + ' ' + format(datum._pct, '.1f') + '%'",
+                "as": "_label",
+            },
+        ]
+
+        arc_layer = {
+            "mark": {
+                "type": "arc",
+                "stroke": style.get("card", "#2e3040"),
+                "strokeWidth": 1,
+                "outerRadius": outer_r,
+            },
             "encoding": {
-                "theta": y_enc,
+                "theta": {**y_enc, "stack": True},
                 "color": color_enc,
+                "order": {"field": y_field, "aggregate": agg, "type": "quantitative", "sort": "descending"},
                 "tooltip": [
-                    {"field": chart.get("x", "x"), "type": "nominal"},
+                    {"field": x_field, "type": "nominal"},
                     y_enc,
                 ],
             },
         }
+        label_layer = {
+            "mark": {
+                "type": "text",
+                "radius": label_r,
+                "fontSize": 11,
+                "fontWeight": 600,
+                "color": "#1a1b24",
+            },
+            "encoding": {
+                "theta": {**y_enc, "stack": True},
+                "order": {"field": y_field, "aggregate": agg, "type": "quantitative", "sort": "descending"},
+                "text": {"field": "_label", "type": "nominal"},
+            },
+        }
+
+        # Apply limit FIRST (its aggregate transform drops unrelated columns,
+        # so the pct/label calcs need to run on the post-limit row set).
+        vl = {"layer": [arc_layer, label_layer]}
+        self._apply_limit(vl, chart)
+        vl.setdefault("transform", []).extend(pct_transform)
+        return vl
 
     def _build_histogram(self, chart: dict, spec: "NormalizedSpec") -> dict:
         style = spec.get("style", {})
@@ -882,15 +967,6 @@ class VegaLiteTransformer(Transformer):
         y_field = chart.get("y", "value")
         geo_encoding = chart.get("geo_encoding", "name")
 
-        color_enc = {"type": "quantitative"}
-        if agg == "count":
-            color_enc["aggregate"] = "count"
-            color_enc["title"] = "count"
-        else:
-            color_enc["field"] = y_field
-            color_enc["aggregate"] = AGG_MAP.get(agg, "sum")
-        color_enc["scale"] = {"scheme": scheme}
-
         # User data source: embedded values or URL
         data = spec.get("data", {})
         csv_path = data.get("csv_path", "")
@@ -899,15 +975,35 @@ class VegaLiteTransformer(Transformer):
         if self._embedded_data is not None:
             user_data = {"values": self._embedded_data}
         else:
-            user_data = {"url": csv_filename}
+            # Explicit CSV format hint — without it, vega-embed sometimes
+            # treats the URL as JSON when the layer-level data block doesn't
+            # match the top-level format.
+            user_data = {"url": csv_filename, "format": {"type": "csv"}}
 
         topojson_url = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"
 
         # Build mapping table for country name normalization
         mapping_values = self._build_geo_mapping(geo_encoding)
 
-        # User data transforms: normalize country names → lookup geo features
+        # User data transforms: aggregate → normalize → lookup → filter.
+        # Pre-aggregating before the topojson lookup is essential: Vega-Lite's
+        # encoding-level `aggregate: count` doesn't group on a geojson-typed
+        # channel, so without this the choropleth renders one geoshape per
+        # input row (and the colour scale collapses).
         user_transforms = []
+
+        # Step 0: aggregate per country into a single metric column.
+        metric_field = "_metric"
+        if agg == "count":
+            user_transforms.append({
+                "aggregate": [{"op": "count", "as": metric_field}],
+                "groupby": [x_field],
+            })
+        else:
+            user_transforms.append({
+                "aggregate": [{"op": AGG_MAP.get(agg, "sum"), "field": y_field, "as": metric_field}],
+                "groupby": [x_field],
+            })
 
         # Step 1: Normalize key for lookup into mapping table
         if geo_encoding in ("iso2", "iso3"):
@@ -954,10 +1050,21 @@ class VegaLiteTransformer(Transformer):
         # Step 5: Filter out unmatched countries
         user_transforms.append({"filter": "datum.geo != null"})
 
-        # Two-layer approach: base map (gray) + colored data overlay
-        tooltip_enc = {k: v for k, v in color_enc.items() if k != "scale"}
+        # Color encoding now points at the pre-aggregated _metric column.
+        color_enc = {
+            "field": metric_field,
+            "type": "quantitative",
+            "title": "count" if agg == "count" else y_field,
+            "scale": {"scheme": scheme},
+        }
 
+        # Two-layer approach: base map (gray) + colored data overlay.
+        # The user CSV is bound at the CHART level so the per-chart hoist in
+        # _build_chart_spec sees `data` already set and won't add a duplicate
+        # (un-formatted) block on top. Layer[0] overrides with the topojson
+        # source; layer[1] inherits the CSV.
         vl = {
+            "data": user_data,
             "width": 600,
             "height": 400,
             "projection": {"type": "equalEarth"},
@@ -975,15 +1082,14 @@ class VegaLiteTransformer(Transformer):
                     },
                 },
                 {
-                    "data": user_data,
                     "transform": user_transforms,
                     "mark": {"type": "geoshape", "stroke": "#fff", "strokeWidth": 0.5},
                     "encoding": {
-                        "shape": {"field": "geo", "type": "geojson"},
+                        "shape": {"field": "geo", "type": "geojson", "legend": None},
                         "color": color_enc,
                         "tooltip": [
                             {"field": x_field, "type": "nominal", "title": "Country"},
-                            tooltip_enc,
+                            {"field": metric_field, "type": "quantitative", "title": color_enc["title"]},
                         ],
                     },
                 },
@@ -1014,6 +1120,9 @@ class VegaLiteTransformer(Transformer):
         size_field = chart.get("size", "")
         agg = chart.get("agg", "sum")
         vl_agg = AGG_MAP.get(agg, "sum")
+        limit = chart.get("limit")
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
 
         # Aggregate in transforms so we get one point per group
         transforms = []
@@ -1028,33 +1137,88 @@ class VegaLiteTransformer(Transformer):
                 "aggregate": agg_fields,
                 "groupby": [group],
             })
+            if limit:
+                # Rank by the sort field (default y) then keep the top N — same
+                # window/filter pattern _apply_limit uses for bar charts.
+                rank_field = sort_field if sort_field in ("x", "y") else "y"
+                rank_target = x_field if rank_field == "x" else y_field
+                order = "descending" if sort_order == "desc" else "ascending"
+                transforms.append({
+                    "window": [{"op": "rank", "as": "_rank"}],
+                    "sort": [{"field": rank_target, "order": order}],
+                })
+                transforms.append({"filter": f"datum._rank <= {limit}"})
 
         enc = {
-            "x": {"field": x_field, "type": "quantitative"},
-            "y": {"field": y_field, "type": "quantitative"},
+            "x": {
+                "field": x_field,
+                "type": "quantitative",
+                "title": humanize_field(x_field),
+                "axis": {"format": "~s", "grid": False},
+            },
+            "y": {
+                "field": y_field,
+                "type": "quantitative",
+                "title": humanize_field(y_field),
+                "axis": {"grid": False},
+            },
             "tooltip": [
-                {"field": x_field, "type": "quantitative"},
-                {"field": y_field, "type": "quantitative"},
+                {"field": x_field, "type": "quantitative", "title": humanize_field(x_field)},
+                {"field": y_field, "type": "quantitative", "title": humanize_field(y_field)},
             ],
         }
 
         if group:
+            # Tonal shades from theme.sequential — too many groups for a useful
+            # categorical legend, so hide the legend and let bubble position +
+            # size carry the encoding (label-on-bubble would need a text mark
+            # which Vega-Lite layered with point requires extra layers).
             style = spec.get("style", {})
-            secondary = style.get("secondary", DEFAULT_SECONDARY_COLORS)
-            color_enc = {"field": group, "type": "nominal"}
-            if isinstance(secondary, list) and secondary:
-                color_enc["scale"] = {"range": secondary}
-            enc["color"] = color_enc
+            sequential = style.get("sequential", "blues")
+            scheme = SEQUENTIAL_SCHEMES.get(sequential, "blues")
+            enc["color"] = {
+                "field": group,
+                "type": "nominal",
+                "scale": {"scheme": scheme},
+                "legend": None,
+            }
             enc["tooltip"].append({"field": group, "type": "nominal"})
 
         if size_field:
-            enc["size"] = {"field": size_field, "type": "quantitative"}
+            # Widen the size range so volume differences read; suppress the
+            # categorical size legend — the labelled bubbles already carry
+            # the identity, and mean-of-fraction values (e.g. 0.001) make
+            # the legend swatch noisy without adding information.
+            enc["size"] = {
+                "field": size_field,
+                "type": "quantitative",
+                "scale": {"range": [100, 1200]},
+                "legend": None,
+            }
             enc["tooltip"].append({"field": size_field, "type": "quantitative"})
 
-        result = {
+        # Layered output: bubbles + text labels above each bubble so the chart
+        # is self-describing without a giant categorical legend. dy=-12 lifts
+        # the label above the bubble; small bubbles still get a label nearby.
+        point_layer = {
             "mark": {"type": "point", "filled": True, "opacity": 0.7},
             "encoding": enc,
         }
+        result: dict = {
+            "width": 560,
+            "height": 360,
+            "layer": [point_layer],
+        }
+        if group:
+            text_enc = {
+                "x": enc["x"],
+                "y": enc["y"],
+                "text": {"field": group, "type": "nominal"},
+            }
+            result["layer"].append({
+                "mark": {"type": "text", "dy": -14, "fontSize": 10, "color": "#c8cadf"},
+                "encoding": text_enc,
+            })
         if transforms:
             result["transform"] = transforms
         return result
