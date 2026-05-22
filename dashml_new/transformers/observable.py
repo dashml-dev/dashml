@@ -935,13 +935,53 @@ class ObservablePlotTransformer(Transformer):
                                                     y_type, filters, sort_field, sort_order, limit,
                                                     size_field=size_field)
 
-        # Pie charts use D3 directly instead of Observable Plot
+        # Pie charts use D3 directly instead of Observable Plot.
+        # CSV path: bind `data_X` here from the CSV aggregation expression.
+        # The pie helper itself is source-agnostic (assumes the binding exists).
         if chart_type == "pie":
-            return self._generate_d3_pie_chart(safe_var_name, x, y, data_code, container_id, colors)
+            pie_body = self._generate_d3_pie_chart(safe_var_name, x, y, container_id, colors)
+            return f"            const data_{safe_var_name} = {data_code};\n{pie_body}"
 
-        # Generate Observable Plot mark based on chart type
+        body = self._emit_chart_render_body(chart, colors, container_id, safe_var_name)
+        return f"            // Chart: {chart_id}\n            const data_{safe_var_name} = {data_code};\n{body}"
+
+    def _emit_chart_render_body(self, chart: Dict[str, Any], colors: Dict[str, str], container_id: str, safe_var_name: str) -> str:
+        """Source-agnostic Observable Plot rendering body.
+
+        Assumes the caller has already bound `data_{safe_var_name}` to a
+        pre-aggregated array of records. Emits the marks, axis config, scales,
+        margins and the final `Plot.plot(...)` + DOM append.
+
+        This is the canonical renderer for every non-pie chart type, called by
+        both the CSV path (after computing the JS aggregation expression) and
+        the SQL/BigQuery path (after the Flask backend's pre-aggregated rows
+        are remapped to original field names).
+        """
+        chart_type = chart["type"]
+        x = chart.get("x", "")
+        y = chart.get("y", "")
+        agg = chart.get("agg", "sum")
+        if not y and agg == "count" and chart_type != "metric":
+            y = "count"
+        group = chart.get("group")
+        x_type = chart.get("x_type")
+        bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", DEFAULT_SORT_ORDER)
+        size_field = chart.get("size")
+
+        primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
+        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
         sequential_scheme = colors.get("sequential", "blues")
-        mark_code = self._get_plot_mark(chart_type, x, y, group, primary_color, secondary_colors, safe_var_name, bins, size_field=size_field, sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"), sort_field=sort_field, sort_order=sort_order, y_scale=chart.get("y_scale"))
+
+        mark_code = self._get_plot_mark(
+            chart_type, x, y, group, primary_color, secondary_colors,
+            safe_var_name, bins, size_field=size_field,
+            sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"),
+            sort_field=sort_field, sort_order=sort_order,
+            y_scale=chart.get("y_scale"),
+            bg_color=colors.get("background", "#ffffff"),
+        )
 
         # Inject annotation + reference-line marks into the marks array
         mark_code = self._inject_extra_marks(mark_code, chart, data_ref=f"data_{safe_var_name}")
@@ -950,8 +990,6 @@ class ObservablePlotTransformer(Transformer):
         mark_code = self._merge_scale_into_mark_code(mark_code, chart)
 
         # Determine if x axis is temporal - prefer explicit x_type, fall back to field name heuristics
-        # TODO: [Magic Values] Extract temporal field names to module-level constant
-        # Fix: TEMPORAL_FIELD_NAMES = frozenset(['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at'])
         temporal_fields = ['date', 'time', 'timestamp', 'datetime', 'created_at', 'updated_at']
         is_temporal_x = x_type == "date" or (x_type is None and x.lower() in temporal_fields)
 
@@ -964,7 +1002,6 @@ class ObservablePlotTransformer(Transformer):
         # appear in mark_code (e.g. line/scatter where _get_plot_mark omits x:/y:)
         log_scale_config = self._axis_scale_options_js(chart)
         if log_scale_config:
-            # Only add axes that are NOT already present in mark_code (after marks])
             marks_end = mark_code.find(']')
             after_marks = mark_code[marks_end:] if marks_end != -1 else ""
             for axis in ("x", "y"):
@@ -975,19 +1012,13 @@ class ObservablePlotTransformer(Transformer):
         # Determine if chart has categorical x-axis (needs more bottom margin for rotated labels)
         categorical_types = {"bar", "grouped_bar", "stacked_bar", "heatmap"}
         margin_bottom = 130 if chart_type in categorical_types else 48
-        # Bubble needs extra padding all around for labels above bubbles + edge labels.
         margin_right = 80 if chart_type in {"bubble", "scatter"} else 16
         margin_top = 56 if chart_type in {"bubble", "scatter"} else 24
         margin_left = 90 if chart_type in {"bubble", "scatter"} else 80
 
-        # Consolidated x/y axis options. Avoids emitting two `x:` or `y:` keys
-        # in the same object (which silently overrides the earlier one). All
-        # axis decorations — humanized label, log type, utc type — go through
-        # this single point so the resulting Plot.plot config has at most one
-        # of each.
+        # Consolidated x/y axis options
         x_opts: list[str] = []
         y_opts: list[str] = []
-        # Humanized labels (drop x-label for discrete categorical charts)
         if chart_type not in _DISCRETE_X_CHART_TYPES:
             hx = humanize_field(x)
             if hx:
@@ -995,31 +1026,23 @@ class ObservablePlotTransformer(Transformer):
         hy = humanize_field(y)
         if hy and chart_type != "heatmap":
             y_opts.append(f'label: {json.dumps(hy)}')
-        # Log scale (only if not already declared inside mark_code's x:/y: block)
         marks_end = mark_code.find(']')
         after_marks = mark_code[marks_end:] if marks_end != -1 else ""
         if chart.get("x_scale") == "log" and "x:" not in after_marks:
             x_opts.append('type: "log"')
         if chart.get("y_scale") == "log" and "y:" not in after_marks:
             y_opts.append('type: "log"')
-        # Temporal x (only if mark_code doesn't already declare x:)
         if is_temporal_x and "x:" not in after_marks:
             x_opts.append('type: "utc"')
-        # Build the consolidated axis config block
         axis_config = ""
         if x_opts:
             axis_config += f'x: {{ {", ".join(x_opts)} }},\n                '
         if y_opts:
             axis_config += f'y: {{ {", ".join(y_opts)} }},\n                '
 
-        # Design-token colors for axes/grid (theme-agnostic visual relationships).
-        line_soft = DESIGN_TOKENS["line_soft"]
-        muted = DESIGN_TOKENS["muted"]
         fg_dim = DESIGN_TOKENS["fg_dim"]
 
-        return f"""            // Chart: {chart_id}
-            const data_{safe_var_name} = {data_code};
-            const plot_{safe_var_name} = Plot.plot({{
+        return f"""            const plot_{safe_var_name} = Plot.plot({{
                 {mark_code},
                 {axis_config}marginLeft: {margin_left},
                 marginBottom: {margin_bottom},
@@ -1037,15 +1060,18 @@ class ObservablePlotTransformer(Transformer):
             }});
             document.getElementById('{container_id}').appendChild(plot_{safe_var_name});"""
 
-    def _generate_d3_pie_chart(self, var_name: str, x: str, y: str, data_code: str, container_id: str, colors: Dict[str, str]) -> str:
+    def _generate_d3_pie_chart(self, var_name: str, x: str, y: str, container_id: str, colors: Dict[str, str]) -> str:
         """Generate D3 pie chart code with light→dark sequential ramp + on-slice labels.
 
         Uses the global `SEQUENTIAL_RAMP` constant emitted by the data loader so
         the colors stay in sync with the bar-chart ramp and respect theme.sequential.
+
+        The caller is responsible for binding `data_{var_name}` to a pre-aggregated
+        array of `{{x_field, y_field}}` rows — this helper is source-agnostic and
+        does not load or aggregate data itself.
         """
         card_bg = colors.get('card', '#2e3040')
         return f"""            // D3 Pie Chart
-            const data_{var_name} = {data_code};
             // Fixed render size — keeps text sized predictably regardless of card width
             const pieSize_{var_name} = 360;
             const radius_{var_name} = pieSize_{var_name} / 2 - 10;
@@ -1466,7 +1492,7 @@ class ObservablePlotTransformer(Transformer):
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc", y_scale: str = None) -> str:
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc", y_scale: str = None, bg_color: str = "#ffffff") -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -1714,27 +1740,40 @@ class ObservablePlotTransformer(Transformer):
                 }}"""
 
         elif chart_type == "geo":
-            # Choropleth map using Observable Plot with world topojson
+            # Choropleth map using Observable Plot with world topojson.
+            # Sphere / graticule / border / unknown colors must adapt to the
+            # background so countries without data stay visible but recede on
+            # dark themes instead of glowing white.
             geo_enc_js = f'"{geo_encoding}"' if geo_encoding else "null"
+            # Note: dark/light decisions are baked at compile time using the
+            # theme's background lightness — same logic the SQL path used.
+            is_dark = self._is_dark_theme(bg_color)
+            sphere_color = "#1a1a2e" if is_dark else "#f8f8f8"
+            unknown_color = "#2a2a3e" if is_dark else "#e0e0e0"
+            border_color = "#555570" if is_dark else "#ccc"
             return f"""marks: (() => {{
                     const enc = {geo_enc_js} || detectGeoEncoding(data_{data_var}.map(d => d.{x}));
                     const geoLookup = new Map(data_{data_var}.map(d => [normalizeCountryToTopo(d.{x}, enc).toLowerCase(), d.{y}]));
-                    return [Plot.geo(window.worldTopojson, {{
-                        fill: d => {{
-                            const topoName = d.properties ? d.properties.name : null;
-                            if (!topoName) return null;
-                            return geoLookup.get(topoName.toLowerCase()) ?? null;
-                        }},
-                        stroke: "#ccc",
-                        strokeWidth: 0.5,
-                        tip: true
-                    }})];
+                    return [
+                        Plot.sphere({{fill: "{sphere_color}", stroke: "{border_color}"}}),
+                        Plot.graticule({{stroke: "{border_color}40", strokeWidth: 0.5}}),
+                        Plot.geo(window.worldTopojson, {{
+                            fill: d => {{
+                                const topoName = d.properties ? d.properties.name : null;
+                                if (!topoName) return null;
+                                return geoLookup.get(topoName.toLowerCase()) ?? null;
+                            }},
+                            stroke: "{border_color}",
+                            strokeWidth: 0.5,
+                            tip: true
+                        }})
+                    ];
                 }})(),
                 projection: "equal-earth",
                 color: {{
                     type: "linear",
                     scheme: "{sequential}",
-                    unknown: "#f0f0f0",
+                    unknown: "{unknown_color}",
                     legend: true,
                     label: "{y}"
                 }}"""
@@ -2139,7 +2178,7 @@ if __name__ == '__main__':
         html_parts.append(self._generate_body_start(title, colors))
 
         # Data loading from API
-        html_parts.append(self._generate_sql_data_loader())
+        html_parts.append(self._generate_sql_data_loader(colors))
 
         # Always use pages (normalizer guarantees pages[] exists)
         html_parts.append(self._generate_sql_pages_structure(spec["pages"], colors))
@@ -2148,8 +2187,50 @@ if __name__ == '__main__':
 
         return "\n".join(html_parts)
 
-    def _generate_sql_data_loader(self) -> str:
-        """Generate JavaScript to set up async per-chart loading"""
+    def _generate_sql_data_loader(self, colors: Dict[str, str]) -> str:
+        """Generate JavaScript to set up async per-chart loading.
+
+        Emits the same `SEQUENTIAL_RAMP` / `sequentialRamp()` helpers the CSV
+        loader exposes — chart-rendering code is source-agnostic and references
+        these as globals.
+        """
+        block = self._sql_loader_template()
+        visual_helpers = self._emit_visual_helpers_js(colors)
+        return block.replace("__SQL_VISUAL_HELPERS__", visual_helpers)
+
+    def _emit_visual_helpers_js(self, colors: Dict[str, str]) -> str:
+        """Theme-derived JS constants shared by every chart renderer.
+
+        Both the CSV loader (`_generate_data_loader`) and the SQL/BigQuery
+        loader emit this so renderers can reference `SEQUENTIAL_RAMP` and
+        `sequentialRamp()` without caring about the data source.
+        """
+        sequential_scheme = colors.get("sequential", "blues")
+        sequential_ramp_js = json.dumps(resolve_categorical_ramp(sequential_scheme))
+        return f"""        // Shared design tokens (transformer-side visual relationships).
+        // Categorical ramp matches theme.sequential — sequential_scheme={sequential_scheme!r}.
+        const SEQUENTIAL_RAMP = {sequential_ramp_js};
+
+        // Continuous ramp interpolation — used for sorted-bar / pie / bubble coloring.
+        function sequentialRamp(n) {{
+            const stops = SEQUENTIAL_RAMP;
+            if (n <= 1) return [stops[Math.floor(stops.length / 2)]];
+            const hexToRgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+            const rgbToHex = rgb => '#' + rgb.map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
+            const lerpAt = t => {{
+                const segments = stops.length - 1;
+                const scaled = Math.max(0, Math.min(segments, t * segments));
+                const idx = Math.min(segments - 1, Math.floor(scaled));
+                const frac = scaled - idx;
+                const a = hexToRgb(stops[idx]);
+                const b = hexToRgb(stops[idx + 1]);
+                return rgbToHex(a.map((v, i) => v + (b[i] - v) * frac));
+            }};
+            return Array.from({{length: n}}, (_, i) => lerpAt(i / (n - 1)));
+        }}
+"""
+
+    def _sql_loader_template(self) -> str:
         return """
     <style>
         .filter-bar {
@@ -2303,6 +2384,7 @@ if __name__ == '__main__':
         .filter-reset:hover { opacity: 1; border-color: rgba(128,128,128,0.5); }
     </style>
     <script>
+__SQL_VISUAL_HELPERS__
         // World topojson for geo charts
         window.worldTopojson = null;
 
@@ -2805,402 +2887,87 @@ if __name__ == '__main__':
         return mark_code
 
     def _generate_sql_chart_render_fn(self, chart: Dict[str, Any], colors: Dict[str, str], container_id: str) -> str:
-        """Generate a JS function(data) for rendering a chart with pre-aggregated data"""
+        """Wrap the source-agnostic chart body in a `function(data)` shell.
+
+        The Flask backend delivers pre-aggregated rows with canonical column
+        aliases (``x``, ``y``, ``grp``, ``size``, ``heatmap_y``). We remap them
+        back to the chart's original field names so the canonical body can use
+        the same field references as the CSV path — eliminating every per-chart
+        SQL-vs-CSV branch.
+        """
         chart_id = chart["id"]
         chart_type = chart["type"]
-        x = chart.get("x", "")  # Not required for metric type
-        y = chart.get("y", "")
-        agg = chart.get("agg", "sum")
-        if not y and agg == "count" and chart_type != "metric":
-            y = "count"
-        group = chart.get("group")
-        size_field = chart.get("size")
-        x_type = chart.get("x_type")
-        sort_field = chart.get("sort")
-        sort_order = chart.get("sort_order", "asc")
-        bins = chart.get("bins", DEFAULT_HISTOGRAM_BINS)
-        format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
-        suffix = chart.get("suffix", "")          # metric: unit text
-
-        primary_color = colors.get("primary", DEFAULT_PRIMARY_COLOR)
-        secondary_colors = colors.get("secondary", DEFAULT_SECONDARY_COLORS)
-        text_color = colors.get("text", "#000000")
-
         safe_var = chart_id.replace('-', '_')
 
-        # Determine bottom margin
-        categorical_types = {"bar", "grouped_bar", "stacked_bar", "heatmap"}
-        margin_bottom = 100 if chart_type in categorical_types else 40
-        preprocess = ""
-        margin_left = 60
-
+        # Metric stays a one-liner — no Plot.plot, no D3 — so it bypasses the
+        # canonical body and reads the single pre-aggregated value directly.
         if chart_type == "metric":
+            format_str = resolve_metric_format(chart.get("format", "integer"))
+            suffix = chart.get("suffix", "")
             return f"""function(data) {{
             const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;
             const el = document.getElementById('{container_id}');
             if (el) el.textContent = formatMetric(value, '{format_str}', '{suffix}');
         }}"""
 
+        remap_js = self._sql_remap_to_original_names(chart)
+        bind_data = f"const data_{safe_var} = data.map(d => ({remap_js}));"
+
         if chart_type == "pie":
-            color_scale_json = str(secondary_colors).replace("'", '"')
-            return f"""function(data) {{
-            const pieWidth = 400;
-            const pieHeight = 400;
-            const legendWidth = 150;
-            const totalWidth = pieWidth + legendWidth;
-            const radius = Math.min(pieWidth, pieHeight) / 2 - 10;
-            const pie = d3.pie().value(d => d.y);
-            const arc = d3.arc().innerRadius(0).outerRadius(radius);
-            const themeColors = {color_scale_json};
-            const color = d3.scaleOrdinal()
-                .domain(data.map(d => d.x))
-                .range(themeColors);
-            const svg = d3.create("svg")
-                .attr("width", totalWidth)
-                .attr("height", pieHeight)
-                .attr("viewBox", [0, 0, totalWidth, pieHeight])
-                .attr("style", "max-width: 100%; height: auto;");
-            const pieGroup = svg.append("g")
-                .attr("transform", `translate(${{pieWidth / 2}}, ${{pieHeight / 2}})`);
-            pieGroup.selectAll("path")
-                .data(pie(data))
-                .join("path")
-                .attr("fill", d => color(d.data.x))
-                .attr("d", arc)
-                .attr("stroke", "white")
-                .attr("stroke-width", 2)
-                .append("title")
-                .text(d => `${{d.data.x}}: ${{d.data.y}}`);
-            const legend = svg.append("g")
-                .attr("transform", `translate(${{pieWidth + 10}}, 20)`);
-            data.forEach((d, i) => {{
-                const legendRow = legend.append("g")
-                    .attr("transform", `translate(0, ${{i * 25}})`);
-                legendRow.append("rect")
-                    .attr("width", 15)
-                    .attr("height", 15)
-                    .attr("fill", color(d.x))
-                    .attr("rx", 2);
-                legendRow.append("text")
-                    .attr("x", 22)
-                    .attr("y", 12)
-                    .attr("fill", "{text_color}")
-                    .style("font-size", "13px")
-                    .text(d.x);
-            }});
-            document.getElementById('{container_id}').appendChild(svg.node());
-        }}"""
+            x = chart.get("x", "")
+            y = chart.get("y", "") or ("count" if chart.get("agg") == "count" else "")
+            pie_body = self._generate_d3_pie_chart(safe_var, x, y, container_id, colors)
+            return f"function(data) {{\n            {bind_data}\n{pie_body}\n        }}"
 
-        if chart_type == "geo":
-            bg_color = colors.get("background", "#ffffff")
-            # Determine a subtle unknown color based on theme brightness
-            sphere_color = "#1a1a2e" if self._is_dark_theme(bg_color) else "#f8f8f8"
-            unknown_color = "#2a2a3e" if self._is_dark_theme(bg_color) else "#e0e0e0"
-            border_color = "#555570" if self._is_dark_theme(bg_color) else "#ccc"
-            geo_enc = chart.get("geo_encoding")
-            geo_enc_js = f'"{geo_enc}"' if geo_enc else "null"
-            return f"""function(data) {{
-            const enc = {geo_enc_js} || detectGeoEncoding(data.map(d => d.x));
-            const geoLookup = new Map(data.map(d => [normalizeCountryToTopo(d.x, enc).toLowerCase(), d.y]));
-            const plot = Plot.plot({{
-                width: 928,
-                marks: [
-                    Plot.sphere({{fill: "{sphere_color}", stroke: "{border_color}"}}),
-                    Plot.graticule({{stroke: "{border_color}40", strokeWidth: 0.5}}),
-                    Plot.geo(window.worldTopojson, {{
-                        fill: d => {{
-                            const topoName = d.properties ? d.properties.name : null;
-                            if (!topoName) return null;
-                            return geoLookup.get(topoName.toLowerCase()) ?? null;
-                        }},
-                        stroke: "{border_color}",
-                        strokeWidth: 0.5,
-                        tip: true
-                    }})
-                ],
-                projection: "equal-earth",
-                color: {{
-                    type: "linear",
-                    scheme: "{colors.get("sequential", "blues")}",
-                    unknown: "{unknown_color}",
-                    legend: true,
-                    label: "{y}"
-                }},
-                margin: 2,
-                style: {{
-                    background: "transparent",
-                    color: "{text_color}"
-                }}
-            }});
-            document.getElementById('{container_id}').appendChild(plot);
-        }}"""
+        body = self._emit_chart_render_body(chart, colors, container_id, safe_var)
+        return f"function(data) {{\n            {bind_data}\n{body}\n        }}"
 
-        # For all other chart types, build Observable Plot
-        if chart_type == "bar":
-            mark_code = f"""marks: [
-                    Plot.barY(data, {{
-                        x: "x",
-                        y: "y",
-                        fill: "{primary_color}",
-                        sort: null,
-                        tip: true
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                x: {{
-                    domain: data.map(d => d.x),
-                    tickRotate: -45,
-                    label: "{x}"
-                }},
-                y: {{ label: "{y}" }}"""
-        elif chart_type == "line":
-            if x_type == "number":
-                preprocess = "data = data.filter(d => d.x != null && d.y != null);"
-                x_axis = f"""x: {{ label: "{x}" }}"""
-            else:
-                preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
-                x_axis = f"""x: {{ type: "utc", tickRotate: -45, label: "{x}" }}"""
-            margin_bottom = 100
-            mark_code = f"""marks: [
-                    Plot.line(data, {{
-                        x: "x",
-                        y: "y",
-                        stroke: "{primary_color}",
-                        strokeWidth: 2,
-                        tip: true
-                    }}),
-                    Plot.dot(data, {{
-                        x: "x",
-                        y: "y",
-                        fill: "{primary_color}",
-                        r: 4
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                {x_axis},
-                y: {{ label: "{y}" }}"""
-        elif chart_type == "scatter":
-            preprocess = "data = data.filter(d => d.x != null && d.y != null);"
-            mark_code = f"""marks: [
-                    Plot.dot(data, {{
-                        x: "x",
-                        y: "y",
-                        fill: "{primary_color}",
-                        r: 3,
-                        opacity: 0.3,
-                        tip: true
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                x: {{ label: "{x}" }},
-                y: {{ label: "{y}" }}"""
-        elif chart_type == "area":
-            if x_type == "number":
-                preprocess = "data = data.filter(d => d.x != null && d.y != null);"
-                x_axis = f"""x: {{ label: "{x}" }}"""
-            else:
-                preprocess = "data = data.filter(d => d.x != null && d.y != null); data.forEach(d => d.x = new Date(d.x));"
-                x_axis = f"""x: {{ type: "utc", tickRotate: -45, label: "{x}" }}"""
-            margin_bottom = 100
-            mark_code = f"""marks: [
-                    Plot.areaY(data, {{
-                        x: "x",
-                        y: "y",
-                        fill: "{primary_color}",
-                        fillOpacity: 0.7,
-                        tip: true
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                {x_axis},
-                y: {{ label: "{y}" }}"""
-        elif chart_type == "histogram":
-            preprocess = "data = data.filter(d => d.x != null).map(d => ({...d, x: +d.x}));"
-            mark_code = f"""marks: [
-                    Plot.rectY(data, Plot.binX({{y: "count", thresholds: {bins}}}, {{
-                        x: "x",
-                        fill: "{primary_color}",
-                        tip: true
-                    }})),
-                    Plot.ruleY([0])
-                ],
-                x: {{ label: "{x}" }}"""
-        elif chart_type == "box":
-            preprocess = "data = data.filter(d => d.x != null && d.y != null);"
-            margin_bottom = 100
-            mark_code = f"""marks: [
-                    Plot.boxY(data, {{
-                        x: "x",
-                        y: "y",
-                        fill: "{primary_color}",
-                        tip: true
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                x: {{ tickRotate: -45, label: "{x}" }},
-                y: {{ label: "{y}" }}"""
-        elif chart_type in ("stacked_bar", "grouped_bar"):
-            color_scale_json = str(secondary_colors).replace("'", '"')
-            # Sort x categories by aggregate y total for stacked/grouped bars
-            if sort_field == "y":
-                sign = "" if sort_order == "asc" else "-"
-                x_domain_sql = f"d3.groupSort(data, g => {sign}d3.sum(g, d => d.y), d => d.x)"
-            else:
-                x_domain_sql = "[...new Set(data.map(d => d.x))]"
-            if chart_type == "stacked_bar":
-                mark_code = f"""marks: [
-                    Plot.barY(data, {{
-                        x: "x",
-                        y: "y",
-                        fill: "grp",
-                        sort: null,
-                        tip: true
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                x: {{
-                    domain: {x_domain_sql},
-                    tickRotate: -45,
-                    label: "{x}"
-                }},
-                y: {{ label: "{y}" }},
-                color: {{
-                    domain: [...new Set(data.map(d => d.grp))],
-                    range: {color_scale_json}
-                }}"""
-            else:  # grouped_bar
-                # Sort x categories by aggregate y total, not individual row y
-                if sort_field == "y":
-                    sign = "" if sort_order == "asc" else "-"
-                    fx_domain = f"d3.groupSort(data, g => {sign}d3.sum(g, d => d.y), d => d.x)"
-                else:
-                    fx_domain = "[...new Set(data.map(d => d.x))]"
-                sort_mark = ', sort: {x: "-y"}' if sort_field == "y" and sort_order == "desc" else (', sort: {x: "y"}' if sort_field == "y" else "")
-                mark_code = f"""marks: [
-                    Plot.barY(data, {{
-                        fx: "x",
-                        x: "grp",
-                        y: "y",
-                        fill: "grp",
-                        tip: true{sort_mark}
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                x: {{
-                    paddingInner: 0.1,
-                    axis: null
-                }},
-                fx: {{
-                    domain: {fx_domain},
-                    padding: 0.2,
-                    tickRotate: -45,
-                    label: "{x}"
-                }},
-                y: {{ label: "{y}" }},
-                color: {{
-                    domain: [...new Set(data.map(d => d.grp))],
-                    range: {color_scale_json}
-                }}"""
-        elif chart_type == "heatmap":
-            heatmap_y_label = group if group else y
-            margin_left = 200
-            preprocess = "data = data.filter(d => d.x != null && d.heatmap_y != null);"
-            mark_code = f"""marks: [
-                    Plot.cell(data, {{
-                        x: "x",
-                        y: "heatmap_y",
-                        fill: "y",
-                        tip: true
-                    }})
-                ],
-                height: Math.max(400, [...new Set(data.map(d => d.heatmap_y))].length * 20),
-                x: {{
-                    tickRotate: -45,
-                    label: "{x}"
-                }},
-                y: {{ label: "{heatmap_y_label}" }},
-                color: {{
-                    type: "linear",
-                    scheme: "{colors.get("sequential", "blues")}",
-                    legend: true,
-                    label: "{y}"
-                }}"""
-        elif chart_type == "bubble" and group:
-            color_scale_json = str(secondary_colors).replace("'", '"')
-            mark_code = f"""marks: [
-                    Plot.dot(data, {{
-                        x: "x",
-                        y: "y",
-                        fill: "grp",
-                        r: d => {{
-                            const maxVal = d3.max(data, dd => Math.abs(dd.size));
-                            return 5 + (Math.abs(d.size) / maxVal) * 25;
-                        }},
-                        tip: true
-                    }}),
-                    Plot.text(data, {{
-                        x: "x",
-                        y: "y",
-                        text: "grp",
-                        dy: -12,
-                        fontSize: 10
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                x: {{ label: "{x}" }},
-                y: {{ label: "{y}" }},
-                color: {{
-                    domain: [...new Set(data.map(d => d.grp))],
-                    range: {color_scale_json}
-                }}"""
-        else:
-            # Default: bar
-            mark_code = f"""marks: [
-                    Plot.barY(data, {{
-                        x: "x",
-                        y: "y",
-                        fill: "{primary_color}",
-                        sort: null,
-                        tip: true
-                    }}),
-                    Plot.ruleY([0])
-                ],
-                x: {{
-                    domain: data.map(d => d.x),
-                    tickRotate: -45,
-                    label: "{x}"
-                }},
-                y: {{ label: "{y}" }}"""
+    def _sql_remap_to_original_names(self, chart: Dict[str, Any]) -> str:
+        """JS object literal mapping SQL canonical aliases back to the chart's
+        original field names.
 
-        # Inject annotation + reference-line marks
-        mark_code = self._inject_extra_marks(mark_code, chart, data_ref="data")
+        Returns a fragment usable inside ``data.map(d => ( ... ))`` — e.g.
+        ``{ "industry": d.x, "funding_amount": d.y, "stage": d.grp }``.
+        Lets every non-metric chart go through the same render body whether
+        the data came from CSV, SQL or BigQuery.
+        """
+        chart_type = chart["type"]
+        x = chart.get("x")
+        y = chart.get("y")
+        agg = chart.get("agg", "sum")
+        if not y and agg == "count" and chart_type != "metric":
+            y = "count"
+        group = chart.get("group")
+        size_field = chart.get("size")
 
-        # Merge log-scale into existing axis options
-        mark_code = self._merge_scale_into_mark_code(mark_code, chart)
+        # pandas serializes NUMERIC/DECIMAL columns as JSON strings. Plot's
+        # numeric marks (binX, dot, line, area) silently render nothing when
+        # fed strings — so cast any field that's used as a quantitative
+        # channel. Categorical x (bar / pie / heatmap / grouped / stacked /
+        # box) and date x (line / area) stay as-is so Plot's own type
+        # detection runs.
+        numeric_x_charts = {"scatter", "histogram", "bubble"}
+        cast_x = chart_type in numeric_x_charts
 
-        # Build top-level scale overrides for axes not already in mark_code
-        sql_scale_config = ""
-        log_scale_config = self._axis_scale_options_js(chart)
-        if log_scale_config:
-            marks_end = mark_code.find(']')
-            after_marks = mark_code[marks_end:] if marks_end != -1 else ""
-            for axis in ("x", "y"):
-                if chart.get(f"{axis}_scale") == "log" and f"{axis}:" not in after_marks:
-                    sql_scale_config += f"""{axis}: {{ type: "log" }},
-                """
+        # Histogram is single-axis — the spec carries a y field for schema
+        # consistency but the SQL projection only emits x, and Plot.binX
+        # derives its own y from bin counts. Skip y in the remap to avoid
+        # collapsing into a duplicate-keyed object literal when y == x.
+        skip_y = chart_type == "histogram"
 
-        return f"""function(data) {{
-            {preprocess}
-            const plot = Plot.plot({{
-                {mark_code},
-                {sql_scale_config}marginLeft: {margin_left},
-                marginBottom: {margin_bottom},
-                grid: true,
-                style: {{
-                    background: "transparent",
-                    color: "{text_color}"
-                }}
-            }});
-            document.getElementById('{container_id}').appendChild(plot);
-        }}"""
+        parts = []
+        if x:
+            parts.append(f'"{x}": +d.x' if cast_x else f'"{x}": d.x')
+        if y and not skip_y:
+            # y is always quantitative for charts that emit one (sum/mean/count
+            # outputs, raw numeric scatter/box values).
+            parts.append(f'"{y}": +d.y')
+        if group:
+            # heatmap aliases group→heatmap_y in the SQL projection; everything
+            # else aliases it to grp. group is a categorical channel so no cast.
+            src = "heatmap_y" if chart_type == "heatmap" else "grp"
+            parts.append(f'"{group}": d.{src}')
+        if size_field:
+            parts.append(f'"{size_field}": +d.size')
+        return "{ " + ", ".join(parts) + " }"
 
