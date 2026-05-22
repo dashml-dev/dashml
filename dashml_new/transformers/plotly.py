@@ -1238,7 +1238,7 @@ if __name__ == '__main__':
       }} else if (chart.type === 'stacked_bar' || chart.type === 'grouped_bar') {{
         // Stacked/grouped bars need multiple traces
         const aggregated = aggregateDataWithGroup(window.dashmlData, chart.x, chart.y, chart.group, chart.agg || 'sum', aggOptions);
-        const groupValues = [...new Set(aggregated.map(d => d.group))];
+        const groupValues = [...new Set(aggregated.map(d => d.group))].sort();
 
         groupValues.forEach((groupVal, idx) => {{
           const filtered = aggregated.filter(d => d.group === groupVal);
@@ -1556,7 +1556,11 @@ if __name__ == '__main__':
         """Generate JavaScript for multi-page dashboard"""
         data_path = Path(data_spec.get("csv_path") or data_spec["path"]).name
         colors = dict(colors)
-        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
+        # Capture the original scheme name BEFORE we overwrite `theme.sequential`
+        # with the Plotly colorscale (a list of [stop, color] pairs). The
+        # categorical ramp lookup downstream needs the name, not the colorscale.
+        sequential_scheme = colors.get("sequential", "blues")
+        colors["sequential"] = resolve_plotly_colorscale(sequential_scheme)
         theme_json = json.dumps(colors)
 
         # Collect all charts
@@ -1564,309 +1568,8 @@ if __name__ == '__main__':
         for page in pages:
             all_charts.extend(page.get("charts", []))
 
-        # Generate chart rendering functions
-        chart_functions = []
-        for chart in all_charts:
-            chart_id = chart["id"]
-            chart_type = chart["type"]
-            x = chart.get("x", "")  # Not required for metric type
-            y = chart.get("y", "")
-            agg = chart.get("agg", "sum")
-            # When normalizer moved y→group for count agg, use "count" as the y column
-            if not y and agg == "count" and chart_type != "metric":
-                y = "count"
-            group = chart.get("group")
-            title = chart.get("title", chart_id)
-            x_type = chart.get("x_type")  # Optional: "date", "number", "string"
-            y_type = chart.get("y_type")  # Optional: "number", "string"
-            geo_encoding = chart.get("geo_encoding")  # Optional: "iso2", "iso3", "name"
-            bins = chart.get("bins", 20)  # Number of bins for histogram
-            filters = chart.get("filters", [])  # Optional: filter conditions
-            sort_field = chart.get("sort")  # Optional: "x" or "y"
-            sort_order = chart.get("sort_order", "asc")  # Optional: "asc" or "desc"
-            limit = chart.get("limit")  # Optional: max rows after aggregation
-            size_field = chart.get("size")  # Optional: size field for bubble charts
-            format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
-            suffix = chart.get("suffix", "")          # metric: unit text
-
-            # Axis scale, annotations, reference lines (compile-time helpers)
-            x_scale_type = self._axis_type_js(chart, "x")
-            y_scale_type = self._axis_type_js(chart, "y")
-            annotations_snippet = self._annotations_js(chart)
-            ref_lines_snippet = self._reference_lines_js(chart)
-            # Axis titles: drop x-title for discrete categorical charts where
-            # tick labels already carry the field info; otherwise humanize.
-            x_title = "" if chart_type in _DISCRETE_X_CHART_TYPES else humanize_field(x)
-            y_title = humanize_field(y)
-            # Bar color: use ordinal sequential ramp when sorted by y with no group.
-            use_sequential_ramp_for_bar = (
-                chart_type == "bar" and sort_field == "y" and not group
-            )
-            bar_color_js = (
-                "sequentialRamp(xValues.length)" if use_sequential_ramp_for_bar else "theme.primary"
-            )
-
-            # Build options object for aggregation
-            options_obj = {
-                "xType": x_type,
-                "yType": y_type,
-                "filters": filters,
-                "sort": sort_field,
-                "sortOrder": sort_order,
-                "limit": limit
-            }
-            if size_field:
-                options_obj["sizeField"] = size_field
-            options_js = json.dumps(options_obj)
-
-            # Metric: render as KPI card (no Plotly chart)
-            if chart_type == "metric":
-                filters_js = json.dumps(filters)
-                chart_functions.append(f'''
-    function render_{chart_id}(data) {{
-      const filters = {filters_js};
-      const value = computeMetric(data, '{y}', '{agg}', filters);
-      document.getElementById('metric-{chart_id}').textContent = formatMetric(value, '{format_str}', '{suffix}');
-    }}''')
-
-            # Check if this is stacked/grouped bar
-            elif chart_type in ["stacked_bar", "grouped_bar"]:
-                barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
-                chart_functions.append(f'''
-    function render_{chart_id}(data) {{
-      // Stacked/grouped bars need multiple traces
-      const options = {options_js};
-      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', options);
-      const groupValues = [...new Set(aggregated.map(d => d.group))];
-
-      const traces = [];
-      groupValues.forEach((groupVal, idx) => {{
-        const filtered = aggregated.filter(d => d.group === groupVal);
-        traces.push({{
-          x: filtered.map(d => d.x),
-          y: filtered.map(d => d.y),
-          name: groupVal,
-          type: 'bar',
-          marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
-        }});
-      }});
-
-      const layout = baseLayout({{
-        xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}' }},
-        yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
-        barmode: '{barmode}',
-        showlegend: true,
-        legend: {{ font: {{ color: designTokens.fg_dim, size: 11 }} }},
-      }});
-      if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
-      if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);
-
-      // Sort x categories by aggregate y total
-      if ('{sort_field}' === 'y') {{
-        const catTotals = {{}};
-        aggregated.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (d.y || 0); }});
-        const asc = '{sort_order}' !== 'desc';
-        layout.xaxis.categoryorder = 'array';
-        layout.xaxis.categoryarray = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
-      }}{annotations_snippet}{ref_lines_snippet}
-
-      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
-    }}''')
-            elif chart_type == "bubble" and group:
-                chart_functions.append(f'''
-    function render_{chart_id}(data) {{
-      // Bubble chart: 4D visualization (group, x, y, size)
-      const options = {options_js};
-      const bubbleData = aggregateBubbleData(data, '{group}', '{x}', '{y}', '{size_field or y}', '{agg}', options);
-      const bubbleSizeVals = bubbleData.map(d => Math.abs(d.size));
-      const maxSize = Math.max(...bubbleSizeVals);
-      const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
-
-      const trace = {{
-        x: bubbleData.map(d => d.x),
-        y: bubbleData.map(d => d.y),
-        text: bubbleData.map(d => d.group),
-        type: 'scatter',
-        mode: 'markers+text',
-        textposition: 'top center',
-        marker: {{
-          size: normalizedSizes,
-          color: sequentialRamp(bubbleData.length),
-          line: {{ color: theme.card, width: 1 }},
-          sizemode: 'diameter'
-        }},
-        hovertemplate: bubbleData.map(d => d.group + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>{size_field or y}: ' + d.size + '<extra></extra>')
-      }};
-
-      const layout = baseLayout({{
-        xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}' }},
-        yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
-      }});
-      if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
-      if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);{annotations_snippet}{ref_lines_snippet}
-
-      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
-    }}''')
-            elif chart_type == "heatmap":
-                heatmap_y = group if group else y
-                chart_functions.append(f'''
-    function render_{chart_id}(data) {{
-      // Heatmap: 2D grid with color intensity
-      const options = {options_js};
-      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{heatmap_y}', '{agg}', options);
-      const heatmapX = [...new Set(aggregated.map(d => d.x))];
-      const heatmapY = [...new Set(aggregated.map(d => d.group))];
-      const heatmapZ = heatmapY.map(yVal =>
-        heatmapX.map(xVal => {{
-          const found = aggregated.find(d => d.x === xVal && d.group === yVal);
-          return found ? found.y : 0;
-        }})
-      );
-
-      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
-
-      const layout = baseLayout({{
-        xaxis: {{ title: {{ text: '' }} }},
-        yaxis: {{ title: {{ text: '' }} }},
-      }});{annotations_snippet}{ref_lines_snippet}
-
-      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
-    }}''')
-            else:
-                # Standard single-trace charts
-                if chart_type in CHARTS_USE_RAW_DATA:
-                    # Raw data charts still need filter support
-                    filters_js = json.dumps(filters)
-                    data_prep = f'''
-      // Use raw data for {chart_type} (with filters)
-      const filters = {filters_js};
-      const filteredData = applyFilters(data, filters);
-      const xValues = filteredData.map(d => d['{x}']);
-      const yValues = filteredData.map(d => d['{y}']);'''
-                else:
-                    size_values_code = ""
-                    if size_field:
-                        size_values_code = f"\n      const sizeValues = grouped.map(d => d.size);"
-                    data_prep = f'''
-      const options = {options_js};
-      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', options);
-      const xValues = grouped.map(d => d.x);
-      const yValues = grouped.map(d => d.y);{size_values_code}'''
-
-                chart_functions.append(f'''
-    function render_{chart_id}(data) {{{data_prep}
-
-      let trace;
-      let traces = [];
-      switch ('{chart_type}') {{
-        case 'line':
-          trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers',
-                     line: {{ color: theme.primary, width: 2 }},
-                     marker: {{ color: theme.primary, size: 4 }},
-                     fill: 'tozeroy',
-                     fillcolor: theme.primary + '1a' }};
-          break;
-        case 'scatter':
-          trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: {{ color: theme.primary }} }};
-          break;
-        case 'pie':
-          trace = {{ labels: xValues, values: yValues, type: 'pie',
-                     marker: {{ colors: sequentialRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
-                     textinfo: 'label+percent',
-                     textposition: 'inside',
-                     insidetextorientation: 'radial',
-                     insidetextfont: {{ color: '#1a1b24', size: 11 }} }};
-          break;
-        case 'area':
-          trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
-          break;
-        case 'histogram':
-          // Native Plotly histogram — handles log y correctly. Per-bin colors
-          // aren't supported on this trace type, so we use a flat primary fill.
-          trace = {{ x: xValues, type: 'histogram', nbinsx: {bins},
-                     marker: {{ color: theme.primary, line: {{ color: theme.card, width: 1 }} }} }};
-          break;
-        case 'box':
-          // Box plot: shows distribution (min, Q1, median, Q3, max)
-          const boxGroups_{chart_id.replace('-', '_')} = [...new Set(data.map(d => d['{x}']))];
-          boxGroups_{chart_id.replace('-', '_')}.forEach(group => {{
-            traces.push({{
-              y: data.filter(d => d['{x}'] === group).map(d => parseFloat(d['{y}'])),
-              name: group,
-              type: 'box',
-              marker: {{ color: theme.primary }}
-            }});
-          }});
-          break;
-        case 'geo':
-          const geoEnc_{chart_id.replace('-', '_')} = '{geo_encoding}' !== 'None' ? '{geo_encoding}' : detectGeoEncoding(xValues);
-          if (geoEnc_{chart_id.replace('-', '_')} === 'iso3') {{
-            trace = {{
-              type: 'choropleth',
-              locations: xValues,
-              z: yValues,
-              locationmode: 'ISO-3',
-              colorscale: theme.sequential || 'Blues',
-              zmin: 0,
-              zmax: (() => {{ const s = [...yValues].sort((a,b)=>b-a); return s[1] || s[0]; }})(),
-              colorbar: {{ title: {{ text: '{y_title}' }} }}
-            }};
-          }} else {{
-            const normalizedX_{chart_id.replace('-', '_')} = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_{chart_id.replace('-', '_')}));
-            trace = {{
-              type: 'choropleth',
-              locations: normalizedX_{chart_id.replace('-', '_')},
-              z: yValues,
-              locationmode: 'country names',
-              colorscale: theme.sequential || 'Blues',
-              zmin: 0,
-              zmax: (() => {{ const s = [...yValues].sort((a,b)=>b-a); return s[1] || s[0]; }})(),
-              colorbar: {{ title: {{ text: '{y_title}' }} }}
-            }};
-          }}
-          break;
-        default:
-          trace = {{ x: xValues, y: yValues, type: 'bar',
-                     marker: {{ color: {bar_color_js}, line: {{ width: 0 }} }} }};
-      }}
-
-      if (trace) traces.push(trace);
-
-      let layout;
-      if ('{chart_type}' === 'geo') {{
-        layout = baseLayout({{
-          geo: {{
-            showframe: false,
-            showland: true,
-            showcoastlines: true,
-            coastlinecolor: designTokens.geo_border,
-            showcountries: true,
-            countrycolor: designTokens.geo_border,
-            landcolor: designTokens.geo_land,
-            oceancolor: theme.card,
-            showocean: true,
-            projection: {{ type: 'natural earth' }},
-            bgcolor: theme.card,
-          }},
-          margin: {{ t: 8, r: 0, b: 0, l: 0 }},
-        }});
-      }} else {{
-        layout = baseLayout({{
-          xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}' }},
-          yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
-          margin: {{ b: ('{chart_type}' === 'bar' || '{chart_type}' === 'box') ? 100 : 56 }},
-        }});
-        if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
-        if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);
-        if ('{chart_type}' === 'bar' || '{chart_type}' === 'box') {{
-          layout.xaxis.tickangle = -35;
-          layout.xaxis.gridcolor = 'rgba(0,0,0,0)';
-        }}
-      }}{annotations_snippet}{ref_lines_snippet}
-
-      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
-    }}''')
-
+        # Generate chart rendering functions via the unified emitter.
+        chart_functions = [self._emit_plotly_chart_fn(c, sql_mode=False) for c in all_charts]
         # Generate page show function — uses .hidden class so the page-container's
         # `display: grid` survives tab switches (inline `style.display = 'block'`
         # would override the grid layout and cause cards to stack vertically).
@@ -1895,7 +1598,7 @@ if __name__ == '__main__':
         render_pages = []
         for page in pages:
             for chart in page.get("charts", []):
-                render_pages.append(f"      render_{chart['id']}(data);")
+                render_pages.append(f"      window.render_{chart['id']}(data);")
 
         render_all = f'''
     function renderAllPages(data) {{
@@ -1909,7 +1612,6 @@ if __name__ == '__main__':
 
         # Design tokens emitted as JS constants (theme-agnostic visual relationships)
         design_tokens_js = json.dumps(DESIGN_TOKENS)
-        sequential_scheme = colors.get("sequential", "blues")
         sequential_ramp_js = json.dumps(resolve_categorical_ramp(sequential_scheme))
 
         # Use the same full-featured aggregation functions as single-page mode
@@ -2700,6 +2402,371 @@ if __name__ == '__main__':
 
         return "\n".join(js_parts)
 
+    def _emit_plotly_chart_fn(self, chart: Dict[str, Any], *, sql_mode: bool) -> str:
+        """Emit one `window.render_X = function(data) {...}` block.
+
+        The body is source-agnostic — the same trace / layout / Plotly.newPlot
+        code runs in CSV and SQL modes. Only the data-prep step diverges:
+
+        * CSV mode: `data` is raw rows. We aggregate/filter in JS using the
+          existing helpers (`aggregateData`, `aggregateDataWithGroup`,
+          `aggregateBubbleData`, `applyFilters`).
+        * SQL mode: `data` is already aggregated by the Flask backend with
+          canonical column aliases (``x``, ``y``, ``grp``, ``size``,
+          ``heatmap_y``). We remap to whatever shape the CSV body expects —
+          ``aggregated`` / ``bubbleData`` / ``filteredData`` — so the trace
+          builder doesn't have to know the difference.
+        """
+        chart_id = chart["id"]
+        chart_type = chart["type"]
+        x = chart.get("x", "")
+        y = chart.get("y", "")
+        agg = chart.get("agg", "sum")
+        if not y and agg == "count" and chart_type != "metric":
+            y = "count"
+        group = chart.get("group")
+        size_field = chart.get("size")
+        x_type = chart.get("x_type")
+        y_type = chart.get("y_type")
+        geo_encoding = chart.get("geo_encoding")
+        bins = chart.get("bins", 20)
+        filters = chart.get("filters", [])
+        sort_field = chart.get("sort")
+        sort_order = chart.get("sort_order", "asc")
+        limit = chart.get("limit")
+        format_str = resolve_metric_format(chart.get("format", "integer"))
+        suffix = chart.get("suffix", "")
+
+        safe_var = chart_id.replace('-', '_')
+        x_scale_type = self._axis_type_js(chart, "x")
+        y_scale_type = self._axis_type_js(chart, "y")
+        annotations_snippet = self._annotations_js(chart)
+        ref_lines_snippet = self._reference_lines_js(chart)
+        x_title = "" if chart_type in _DISCRETE_X_CHART_TYPES else humanize_field(x)
+        y_title = humanize_field(y)
+
+        use_sequential_ramp_for_bar = (
+            chart_type == "bar" and sort_field == "y" and not group
+        )
+        bar_color_js = (
+            "sequentialRamp(xValues.length)" if use_sequential_ramp_for_bar else "theme.primary"
+        )
+
+        options_obj = {
+            "xType": x_type, "yType": y_type, "filters": filters,
+            "sort": sort_field, "sortOrder": sort_order, "limit": limit,
+        }
+        if size_field:
+            options_obj["sizeField"] = size_field
+        options_js = json.dumps(options_obj)
+
+        # ----- metric: tiny scalar render, no Plotly -----
+        if chart_type == "metric":
+            if sql_mode:
+                body = (
+                    f"      const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;\n"
+                    f"      document.getElementById('metric-{chart_id}').textContent = formatMetric(value, '{format_str}', '{suffix}');"
+                )
+            else:
+                filters_js = json.dumps(filters)
+                body = (
+                    f"      const filters = {filters_js};\n"
+                    f"      const value = computeMetric(data, '{y}', '{agg}', filters);\n"
+                    f"      document.getElementById('metric-{chart_id}').textContent = formatMetric(value, '{format_str}', '{suffix}');"
+                )
+            return f"\n    window.render_{chart_id} = function(data) {{\n{body}\n    }};"
+
+        # ----- stacked / grouped bar -----
+        if chart_type in ("stacked_bar", "grouped_bar"):
+            barmode = "stack" if chart_type == "stacked_bar" else "group"
+            if sql_mode:
+                prep = "      const aggregated = data.map(d => ({ x: d.x, y: +d.y, group: d.grp }));"
+            else:
+                prep = (
+                    f"      const options = {options_js};\n"
+                    f"      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{group}', '{agg}', options);"
+                )
+            return f"""
+    window.render_{chart_id} = function(data) {{
+{prep}
+      const groupValues = [...new Set(aggregated.map(d => d.group))].sort();
+      const traces = [];
+      groupValues.forEach((groupVal, idx) => {{
+        const filtered = aggregated.filter(d => d.group === groupVal);
+        traces.push({{
+          x: filtered.map(d => d.x),
+          y: filtered.map(d => d.y),
+          name: groupVal,
+          type: 'bar',
+          marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
+        }});
+      }});
+      const layout = baseLayout({{
+        xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}', tickangle: -35, gridcolor: 'rgba(0,0,0,0)' }},
+        yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
+        barmode: '{barmode}',
+        showlegend: true,
+        legend: {{ font: {{ color: designTokens.fg_dim, size: 11 }} }},
+        margin: {{ b: 100 }},
+      }});
+      if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
+      if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);
+      if ('{sort_field}' === 'y') {{
+        const catTotals = {{}};
+        aggregated.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (d.y || 0); }});
+        const asc = '{sort_order}' !== 'desc';
+        layout.xaxis.categoryorder = 'array';
+        layout.xaxis.categoryarray = Object.keys(catTotals).sort((a, b) => asc ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);
+      }}{annotations_snippet}{ref_lines_snippet}
+      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
+    }};"""
+
+        # ----- bubble with group -----
+        if chart_type == "bubble" and group:
+            size_ref = size_field or y
+            if sql_mode:
+                prep = "      const bubbleData = data.map(d => ({ x: +d.x, y: +d.y, group: d.grp, size: +d.size }));"
+            else:
+                prep = (
+                    f"      const options = {options_js};\n"
+                    f"      const bubbleData = aggregateBubbleData(data, '{group}', '{x}', '{y}', '{size_ref}', '{agg}', options);"
+                )
+            return f"""
+    window.render_{chart_id} = function(data) {{
+{prep}
+      const bubbleSizeVals = bubbleData.map(d => Math.abs(d.size));
+      const maxSize = Math.max(...bubbleSizeVals);
+      const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
+      const trace = {{
+        x: bubbleData.map(d => d.x),
+        y: bubbleData.map(d => d.y),
+        text: bubbleData.map(d => d.group),
+        type: 'scatter',
+        mode: 'markers+text',
+        textposition: 'top center',
+        marker: {{
+          size: normalizedSizes,
+          color: sequentialRamp(bubbleData.length),
+          line: {{ color: theme.card, width: 1 }},
+          sizemode: 'diameter'
+        }},
+        hovertemplate: bubbleData.map(d => d.group + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>{size_ref}: ' + d.size + '<extra></extra>')
+      }};
+      const layout = baseLayout({{
+        xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}' }},
+        yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
+      }});
+      if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
+      if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);{annotations_snippet}{ref_lines_snippet}
+      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
+    }};"""
+
+        # ----- heatmap -----
+        if chart_type == "heatmap":
+            heatmap_y = group if group else y
+            if sql_mode:
+                prep = "      const aggregated = data.map(d => ({ x: d.x, y: +d.y, group: d.heatmap_y }));"
+            else:
+                prep = (
+                    f"      const options = {options_js};\n"
+                    f"      const aggregated = aggregateDataWithGroup(data, '{x}', '{y}', '{heatmap_y}', '{agg}', options);"
+                )
+            return f"""
+    window.render_{chart_id} = function(data) {{
+{prep}
+      const heatmapX = [...new Set(aggregated.map(d => d.x))].sort();
+      const heatmapY = [...new Set(aggregated.map(d => d.group))].sort();
+      const heatmapZ = heatmapY.map(yVal =>
+        heatmapX.map(xVal => {{
+          const found = aggregated.find(d => d.x === xVal && d.group === yVal);
+          return found ? found.y : 0;
+        }})
+      );
+      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
+      const layout = baseLayout({{
+        xaxis: {{ title: {{ text: '' }}, tickangle: -35, gridcolor: 'rgba(0,0,0,0)' }},
+        yaxis: {{ title: {{ text: '' }} }},
+        margin: {{ b: 100, l: 120 }},
+      }});{annotations_snippet}{ref_lines_snippet}
+      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
+    }};"""
+
+        # ----- standard single-trace charts -----
+        # Data prep produces xValues/yValues (and sizeValues for sized marks).
+        # For "raw" charts (box reuses filteredData below), we also keep the
+        # full row with original-field-name keys so box's per-group filter
+        # still works in CSV mode.
+        if sql_mode:
+            cast_x_numeric = chart_type in {"histogram", "scatter"}
+            if chart_type in CHARTS_USE_RAW_DATA:
+                # SQL raw-data response is {x, y} aliased — rebuild rows with
+                # original field names so the CSV-style body that filters by
+                # `d['<x_field>']` keeps working unchanged.
+                x_cast_js = "+d.x" if cast_x_numeric else "d.x"
+                if chart_type == "histogram":
+                    # histogram's spec carries y for schema consistency but
+                    # the SQL query only emits x — keep the rebuilt row to x.
+                    data_prep = (
+                        f"      const filteredData = data.map(d => ({{ '{x}': {x_cast_js} }}));\n"
+                        f"      const xValues = filteredData.map(d => d['{x}']);\n"
+                        f"      const yValues = [];"
+                    )
+                else:
+                    data_prep = (
+                        f"      const filteredData = data.map(d => ({{ '{x}': {x_cast_js}, '{y}': +d.y }}));\n"
+                        f"      const xValues = filteredData.map(d => d['{x}']);\n"
+                        f"      const yValues = filteredData.map(d => d['{y}']);"
+                    )
+            else:
+                # Aggregated single-trace: SQL already delivers {x, y}.
+                size_values_code = ""
+                if size_field:
+                    size_values_code = "\n      const sizeValues = data.map(d => +d.size);"
+                data_prep = (
+                    "      const xValues = data.map(d => d.x);\n"
+                    "      const yValues = data.map(d => +d.y);"
+                    + size_values_code
+                )
+        else:
+            if chart_type in CHARTS_USE_RAW_DATA:
+                filters_js = json.dumps(filters)
+                data_prep = (
+                    f"      const filters = {filters_js};\n"
+                    f"      const filteredData = applyFilters(data, filters);\n"
+                    f"      const xValues = filteredData.map(d => d['{x}']);\n"
+                    f"      const yValues = filteredData.map(d => d['{y}']);"
+                )
+            else:
+                size_values_code = ""
+                if size_field:
+                    size_values_code = "\n      const sizeValues = grouped.map(d => d.size);"
+                data_prep = (
+                    f"      const options = {options_js};\n"
+                    f"      const grouped = aggregateData(data, '{x}', '{y}', '{agg}', options);\n"
+                    f"      const xValues = grouped.map(d => d.x);\n"
+                    f"      const yValues = grouped.map(d => d.y);"
+                    + size_values_code
+                )
+
+        # Box references the post-prep `filteredData` rows; CSV uses original
+        # field names, SQL uses the rebuilt object that mirrors them.
+        box_x_ref = f"d['{x}']"
+        box_y_ref = f"d['{y}']"
+
+        geo_enc_js_literal = f"'{geo_encoding}'" if geo_encoding else "'None'"
+
+        return f"""
+    window.render_{chart_id} = function(data) {{
+{data_prep}
+
+      let trace;
+      let traces = [];
+      switch ('{chart_type}') {{
+        case 'line':
+          trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers',
+                     line: {{ color: theme.primary, width: 2 }},
+                     marker: {{ color: theme.primary, size: 4 }},
+                     fill: 'tozeroy',
+                     fillcolor: theme.primary + '1a' }};
+          break;
+        case 'scatter':
+          trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: {{ color: theme.primary }} }};
+          break;
+        case 'pie':
+          trace = {{ labels: xValues, values: yValues, type: 'pie',
+                     marker: {{ colors: sequentialRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
+                     textinfo: 'label+percent',
+                     textposition: 'inside',
+                     insidetextorientation: 'radial',
+                     insidetextfont: {{ color: '#1a1b24', size: 11 }} }};
+          break;
+        case 'area':
+          trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
+          break;
+        case 'histogram':
+          trace = {{ x: xValues, type: 'histogram', nbinsx: {bins},
+                     marker: {{ color: theme.primary, line: {{ color: theme.card, width: 1 }} }} }};
+          break;
+        case 'box':
+          const boxGroups_{safe_var} = [...new Set(filteredData.map(d => {box_x_ref}))];
+          boxGroups_{safe_var}.forEach(group => {{
+            traces.push({{
+              y: filteredData.filter(d => {box_x_ref} === group).map(d => parseFloat({box_y_ref})),
+              name: group,
+              type: 'box',
+              marker: {{ color: theme.primary }}
+            }});
+          }});
+          break;
+        case 'geo':
+          const geoEnc_{safe_var} = {geo_enc_js_literal} !== 'None' ? {geo_enc_js_literal} : detectGeoEncoding(xValues);
+          if (geoEnc_{safe_var} === 'iso3') {{
+            trace = {{
+              type: 'choropleth',
+              locations: xValues,
+              z: yValues,
+              locationmode: 'ISO-3',
+              colorscale: theme.sequential || 'Blues',
+              zmin: 0,
+              zmax: (() => {{ const s = [...yValues].sort((a,b)=>b-a); return s[1] || s[0]; }})(),
+              colorbar: {{ title: {{ text: '{y_title}' }} }}
+            }};
+          }} else {{
+            const normalizedX_{safe_var} = xValues.map(v => normalizeCountryForPlotly(v, geoEnc_{safe_var}));
+            trace = {{
+              type: 'choropleth',
+              locations: normalizedX_{safe_var},
+              z: yValues,
+              locationmode: 'country names',
+              colorscale: theme.sequential || 'Blues',
+              zmin: 0,
+              zmax: (() => {{ const s = [...yValues].sort((a,b)=>b-a); return s[1] || s[0]; }})(),
+              colorbar: {{ title: {{ text: '{y_title}' }} }}
+            }};
+          }}
+          break;
+        default:
+          trace = {{ x: xValues, y: yValues, type: 'bar',
+                     marker: {{ color: {bar_color_js}, line: {{ width: 0 }} }} }};
+      }}
+
+      if (trace) traces.push(trace);
+
+      let layout;
+      if ('{chart_type}' === 'geo') {{
+        layout = baseLayout({{
+          geo: {{
+            showframe: false,
+            showland: true,
+            showcoastlines: true,
+            coastlinecolor: designTokens.geo_border,
+            showcountries: true,
+            countrycolor: designTokens.geo_border,
+            landcolor: designTokens.geo_land,
+            oceancolor: theme.card,
+            showocean: true,
+            projection: {{ type: 'natural earth' }},
+            bgcolor: theme.card,
+          }},
+          margin: {{ t: 8, r: 0, b: 0, l: 0 }},
+        }});
+      }} else {{
+        layout = baseLayout({{
+          xaxis: {{ title: {{ text: '{x_title}' }}, type: '{x_scale_type}' }},
+          yaxis: {{ title: {{ text: '{y_title}' }}, type: '{y_scale_type}' }},
+          margin: {{ b: ('{chart_type}' === 'bar' || '{chart_type}' === 'box') ? 100 : 56 }},
+        }});
+        if ('{y_scale_type}' === 'log') applyLogPolish(layout.yaxis);
+        if ('{x_scale_type}' === 'log') applyLogPolish(layout.xaxis);
+        if ('{chart_type}' === 'bar' || '{chart_type}' === 'box') {{
+          layout.xaxis.tickangle = -35;
+          layout.xaxis.gridcolor = 'rgba(0,0,0,0)';
+        }}
+      }}{annotations_snippet}{ref_lines_snippet}
+
+      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
+    }};"""
+
     def _generate_javascript_pages_sql(self, pages: list, colors: Dict[str, str]) -> str:
         """Generate JavaScript for multi-page dashboard with per-chart async loading"""
         colors = dict(colors)
@@ -2725,222 +2792,7 @@ if __name__ == '__main__':
                 }
         page_charts_json = json.dumps(page_charts_map)
 
-        chart_functions = []
-        for chart in all_charts:
-            chart_id = chart["id"]
-            chart_type = chart["type"]
-            title = chart.get("title", chart_id)
-            x = chart.get("x", "")  # Not required for metric type
-            y = chart.get("y", "")
-            agg = chart.get("agg", "sum")
-            if not y and agg == "count" and chart_type != "metric":
-                y = "count"
-            group = chart.get("group")
-            size_field = chart.get("size")
-            bins = chart.get("bins", 20)
-            sort_field = chart.get("sort")
-            sort_order = chart.get("sort_order", "asc")
-            format_str = resolve_metric_format(chart.get("format", "integer"))  # metric: number format
-            suffix = chart.get("suffix", "")          # metric: unit text
-
-            # Axis scale, annotations, reference lines (compile-time helpers)
-            x_scale_type = self._axis_type_js(chart, "x")
-            y_scale_type = self._axis_type_js(chart, "y")
-            annotations_snippet = self._annotations_js(chart)
-            ref_lines_snippet = self._reference_lines_js(chart)
-
-            if chart_type == "metric":
-                chart_functions.append(f'''
-    window.render_{chart_id} = function(data) {{
-      const value = (data && data[0] && data[0].y !== undefined) ? parseFloat(data[0].y) : null;
-      document.getElementById('metric-{chart_id}').textContent = formatMetric(value, '{format_str}', '{suffix}');
-    }}''')
-            elif chart_type in ["stacked_bar", "grouped_bar"]:
-                barmode = 'stack' if chart_type == 'stacked_bar' else 'group'
-                # Compute category order: sort x categories by aggregate y total
-                if sort_field == "y":
-                    ascending_js = "true" if sort_order == "asc" else "false"
-                    category_order_js = f"""
-      // Sort x categories by total y
-      const catTotals = {{}};
-      data.forEach(d => {{ catTotals[d.x] = (catTotals[d.x] || 0) + (parseFloat(d.y) || 0); }});
-      const catOrder = Object.keys(catTotals).sort((a, b) => {ascending_js} ? catTotals[a] - catTotals[b] : catTotals[b] - catTotals[a]);"""
-                    xaxis_js = f"title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20', categoryorder: 'array', categoryarray: catOrder"
-                else:
-                    category_order_js = ""
-                    xaxis_js = f"title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20'"
-                chart_functions.append(f'''
-    window.render_{chart_id} = function(data) {{
-      const groupValues = [...new Set(data.map(d => d.grp))];
-      const traces = [];{category_order_js}
-      groupValues.forEach((groupVal, idx) => {{
-        const filtered = data.filter(d => d.grp === groupVal);
-        traces.push({{
-          x: filtered.map(d => d.x),
-          y: filtered.map(d => d.y),
-          name: groupVal,
-          type: 'bar',
-          marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
-        }});
-      }});
-      const layout = {{
-        title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ {xaxis_js} }},
-        yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-        barmode: '{barmode}',
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};{annotations_snippet}{ref_lines_snippet}
-      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
-    }}''')
-            elif chart_type == "bubble" and group:
-                chart_functions.append(f'''
-    window.render_{chart_id} = function(data) {{
-      const bubbleSizeVals = data.map(d => Math.abs(d.size));
-      const maxSize = Math.max(...bubbleSizeVals);
-      const normalizedSizes = bubbleSizeVals.map(v => 10 + (v / maxSize) * 50);
-      const trace = {{
-        x: data.map(d => d.x),
-        y: data.map(d => d.y),
-        text: data.map(d => d.grp),
-        type: 'scatter',
-        mode: 'markers+text',
-        textposition: 'top center',
-        marker: {{
-          size: normalizedSizes,
-          color: sequentialRamp(data.length),
-          line: {{ color: theme.card, width: 1 }},
-          sizemode: 'diameter'
-        }},
-        hovertemplate: data.map(d => d.grp + '<br>{x}: ' + d.x + '<br>{y}: ' + d.y + '<br>size: ' + d.size + '<extra></extra>')
-      }};
-      const layout = {{
-        title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-        yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};{annotations_snippet}{ref_lines_snippet}
-      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
-    }}''')
-            elif chart_type == "heatmap":
-                chart_functions.append(f'''
-    window.render_{chart_id} = function(data) {{
-      const heatmapX = [...new Set(data.map(d => d.x))];
-      const heatmapY = [...new Set(data.map(d => d.heatmap_y))];
-      const heatmapZ = heatmapY.map(yVal =>
-        heatmapX.map(xVal => {{
-          const found = data.find(d => d.x === xVal && d.heatmap_y === yVal);
-          return found ? found.y : 0;
-        }})
-      );
-      const trace = {{ x: heatmapX, y: heatmapY, z: heatmapZ, type: 'heatmap', colorscale: theme.sequential || 'Blues' }};
-      const layout = {{
-        title: {{ text: '{title}', font: {{ color: theme.text }} }},
-        xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text }},
-        yaxis: {{ title: '{chart.get("group", y)}', type: '{y_scale_type}', color: theme.text }},
-        margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      }};{annotations_snippet}{ref_lines_snippet}
-      Plotly.newPlot('chart-{chart_id}', [trace], layout, {{ responsive: true }});
-    }}''')
-            else:
-                # Standard single-trace charts - data arrives pre-aggregated with x/y columns
-                geo_enc_val = chart.get("geo_encoding")
-                chart_functions.append(f'''
-    window.render_{chart_id} = function(data) {{
-      const xValues = data.map(d => d.x);
-      const yValues = data.map(d => d.y);
-      let trace;
-      let traces = [];
-      switch ('{chart_type}') {{
-        case 'line':
-          trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'lines+markers', line: {{ color: theme.primary }} }};
-          break;
-        case 'scatter':
-          trace = {{ x: xValues, y: yValues, type: 'scatter', mode: 'markers', marker: {{ color: theme.primary }} }};
-          break;
-        case 'pie':
-          trace = {{ labels: xValues, values: yValues, type: 'pie',
-                     marker: {{ colors: sequentialRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
-                     textinfo: 'label+percent',
-                     textposition: 'inside',
-                     insidetextorientation: 'radial',
-                     insidetextfont: {{ color: '#1a1b24', size: 11 }} }};
-          break;
-        case 'area':
-          trace = {{ x: xValues, y: yValues, type: 'scatter', fill: 'tozeroy', mode: 'lines', line: {{ color: theme.primary }}, fillcolor: theme.primary + '40' }};
-          break;
-        case 'histogram':
-          trace = {{ x: xValues, type: 'histogram', nbinsx: {bins}, marker: {{ color: theme.primary }} }};
-          break;
-        case 'box':
-          const boxGroups = [...new Set(data.map(d => d.x))];
-          boxGroups.forEach(group => {{
-            traces.push({{
-              y: data.filter(d => d.x === group).map(d => parseFloat(d.y)),
-              name: group,
-              type: 'box',
-              marker: {{ color: theme.primary }}
-            }});
-          }});
-          break;
-        case 'geo':
-          const geoEnc = '{geo_enc_val}' !== 'None' ? '{geo_enc_val}' : detectGeoEncoding(xValues);
-          if (geoEnc === 'iso3') {{
-            trace = {{
-              type: 'choropleth',
-              locations: xValues,
-              z: yValues,
-              locationmode: 'ISO-3',
-              colorscale: theme.sequential || 'Blues',
-              colorbar: {{ title: '{y}' }}
-            }};
-          }} else {{
-            const normalizedX = xValues.map(v => normalizeCountryForPlotly(v, geoEnc));
-            trace = {{
-              type: 'choropleth',
-              locations: normalizedX,
-              z: yValues,
-              locationmode: 'country names',
-              colorscale: theme.sequential || 'Blues',
-              colorbar: {{ title: '{y}' }}
-            }};
-          }}
-          break;
-        default:
-          trace = {{ x: xValues, y: yValues, type: 'bar', marker: {{ color: theme.primary }} }};
-      }}
-      if (trace) traces.push(trace);
-      let layout;
-      if ('{chart_type}' === 'geo') {{
-        layout = {{
-          title: {{ text: '{title}', font: {{ color: theme.text }} }},
-          geo: {{
-            showframe: false,
-            showcoastlines: true,
-            projection: {{ type: 'natural earth' }},
-            bgcolor: 'rgba(0,0,0,0)'
-          }},
-          margin: {{ t: 60, r: 0, b: 0, l: 0 }},
-          paper_bgcolor: 'rgba(0,0,0,0)'
-        }};
-      }} else {{
-        layout = {{
-          title: {{ text: '{title}', font: {{ color: theme.text }} }},
-          xaxis: {{ title: '{x}', type: '{x_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-          yaxis: {{ title: '{y}', type: '{y_scale_type}', color: theme.text, gridcolor: theme.text + '20' }},
-          margin: {{ t: 60, r: 40, b: 60, l: 60 }},
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: 'rgba(0,0,0,0)'
-        }};
-      }}{annotations_snippet}{ref_lines_snippet}
-      Plotly.newPlot('chart-{chart_id}', traces, layout, {{ responsive: true }});
-    }}''')
-
+        chart_functions = [self._emit_plotly_chart_fn(c, sql_mode=True) for c in all_charts]
         # Generate load calls (metrics use loadMetric; charts use loadChart)
         load_calls = []
         for chart in all_charts:
@@ -2973,8 +2825,13 @@ if __name__ == '__main__':
         if any(c.get("type") == "geo" for c in all_charts):
             geo_js_block_sql = "\n    " + self._generate_geo_js_helpers(target="plotly").replace("\n", "\n    ") + "\n"
 
+        # Shared design tokens + theme helpers — the same set the CSV path
+        # emits so the unified chart-fn body can rely on them in either mode.
+        design_tokens_js = json.dumps(DESIGN_TOKENS)
+
         return f'''  <script>
     const theme = {theme_json};
+    const designTokens = {design_tokens_js};
     // Categorical ramp matches theme.sequential — sequential_scheme={sequential_scheme!r}.
     const SEQUENTIAL_RAMP = {sequential_ramp_js};
 
@@ -2994,6 +2851,49 @@ if __name__ == '__main__':
         return rgbToHex(a.map((v, i) => v + (b[i] - v) * frac));
       }};
       return Array.from({{ length: n }}, (_, i) => lerpAt(i / Math.max(1, n - 1)));
+    }}
+
+    // Build a Plotly layout dict with theme-driven paper/plot/axis/font defaults.
+    function baseLayout(extra) {{
+      const base = {{
+        paper_bgcolor: theme.card,
+        plot_bgcolor:  theme.card,
+        font: {{ family: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif', color: designTokens.fg_dim, size: 12 }},
+        margin: {{ l: 56, r: 16, t: 16, b: 56 }},
+        showlegend: false,
+        hoverlabel: {{
+          bgcolor: '#1a1b24',
+          bordercolor: designTokens.line_soft,
+          font: {{ color: theme.text, size: 12 }}
+        }},
+        xaxis: {{
+          gridcolor: designTokens.line_soft, linecolor: designTokens.line_soft,
+          zerolinecolor: designTokens.line_soft, tickcolor: designTokens.line_soft,
+          tickfont: {{ color: designTokens.fg_dim, size: 11 }},
+          title: {{ font: {{ color: designTokens.muted, size: 11 }} }},
+          automargin: true,
+        }},
+        yaxis: {{
+          gridcolor: designTokens.line_soft, linecolor: designTokens.line_soft,
+          zerolinecolor: designTokens.line_soft, tickcolor: designTokens.line_soft,
+          tickfont: {{ color: designTokens.fg_dim, size: 11 }},
+          title: {{ font: {{ color: designTokens.muted, size: 11 }} }},
+          automargin: true,
+        }},
+      }};
+      const merged = Object.assign({{}}, base, extra || {{}});
+      if (extra && extra.xaxis) merged.xaxis = Object.assign({{}}, base.xaxis, extra.xaxis);
+      if (extra && extra.yaxis) merged.yaxis = Object.assign({{}}, base.yaxis, extra.yaxis);
+      if (extra && extra.margin) merged.margin = Object.assign({{}}, base.margin, extra.margin);
+      return merged;
+    }}
+
+    // Apply log-scale polish (dtick, power exponent, kill 1/2/5 minor ticks).
+    function applyLogPolish(axis) {{
+      return Object.assign(axis, {{
+        type: 'log', dtick: 1, exponentformat: 'power', showexponent: 'all',
+        minor: {{ ticks: '', showgrid: false }},
+      }});
     }}
 {geo_js_block_sql}
     // Format a metric scalar value
