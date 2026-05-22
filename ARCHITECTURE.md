@@ -241,7 +241,7 @@ Recognized color fields:
 | `text` | global text color |
 | `buttons` | accent for filter buttons; if omitted, falls back to `primary` |
 
-Categorical palettes for Superset, Vega-Lite, and Grafana are intentionally left to the target's native default scheme — the `.dmls` palette does not override them.
+Theme reach varies by target. The code-generating transformers (Streamlit, Plotly, Observable Plot, Vega-Lite) honor the full palette: page/card backgrounds, text, single-series accents, and categorical colors derived from `sequential`. Grafana and Superset are externally-themed platforms — page chrome, fonts, axis colors, and multi-series palettes come from the platform instance, not from `.dmls`. The transformer applies `primary` where the platform API permits (fixed-color single-series in Grafana, label colors in Superset); broader theme fidelity would require instance-level configuration and is out of scope.
 
 ---
 
