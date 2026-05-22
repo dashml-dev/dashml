@@ -2950,15 +2950,19 @@ if __name__ == '__main__':
                 load_calls.append(f"    loadChart('{chart['id']}', window['render_{chart['id']}'])")
         load_calls_str = ",\n".join(load_calls)
 
+        # Use .hidden class instead of inline style.display so the page-container's
+        # `display: grid` survives tab switches (inline `style.display = 'block'`
+        # would override the CSS rule and drop the multi-column layout).
         page_show_function = '''
     function showPage(pageId, clickedButton) {
       document.querySelectorAll('.page-container').forEach(page => {
-        page.style.display = 'none';
+        page.classList.add('hidden');
       });
       document.querySelectorAll('.tab-button').forEach(tab => {
         tab.classList.remove('active');
       });
-      document.getElementById('page-' + pageId).style.display = 'block';
+      const activePage = document.getElementById('page-' + pageId);
+      if (activePage) activePage.classList.remove('hidden');
       if (clickedButton) {
         clickedButton.classList.add('active');
       }
