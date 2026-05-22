@@ -699,11 +699,14 @@ class VegaLiteTransformer(Transformer):
             ],
         }
         if use_ramp:
+            # Reverse the sequential scheme so the smallest aggregated value
+            # gets the darkest shade — emphasises the long tail and matches
+            # the visual call-out the user wants when scanning sorted bars.
             encoding["color"] = {
                 "field": y_field,
                 "type": "quantitative",
                 "aggregate": chart.get("agg", "sum"),
-                "scale": {"scheme": "purples"},
+                "scale": {"scheme": "purples", "reverse": True},
                 "legend": None,
             }
             mark = {"type": "bar"}
