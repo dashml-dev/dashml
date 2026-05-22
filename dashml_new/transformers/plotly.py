@@ -1247,7 +1247,7 @@ if __name__ == '__main__':
             y: filtered.map(d => d.y),
             name: groupVal,
             type: 'bar',
-            marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
+            marker: {{ color: sequentialRamp(groupValues.length)[idx] }}
           }});
         }});
 
@@ -2498,7 +2498,7 @@ if __name__ == '__main__':
           y: filtered.map(d => d.y),
           name: groupVal,
           type: 'bar',
-          marker: {{ color: theme.secondary[idx % theme.secondary.length] }}
+          marker: {{ color: sequentialRamp(groupValues.length)[idx] }}
         }});
       }});
       const layout = baseLayout({{

@@ -980,7 +980,8 @@ class ObservablePlotTransformer(Transformer):
             sequential=sequential_scheme, geo_encoding=chart.get("geo_encoding"),
             sort_field=sort_field, sort_order=sort_order,
             y_scale=chart.get("y_scale"),
-            bg_color=colors.get("background", "#ffffff"),
+            bg_color=colors["background"],
+            card_bg=colors["card"],
         )
 
         # Inject annotation + reference-line marks into the marks array
@@ -1492,7 +1493,7 @@ class ObservablePlotTransformer(Transformer):
                 return result;
             }})()"""
 
-    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc", y_scale: str = None, bg_color: str = "#ffffff") -> str:
+    def _get_plot_mark(self, chart_type: str, x: str, y: str, group: str, color: str, secondary_colors: list, data_var: str, bins: int = DEFAULT_HISTOGRAM_BINS, size_field: str = None, sequential: str = "blues", geo_encoding: str = None, sort_field: str = None, sort_order: str = "asc", y_scale: str = None, *, bg_color: str, card_bg: str) -> str:
         """Generate Observable Plot mark specification
 
         TODO: [SRP] This method is very long (~114 lines) with many if/elif branches
@@ -1680,19 +1681,31 @@ class ObservablePlotTransformer(Transformer):
                 ]"""
 
         elif chart_type == "stacked_bar":
-            # Observable Plot stacks by default when using fill with categorical data
-            color_scale_json = str(secondary_colors).replace("'", '"')
-            # Sort x categories by aggregate y total
+            # Observable Plot stacks by default when using fill with categorical data.
+            # Group fill uses the sequential ramp so stacked layers read as
+            # tonal shades of theme.primary — same visual language as the
+            # sorted-bar / pie / bubble ramps. A 1px stroke in the card color
+            # carves visible borders between adjacent shaded segments so the
+            # layer boundaries don't disappear when shades sit close together.
             if sort_field == "y":
                 sign = "" if sort_order == "asc" else "-"
                 x_domain = f"d3.groupSort(data_{data_var}, g => {sign}d3.sum(g, d => d.{y}), d => d.{x})"
             else:
                 x_domain = f"[...new Set(data_{data_var}.map(d => d.{x}))]"
+            # Stable stack order: rows sorted by group field alphabetically.
+            # Without this, stacks build in the source data's encounter order,
+            # which can shuffle within each x bin and mangle the sequential
+            # ramp (adjacent shades land next to each other instead of
+            # progressing through the ramp).
+            sorted_data = f"[...data_{data_var}].sort((a, b) => String(a.{group}).localeCompare(String(b.{group})))"
+            group_domain = f"[...new Set({sorted_data}.map(d => d.{group}))]"
             return f"""marks: [
-                    Plot.barY(data_{data_var}, {{
+                    Plot.barY({sorted_data}, {{
                         x: "{x}",
                         y: "{y}",
                         fill: "{group}",
+                        stroke: "{card_bg}",
+                        strokeWidth: 1,
                         tip: true
                     }}),
                     Plot.ruleY([0])
@@ -1701,23 +1714,25 @@ class ObservablePlotTransformer(Transformer):
                     domain: {x_domain}
                 }},
                 color: {{
-                    domain: [...new Set(data_{data_var}.map(d => d.{group}))],
-                    range: {color_scale_json}
+                    domain: {group_domain},
+                    range: sequentialRamp({group_domain}.length)
                 }}"""
 
         elif chart_type == "grouped_bar":
-            # Observable Plot groups bars using fx channel for faceting
-            # fx creates separate facets (groups), x positions bars within each facet
-            color_scale_json = str(secondary_colors).replace("'", '"')
-            # Sort x categories by aggregate y (total per category), not by individual row y
+            # Observable Plot groups bars using fx channel for faceting.
+            # Same tonal-ramp treatment as stacked_bar (see comment above) —
+            # plus the same alphabetical sort by group so bars within each
+            # facet land in a consistent order across facets.
             if sort_field == "y":
                 sign = "" if sort_order == "asc" else "-"
                 fx_domain = f"d3.groupSort(data_{data_var}, g => {sign}d3.sum(g, d => d.{y}), d => d.{x})"
             else:
                 fx_domain = f"[...new Set(data_{data_var}.map(d => d.{x}))]"
             sort_mark = f', sort: {{x: "-y"}}' if sort_field == "y" and sort_order == "desc" else (f', sort: {{x: "y"}}' if sort_field == "y" else "")
+            sorted_data = f"[...data_{data_var}].sort((a, b) => String(a.{group}).localeCompare(String(b.{group})))"
+            group_domain = f"[...new Set({sorted_data}.map(d => d.{group}))]"
             return f"""marks: [
-                    Plot.barY(data_{data_var}, {{
+                    Plot.barY({sorted_data}, {{
                         fx: "{x}",
                         x: "{group}",
                         y: "{y}",
@@ -1735,8 +1750,8 @@ class ObservablePlotTransformer(Transformer):
                     padding: 0.2
                 }},
                 color: {{
-                    domain: [...new Set(data_{data_var}.map(d => d.{group}))],
-                    range: {color_scale_json}
+                    domain: {group_domain},
+                    range: sequentialRamp({group_domain}.length)
                 }}"""
 
         elif chart_type == "geo":
