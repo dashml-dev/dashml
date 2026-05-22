@@ -773,11 +773,11 @@ class VegaLiteTransformer(Transformer):
             "legend": None,
         }
 
-        outer_r = 150
-        label_r = 105
+        outer_r = 170
+        label_r = 115
 
-        # Compute pct via a window transform so the text layer can show
-        # "<name>  NN.N%" right inside each slice.
+        # Compute pct so the text layer can show "<name>\n<NN.N>%" inside the
+        # slice — two-line label, same look as Observable's radial-pie helper.
         pct_transform = [
             {
                 "joinaggregate": [{"op": agg, "field": y_field, "as": "_total"}],
@@ -787,7 +787,7 @@ class VegaLiteTransformer(Transformer):
                 "as": "_pct",
             },
             {
-                "calculate": f"datum['{x_field}'] + ' ' + format(datum._pct, '.1f') + '%'",
+                "calculate": f"datum['{x_field}'] + '\\n' + format(datum._pct, '.1f') + '%'",
                 "as": "_label",
             },
         ]
@@ -813,9 +813,13 @@ class VegaLiteTransformer(Transformer):
             "mark": {
                 "type": "text",
                 "radius": label_r,
-                "fontSize": 11,
+                "fontSize": 12,
                 "fontWeight": 600,
                 "color": "#1a1b24",
+                "lineBreak": "\n",
+                "lineHeight": 14,
+                "align": "center",
+                "baseline": "middle",
             },
             "encoding": {
                 "theta": {**y_enc, "stack": True},
@@ -1117,24 +1121,30 @@ class VegaLiteTransformer(Transformer):
         sort_field = chart.get("sort")
         sort_order = chart.get("sort_order", "asc")
 
-        # Aggregate in transforms so we get one point per group
+        # Aggregate in transforms so we get one point per group.
+        # IMPORTANT: rename the aggregate output to a fresh column (e.g.
+        # `_x_agg`) rather than overwriting the source field — Vega-Lite's
+        # JIT optimiser short-circuits aggregations whose `as` equals `field`,
+        # silently passing through the un-aggregated value (HEATHROW would
+        # land at x=2M instead of x=84).
+        x_out = f"_{x_field}_agg"
+        y_out = f"_{y_field}_agg"
+        size_out = f"_{size_field}_agg" if size_field else ""
         transforms = []
         if group:
             agg_fields = [
-                {"op": vl_agg, "field": x_field, "as": x_field},
-                {"op": vl_agg, "field": y_field, "as": y_field},
+                {"op": vl_agg, "field": x_field, "as": x_out},
+                {"op": vl_agg, "field": y_field, "as": y_out},
             ]
             if size_field:
-                agg_fields.append({"op": vl_agg, "field": size_field, "as": size_field})
+                agg_fields.append({"op": vl_agg, "field": size_field, "as": size_out})
             transforms.append({
                 "aggregate": agg_fields,
                 "groupby": [group],
             })
             if limit:
-                # Rank by the sort field (default y) then keep the top N — same
-                # window/filter pattern _apply_limit uses for bar charts.
                 rank_field = sort_field if sort_field in ("x", "y") else "y"
-                rank_target = x_field if rank_field == "x" else y_field
+                rank_target = x_out if rank_field == "x" else y_out
                 order = "descending" if sort_order == "desc" else "ascending"
                 transforms.append({
                     "window": [{"op": "rank", "as": "_rank"}],
@@ -1144,28 +1154,28 @@ class VegaLiteTransformer(Transformer):
 
         enc = {
             "x": {
-                "field": x_field,
+                "field": x_out if group else x_field,
                 "type": "quantitative",
                 "title": humanize_field(x_field),
                 "axis": {"format": "~s", "grid": False},
+                # Tight axis around the data range — bubbles cluster at the
+                # high end so anchoring at 0 wastes most of the canvas.
+                "scale": {"zero": False, "nice": True, "padding": 12},
             },
             "y": {
-                "field": y_field,
+                "field": y_out if group else y_field,
                 "type": "quantitative",
                 "title": humanize_field(y_field),
                 "axis": {"grid": False},
+                "scale": {"zero": False, "nice": True, "padding": 12},
             },
             "tooltip": [
-                {"field": x_field, "type": "quantitative", "title": humanize_field(x_field)},
-                {"field": y_field, "type": "quantitative", "title": humanize_field(y_field)},
+                {"field": x_out if group else x_field, "type": "quantitative", "title": humanize_field(x_field)},
+                {"field": y_out if group else y_field, "type": "quantitative", "title": humanize_field(y_field)},
             ],
         }
 
         if group:
-            # Tonal shades from theme.sequential — too many groups for a useful
-            # categorical legend, so hide the legend and let bubble position +
-            # size carry the encoding (label-on-bubble would need a text mark
-            # which Vega-Lite layered with point requires extra layers).
             style = spec.get("style", {})
             sequential = style.get("sequential", "blues")
             scheme = SEQUENTIAL_SCHEMES.get(sequential, "blues")
@@ -1178,17 +1188,13 @@ class VegaLiteTransformer(Transformer):
             enc["tooltip"].append({"field": group, "type": "nominal"})
 
         if size_field:
-            # Widen the size range so volume differences read; suppress the
-            # categorical size legend — the labelled bubbles already carry
-            # the identity, and mean-of-fraction values (e.g. 0.001) make
-            # the legend swatch noisy without adding information.
             enc["size"] = {
-                "field": size_field,
+                "field": size_out if group else size_field,
                 "type": "quantitative",
                 "scale": {"range": [100, 1200]},
                 "legend": None,
             }
-            enc["tooltip"].append({"field": size_field, "type": "quantitative"})
+            enc["tooltip"].append({"field": size_out if group else size_field, "type": "quantitative", "title": humanize_field(size_field)})
 
         # Layered output: bubbles + text labels above each bubble so the chart
         # is self-describing without a giant categorical legend. dy=-12 lifts
