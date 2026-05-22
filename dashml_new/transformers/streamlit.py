@@ -650,9 +650,17 @@ def load_data():
                 code_parts.append(f'    chart_data = chart_data.rename(columns={repr(rename_dict)})')
             # Re-apply sort in Python (SQL ORDER BY may not survive driver/pandas roundtrip)
             if sort_field:
-                actual_sort_col = x if sort_field == "x" else (y if y else "count")
                 ascending = sort_order == "asc"
-                code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
+                if chart_type in ("stacked_bar", "grouped_bar") and sort_field == "y" and group:
+                    # Long-format data: order x categories by aggregate total, then sort
+                    # rows to match. Sorting individual rows by y here would mis-rank
+                    # categories (one large cell pulls a small category to the front).
+                    code_parts.append(f'    _x_order = chart_data.groupby("{x}")["{y}"].sum().sort_values(ascending={ascending}).index.tolist()')
+                    code_parts.append(f'    chart_data["{x}"] = pd.Categorical(chart_data["{x}"], categories=_x_order, ordered=True)')
+                    code_parts.append(f'    chart_data = chart_data.sort_values(["{x}", "{group}"]).reset_index(drop=True)')
+                else:
+                    actual_sort_col = x if sort_field == "x" else (y if y else "count")
+                    code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
             code_parts.append(f'    chart_df = chart_data')
             code_parts.append(f'    effective_x_type = "{x_type}" if "{x_type}" != "None" else column_types.get("{x}")')
             code_parts.append(f'    x_encoding_suffix = ":T" if effective_x_type == "date" else (":Q" if effective_x_type == "number" else "")')
@@ -733,11 +741,20 @@ def load_data():
 
                 # Handle sorting: explicit sort field > x_type-based sorting
                 if sort_field:
-                    # Explicit sort field specified
-                    actual_sort_col = x if sort_field == "x" else (y if y else "count")
                     ascending = sort_order == "asc"
-                    code_parts.append(f'    # Sort by {sort_field} field ({sort_order})')
-                    code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
+                    if chart_type in ("stacked_bar", "grouped_bar") and sort_field == "y" and group:
+                        # Long-format data: sorting individual rows by y would mis-rank
+                        # categories. Order x categories by their aggregate total instead,
+                        # then sort the long-format rows to match (mirrors normalizer SQL).
+                        code_parts.append(f'    # Sort {x} categories by total {y} across {group} ({sort_order})')
+                        code_parts.append(f'    _x_order = chart_data.groupby("{x}")["{y}"].sum().sort_values(ascending={ascending}).index.tolist()')
+                        code_parts.append(f'    chart_data["{x}"] = pd.Categorical(chart_data["{x}"], categories=_x_order, ordered=True)')
+                        code_parts.append(f'    chart_data = chart_data.sort_values(["{x}", "{group}"]).reset_index(drop=True)')
+                    else:
+                        # Explicit sort field specified (single-series chart)
+                        actual_sort_col = x if sort_field == "x" else (y if y else "count")
+                        code_parts.append(f'    # Sort by {sort_field} field ({sort_order})')
+                        code_parts.append(f'    chart_data = chart_data.sort_values("{actual_sort_col}", ascending={ascending})')
                 else:
                     # Default: sort by x - date/number by value, strings alphabetically
                     code_parts.append(f'    if effective_x_type == "date":')
