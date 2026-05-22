@@ -1067,7 +1067,9 @@ def load_data():
         parts.append("        # Dashboard filters — wrapped in a bordered container so the")
         parts.append("        # widget row reads as a card (parallels Plotly/Observable filter bars).")
         parts.append("        with st.container(border=True):")
-        parts.append(f"            {col_vars} = st.columns({n})")
+        # Trailing *_ handles n==1 where `_filter_col0 = st.columns(1)` would
+        # bind the whole list to _filter_col0 instead of the single column.
+        parts.append(f"            {col_vars}, *_ = st.columns({n})")
 
         for i, f in enumerate(filters):
             field = f["field"]
@@ -1166,7 +1168,9 @@ def load_data():
                         idx += 1
                     n = len(metric_run)
                     col_names = [f"_mc{k}" for k in range(n)]
-                    code_parts.append(f'        {", ".join(col_names)} = st.columns({n})')
+                    # Trailing *_ handles n==1 where `_mc0 = st.columns(1)` would
+                    # bind the whole list to _mc0 instead of the single column.
+                    code_parts.append(f'        {", ".join(col_names)}, *_ = st.columns({n})')
                     for k, mc in enumerate(metric_run):
                         code_parts.append(f'        with {col_names[k]}:')
                         mc_code = self._generate_chart(mc, colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)
@@ -1182,7 +1186,10 @@ def load_data():
                         idx += 1
                     n = len(row_charts)
                     col_names = [f"_gc{k}" for k in range(n)]
-                    code_parts.append(f'        {", ".join(col_names)} = st.columns({grid_columns})')
+                    # Trailing *_ handles partial last row (n < grid_columns):
+                    # without it, n=1 with grid_columns=2 emits `_gc0 = st.columns(2)`
+                    # which binds the whole list to _gc0 and breaks `with _gc0:`.
+                    code_parts.append(f'        {", ".join(col_names)}, *_ = st.columns({grid_columns})')
                     for k, rc in enumerate(row_charts):
                         code_parts.append(f'        with {col_names[k]}:')
                         rc_code = self._generate_chart(rc, colors, sql_mode=sql_mode, use_filtered_df=use_filtered_df)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dashml-lang"
-version = "0.1.12"
+version = "0.1.13"
 description = "Declarative YAML-based compiler for data visualization dashboards. Write your dashboard once, compile to Streamlit, Plotly, Observable Plot, Apache Superset, Vega-Lite, or Grafana."
 readme = "README.md"
 requires-python = ">=3.9"
