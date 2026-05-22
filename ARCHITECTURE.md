@@ -228,11 +228,20 @@ After writing the main artifact, the CLI emits three additional files (`.env.exa
 
 ## Theme System
 
-`.dmls` files are YAML with a `colors` block. The transformer's `_load_style_config()` method reads the file and extracts color values. If no style is specified, default colors from `constants.py` are used.
+`.dmls` files are YAML with a `colors` block. The normalizer's `_resolve_style()` method loads the file, merges values over defaults from `constants.py`, and exposes the resolved palette to every transformer via `spec["style"]`. If no style is specified, defaults apply.
 
-Color fields: `background`, `card`, `primary`, `text`, `secondary` (array).
+Recognized color fields:
 
-The `buttons` field is accepted but not used by any transformer (all emit a warning if it's present).
+| Field | Purpose |
+|---|---|
+| `primary` | accent color: solid bar fill (no sort/group), line/scatter markers, KPI text, reference lines, active tab |
+| `sequential` | name of a 6-stop categorical ramp (`blues`, `greens`, `reds`, `oranges`, `purples`, `teals`, `viridis`, `cividis`). Drives gradient coloring for sorted-bar, pie, bubble, stacked_bar, grouped_bar, and choropleth |
+| `background` | page background (HTML body / Plotly paper / Observable canvas) |
+| `card` | chart container and KPI card background |
+| `text` | global text color |
+| `buttons` | accent for filter buttons; if omitted, falls back to `primary` |
+
+Categorical palettes for Superset, Vega-Lite, and Grafana are intentionally left to the target's native default scheme — the `.dmls` palette does not override them.
 
 ---
 

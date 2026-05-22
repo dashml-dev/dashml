@@ -51,12 +51,6 @@ AGG_METHODS = {
 # Default primary color (used across transformers)
 DEFAULT_PRIMARY_COLOR = "#29b5e8"
 
-# Default secondary colors for categorical data
-DEFAULT_SECONDARY_COLORS = [
-    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
-]
-
 # Visual design tokens shared across transformers.
 # Theme-agnostic UI surface/border/text colors that augment the per-theme
 # palette (background, card, primary, text) loaded from .dmls files.

@@ -166,8 +166,7 @@ class TestResolvedStyle:
         result = normalizer.normalize(spec, "/tmp/t.dashml")
         assert "style" in result
         assert result["style"]["primary"] == "#29b5e8"
-        assert isinstance(result["style"]["secondary"], list)
-        assert len(result["style"]["secondary"]) == 10
+        assert result["style"]["sequential"] == "blues"
 
     def test_source_file_resolved(self, normalizer):
         spec = {"version": "0.1", "data": {"type": "csv", "path": "d.csv"},

@@ -12,7 +12,6 @@ from .constants import (
     CHARTS_USE_RAW_DATA,
     DEFAULT_HISTOGRAM_BINS,
     DEFAULT_PRIMARY_COLOR,
-    DEFAULT_SECONDARY_COLORS,
     DEFAULT_SORT_ORDER,
     DESIGN_TOKENS,
     resolve_categorical_ramp,

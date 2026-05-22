@@ -47,7 +47,6 @@ API_DATASET_ENDPOINT = "/api/v1/dataset/"
 API_DATABASE_ENDPOINT = "/api/v1/database/"
 API_CHART_ENDPOINT = "/api/v1/chart/"
 API_DASHBOARD_ENDPOINT = "/api/v1/dashboard/"
-API_CHART_DATA_ENDPOINT = "/api/v1/chart/data"
 AUTH_PROVIDER = "db"
 
 # Retry & Timeout Settings
@@ -56,7 +55,6 @@ RETRY_WAIT_SECONDS = 3
 MAX_DATASET_FIND_ATTEMPTS = 3
 
 # Query Limits
-UNIQUE_VALUES_ROW_LIMIT = 1000
 RAW_DATA_ROW_LIMIT = 10000
 CHART_LIST_PAGE_SIZE = 1000
 
@@ -81,7 +79,6 @@ JSON_CONTENT_TYPE = "application/json"
 # Default Colors
 DEFAULT_COLORS = {
     "primary": "#20A7C9",
-    "secondary": ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
     "background": "#FAFAFA",
     "text": "#11181C",
     "card": "#FFFFFF"
@@ -93,7 +90,6 @@ from .constants import (
     CHARTS_USE_RAW_DATA,
     DEFAULT_HISTOGRAM_BINS as SHARED_DEFAULT_HISTOGRAM_BINS,
     DEFAULT_PRIMARY_COLOR,
-    DEFAULT_SECONDARY_COLORS,
 )
 
 # Map DashML chart types to Superset viz types
@@ -171,13 +167,13 @@ class SupersetTransformer(Transformer):
             # Use resolved style from normalizer
             style_config = {"colors": spec["style"]}
             # Superset's dashboard chrome (page bg, card bg, fonts, etc.) is
-            # controlled by the Superset instance theme — most palette tokens
-            # the spec carries are ignored. We pass `primary` / `secondary`
-            # through label colors below, but everything else is instance-level.
+            # controlled by the Superset instance theme — the spec's palette
+            # is mostly ignored. Categorical series colors fall back to
+            # Superset's default color scheme.
             self.warn(
                 "Superset dashboard chrome is instance-level — "
                 "page/card backgrounds, axis colors, and fonts are not "
-                "controlled by the .dashml style (only label colors are)."
+                "controlled by the .dashml style."
             )
 
             # Store db_config for internal methods that need it
@@ -842,34 +838,6 @@ class SupersetTransformer(Transformer):
             traceback.print_exc()
             return None
 
-    def _get_unique_values(self, column: str) -> list:
-        """Query the dataset to get unique values for a column"""
-        try:
-            # Query the dataset via the chart data API
-            query_payload = {
-                "datasource": {"id": self.dataset_id, "type": "table"},
-                "queries": [{
-                    "columns": [column],
-                    "groupby": [column],
-                    "metrics": [],
-                    "row_limit": UNIQUE_VALUES_ROW_LIMIT,
-                }],
-                "result_format": "json",
-                "result_type": "full"
-            }
-
-            url = f"{self.superset_url}{API_CHART_DATA_ENDPOINT}"
-            response = self.session.post(url, headers=self._get_headers(), json=query_payload)
-
-            if response.status_code == 200:
-                result = response.json()
-                if "result" in result and len(result["result"]) > 0:
-                    data = result["result"][0].get("data", [])
-                    return [row.get(column) for row in data if row.get(column) is not None]
-        except Exception as e:
-            self.warn(f"Failed to get unique values for column '{column}': {e}")
-        return []
-
     def _find_existing_dashboard(self, title: str) -> Optional[int]:
         """Find existing dashboard by title"""
         url = f"{self.superset_url}{API_DASHBOARD_ENDPOINT}"
@@ -1008,35 +976,11 @@ class SupersetTransformer(Transformer):
         if limit:
             params["row_limit"] = limit
 
-        # Apply custom color scheme from DashML theme via label_colors
-        params["color_scheme"] = DEFAULT_COLOR_SCHEME  # Use neutral base scheme
+        # Categorical series colors: fall back to Superset's default color scheme.
+        # Dashboard chrome (chart palette, fonts, page bg) is instance-level —
+        # the .dashml style intentionally does not override it here.
+        params["color_scheme"] = DEFAULT_COLOR_SCHEME
         params["label_colors"] = {}
-
-        if "secondary" in colors and isinstance(colors["secondary"], list) and len(colors["secondary"]) > 0:
-            custom_colors = colors["secondary"]
-
-            # Determine which column contains the categories we want to color
-            category_column = None
-            if chart_type == "pie":
-                category_column = x  # Pie chart groups by x
-            elif chart_type in ["stacked_bar", "grouped_bar"] and group:
-                category_column = group  # Stacked/grouped bar uses group column
-            elif chart_type in ["bar", "line", "area"] and group:
-                category_column = group
-
-            # If we have a category column, query the dataset to get unique values
-            if category_column:
-                try:
-                    unique_values = self._get_unique_values(category_column)
-                    if unique_values:
-                        # Assign colors from theme to each unique value (cycling if needed)
-                        for i, value in enumerate(unique_values):
-                            color_index = i % len(custom_colors)
-                            color = custom_colors[color_index]
-                            params["label_colors"][str(value)] = color
-                except Exception as e:
-                    # If we can't get unique values, just use the base color scheme
-                    self.warn(f"Could not apply custom colors for '{category_column}': {e}")
 
         # Add metrics only for chart types that use them
         # Build metric label for orderby

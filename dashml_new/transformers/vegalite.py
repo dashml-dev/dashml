@@ -18,7 +18,6 @@ from .base import Transformer, humanize_field
 from .constants import (
     resolve_metric_format,
     DEFAULT_PRIMARY_COLOR,
-    DEFAULT_SECONDARY_COLORS,
     DESIGN_TOKENS,
     COUNTRY_DATA,
     build_alias_to_topojson,
@@ -632,13 +631,7 @@ class VegaLiteTransformer(Transformer):
     def _color_encoding(self, chart: dict, spec: "NormalizedSpec") -> dict:
         """Build color encoding for group field."""
         group = chart.get("group", "")
-        style = spec.get("style", {})
-        secondary = style.get("secondary", DEFAULT_SECONDARY_COLORS)
-
-        enc = {"field": group, "type": "nominal"}
-        if isinstance(secondary, list) and secondary:
-            enc["scale"] = {"range": secondary}
-        return enc
+        return {"field": group, "type": "nominal"}
 
     def _apply_limit(self, vl: dict, chart: dict) -> None:
         """Add aggregate + window rank + filter transforms for limit.
@@ -1266,7 +1259,6 @@ class VegaLiteTransformer(Transformer):
         """Build Vega-Lite config block from style + design tokens."""
         style = spec.get("style", {})
         primary = style.get("primary", DEFAULT_PRIMARY_COLOR)
-        secondary = style.get("secondary", DEFAULT_SECONDARY_COLORS)
         background = style.get("background")
         text_color = style.get("text")
         card_bg = style.get("card", background)
@@ -1275,9 +1267,6 @@ class VegaLiteTransformer(Transformer):
         fg_dim = DESIGN_TOKENS["fg_dim"]
 
         config: dict = {}
-
-        if isinstance(secondary, list) and secondary:
-            config["range"] = {"category": secondary}
 
         if background:
             config["background"] = background
