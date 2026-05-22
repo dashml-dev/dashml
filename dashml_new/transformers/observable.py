@@ -14,10 +14,10 @@ from .constants import (
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLORS,
     DESIGN_TOKENS,
-    PURPLE_RAMP,
     TEMPORAL_FIELD_NAMES,
     DEFAULT_SORT_ORDER,
     resolve_metric_format,
+    resolve_categorical_ramp,
     country_mapping_as_js,
 )
 
@@ -75,7 +75,7 @@ class ObservablePlotTransformer(Transformer):
 
         # Data loading
         data_spec = spec["data"]
-        html_parts.append(self._generate_data_loader(data_spec, spec.get("derived_fields", [])))
+        html_parts.append(self._generate_data_loader(data_spec, spec.get("derived_fields", []), colors))
 
         # Always use pages (normalizer guarantees pages[] exists)
         html_parts.append(self._generate_pages_structure(spec["pages"], colors))
@@ -427,11 +427,12 @@ class ObservablePlotTransformer(Transformer):
         lines.append(f"{indent}}});")
         return "\n".join(lines)
 
-    def _generate_data_loader(self, data_spec: Dict[str, Any], derived_fields: list = None) -> str:
+    def _generate_data_loader(self, data_spec: Dict[str, Any], derived_fields: list = None, colors: Dict[str, str] = None) -> str:
         """Generate JavaScript to load CSV data"""
         data_type = data_spec["type"]
         path = Path(data_spec.get("csv_path") or data_spec["path"]).name
-        purple_ramp_js = json.dumps(PURPLE_RAMP)
+        sequential_scheme = (colors or {}).get("sequential", "blues")
+        sequential_ramp_js = json.dumps(resolve_categorical_ramp(sequential_scheme))
 
         if data_type == "csv":
             return f"""
@@ -442,11 +443,12 @@ class ObservablePlotTransformer(Transformer):
         window.worldTopojson = null;
 
         // Shared design tokens (transformer-side visual relationships).
-        const PURPLE_RAMP = {purple_ramp_js};
+        // Categorical ramp matches theme.sequential — sequential_scheme={sequential_scheme!r}.
+        const SEQUENTIAL_RAMP = {sequential_ramp_js};
 
-        // Continuous purple ramp interpolation — used for sorted-bar coloring.
-        function purpleRamp(n) {{
-            const stops = PURPLE_RAMP;
+        // Continuous ramp interpolation — used for sorted-bar / pie / bubble coloring.
+        function sequentialRamp(n) {{
+            const stops = SEQUENTIAL_RAMP;
             if (n <= 1) return [stops[Math.floor(stops.length / 2)]];
             const hexToRgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
             const rgbToHex = rgb => '#' + rgb.map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
@@ -1036,10 +1038,10 @@ class ObservablePlotTransformer(Transformer):
             document.getElementById('{container_id}').appendChild(plot_{safe_var_name});"""
 
     def _generate_d3_pie_chart(self, var_name: str, x: str, y: str, data_code: str, container_id: str, colors: Dict[str, str]) -> str:
-        """Generate D3 pie chart code with light→dark purple ramp + on-slice labels.
+        """Generate D3 pie chart code with light→dark sequential ramp + on-slice labels.
 
-        Uses the global `PURPLE_RAMP` constant emitted by the data loader so
-        the colors stay in sync with the bar-chart ramp (no hardcoded list).
+        Uses the global `SEQUENTIAL_RAMP` constant emitted by the data loader so
+        the colors stay in sync with the bar-chart ramp and respect theme.sequential.
         """
         card_bg = colors.get('card', '#2e3040')
         return f"""            // D3 Pie Chart
@@ -1054,10 +1056,10 @@ class ObservablePlotTransformer(Transformer):
                 .innerRadius(radius_{var_name} * 0.6)
                 .outerRadius(radius_{var_name} * 0.6);
 
-            // Reuse the dashboard's PURPLE_RAMP (emitted in data loader) so
-            // pie colors stay consistent with the bar ramp.
+            // Reuse the dashboard's SEQUENTIAL_RAMP (emitted in data loader) so
+            // pie colors stay consistent with the bar ramp and theme.sequential.
             function rampAt_{var_name}(t) {{
-                const stops = PURPLE_RAMP;
+                const stops = SEQUENTIAL_RAMP;
                 const segments = stops.length - 1;
                 const scaled = Math.max(0, Math.min(segments, t * segments));
                 const idx = Math.min(segments - 1, Math.floor(scaled));
@@ -1473,13 +1475,13 @@ class ObservablePlotTransformer(Transformer):
         """
         if chart_type == "bar":
             # When sorted by y with no group, color bars with a continuous
-            # purple ramp so rank reads as a free second visual channel.
+            # sequential ramp so rank reads as a free second visual channel.
             # Note: use `.at(i)` not `[i]` — `]` inside the marks array would
             # confuse _inject_extra_marks which looks for the first `]` to
             # insert reference-line marks.
             use_ramp = sort_field == "y"
             if use_ramp:
-                fill_expr = f"(d, i) => purpleRamp(data_{data_var}.length).at(i)"
+                fill_expr = f"(d, i) => sequentialRamp(data_{data_var}.length).at(i)"
             else:
                 fill_expr = f'"{color}"'
             return f"""marks: [
@@ -1569,7 +1571,7 @@ class ObservablePlotTransformer(Transformer):
                 r: {{ range: [6, 28] }},
                 color: {{
                     domain: data_{data_var}.map(d => d.{group}),
-                    range: purpleRamp(data_{data_var}.length)
+                    range: sequentialRamp(data_{data_var}.length)
                 }}"""
             else:
                 return f"""marks: [

@@ -15,7 +15,7 @@ from .constants import (
     DEFAULT_SECONDARY_COLORS,
     DEFAULT_SORT_ORDER,
     DESIGN_TOKENS,
-    PURPLE_RAMP,
+    resolve_categorical_ramp,
     resolve_metric_format,
     resolve_plotly_colorscale,
     country_mapping_as_js,
@@ -1229,7 +1229,7 @@ if __name__ == '__main__':
           textposition: 'top center',
           marker: {{
             size: normalizedSizes,
-            color: purpleRamp(bubbleData.length),
+            color: sequentialRamp(bubbleData.length),
             line: {{ color: theme.card, width: 1 }},
             sizemode: 'diameter'
           }},
@@ -1302,7 +1302,7 @@ if __name__ == '__main__':
           break;
         case 'pie':
           trace = {{ labels: xValues, values: yValues, type: 'pie',
-                     marker: {{ colors: purpleRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
+                     marker: {{ colors: sequentialRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
                      textinfo: 'label+percent',
                      textposition: 'inside',
                      insidetextorientation: 'radial',
@@ -1598,12 +1598,12 @@ if __name__ == '__main__':
             # tick labels already carry the field info; otherwise humanize.
             x_title = "" if chart_type in _DISCRETE_X_CHART_TYPES else humanize_field(x)
             y_title = humanize_field(y)
-            # Bar color: use ordinal purple ramp when sorted by y with no group.
-            use_purple_ramp_for_bar = (
+            # Bar color: use ordinal sequential ramp when sorted by y with no group.
+            use_sequential_ramp_for_bar = (
                 chart_type == "bar" and sort_field == "y" and not group
             )
             bar_color_js = (
-                "purpleRamp(xValues.length)" if use_purple_ramp_for_bar else "theme.primary"
+                "sequentialRamp(xValues.length)" if use_sequential_ramp_for_bar else "theme.primary"
             )
 
             # Build options object for aggregation
@@ -1691,7 +1691,7 @@ if __name__ == '__main__':
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: purpleRamp(bubbleData.length),
+          color: sequentialRamp(bubbleData.length),
           line: {{ color: theme.card, width: 1 }},
           sizemode: 'diameter'
         }},
@@ -1771,7 +1771,7 @@ if __name__ == '__main__':
           break;
         case 'pie':
           trace = {{ labels: xValues, values: yValues, type: 'pie',
-                     marker: {{ colors: purpleRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
+                     marker: {{ colors: sequentialRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
                      textinfo: 'label+percent',
                      textposition: 'inside',
                      insidetextorientation: 'radial',
@@ -1782,7 +1782,7 @@ if __name__ == '__main__':
           break;
         case 'histogram':
           // Native Plotly histogram — handles log y correctly. Per-bin colors
-          // aren't supported on this trace type, so we use flat primary purple.
+          // aren't supported on this trace type, so we use a flat primary fill.
           trace = {{ x: xValues, type: 'histogram', nbinsx: {bins},
                      marker: {{ color: theme.primary, line: {{ color: theme.card, width: 1 }} }} }};
           break;
@@ -1909,13 +1909,15 @@ if __name__ == '__main__':
 
         # Design tokens emitted as JS constants (theme-agnostic visual relationships)
         design_tokens_js = json.dumps(DESIGN_TOKENS)
-        purple_ramp_js = json.dumps(PURPLE_RAMP)
+        sequential_scheme = colors.get("sequential", "blues")
+        sequential_ramp_js = json.dumps(resolve_categorical_ramp(sequential_scheme))
 
         # Use the same full-featured aggregation functions as single-page mode
         return f'''  <script>
     const theme = {theme_json};
     const designTokens = {design_tokens_js};
-    const PURPLE_RAMP = {purple_ramp_js};
+    // Categorical ramp matches theme.sequential — sequential_scheme={sequential_scheme!r}.
+    const SEQUENTIAL_RAMP = {sequential_ramp_js};
 {geo_js_block}
     // Quote-aware CSV line parser (handles airline names with commas, etc.)
     function parseCsvLine(line) {{
@@ -1936,11 +1938,11 @@ if __name__ == '__main__':
       return out;
     }}
 
-    // Light → dark purple intensity ramp for ordinal bar encoding.
+    // Light → dark sequential intensity ramp for ordinal bar encoding.
     // Continuous RGB interpolation between stops so any bar count produces
     // a uniformly smooth gradient (no stepped clusters at n=12, 18, etc.).
-    function purpleRamp(n) {{
-      const stops = PURPLE_RAMP;
+    function sequentialRamp(n) {{
+      const stops = SEQUENTIAL_RAMP;
       if (n <= 1) return [stops[Math.floor(stops.length / 2)]];
       const hexToRgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
       const rgbToHex = rgb => '#' + rgb.map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
@@ -2701,7 +2703,9 @@ if __name__ == '__main__':
     def _generate_javascript_pages_sql(self, pages: list, colors: Dict[str, str]) -> str:
         """Generate JavaScript for multi-page dashboard with per-chart async loading"""
         colors = dict(colors)
-        colors["sequential"] = resolve_plotly_colorscale(colors.get("sequential", "blues"))
+        sequential_scheme = colors.get("sequential", "blues")
+        sequential_ramp_js = json.dumps(resolve_categorical_ramp(sequential_scheme))
+        colors["sequential"] = resolve_plotly_colorscale(sequential_scheme)
         theme_json = json.dumps(colors)
 
         all_charts = []
@@ -2805,7 +2809,7 @@ if __name__ == '__main__':
         textposition: 'top center',
         marker: {{
           size: normalizedSizes,
-          color: purpleRamp(data.length),
+          color: sequentialRamp(data.length),
           line: {{ color: theme.card, width: 1 }},
           sizemode: 'diameter'
         }},
@@ -2861,7 +2865,7 @@ if __name__ == '__main__':
           break;
         case 'pie':
           trace = {{ labels: xValues, values: yValues, type: 'pie',
-                     marker: {{ colors: purpleRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
+                     marker: {{ colors: sequentialRamp(xValues.length), line: {{ color: theme.card, width: 1 }} }},
                      textinfo: 'label+percent',
                      textposition: 'inside',
                      insidetextorientation: 'radial',
@@ -2967,6 +2971,26 @@ if __name__ == '__main__':
 
         return f'''  <script>
     const theme = {theme_json};
+    // Categorical ramp matches theme.sequential — sequential_scheme={sequential_scheme!r}.
+    const SEQUENTIAL_RAMP = {sequential_ramp_js};
+
+    // Light → dark sequential ramp for ordinal bar / pie / bubble coloring.
+    function sequentialRamp(n) {{
+      const stops = SEQUENTIAL_RAMP;
+      if (n <= 1) return [stops[Math.floor(stops.length / 2)]];
+      const hexToRgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+      const rgbToHex = rgb => '#' + rgb.map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
+      const lerpAt = t => {{
+        const segments = stops.length - 1;
+        const scaled = Math.max(0, Math.min(segments, t * segments));
+        const idx = Math.min(segments - 1, Math.floor(scaled));
+        const frac = scaled - idx;
+        const a = hexToRgb(stops[idx]);
+        const b = hexToRgb(stops[idx + 1]);
+        return rgbToHex(a.map((v, i) => v + (b[i] - v) * frac));
+      }};
+      return Array.from({{ length: n }}, (_, i) => lerpAt(i / Math.max(1, n - 1)));
+    }}
 {geo_js_block_sql}
     // Format a metric scalar value
     function formatMetric(value, format, suffix) {{

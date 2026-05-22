@@ -779,15 +779,15 @@ def load_data():
         if chart_type == "bar":
             x_enc = self._x_encoding_str(x, x_label, chart, suffix_var="x_encoding_suffix", sort_val=x_sort)
             render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
-            use_purple_ramp = sort_field == "y" and not group
-            if use_purple_ramp:
-                # Add a 0-based _rank column so bars get a light→dark purple ramp.
+            use_sequential_ramp = sort_field == "y" and not group
+            if use_sequential_ramp:
+                # Add a 0-based _rank column so bars get a light→dark sequential ramp.
                 code_parts.append('    chart_data = chart_data.reset_index(drop=True)')
                 code_parts.append('    chart_data["_rank"] = range(len(chart_data))')
                 code_parts.append(f'''    c = alt.Chart(chart_data).mark_bar().encode(
         x={x_enc},
         y={y_enc_str},
-        color=alt.Color("_rank:Q", scale=alt.Scale(scheme="purples"), legend=None),
+        color=alt.Color("_rank:Q", scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"), legend=None),
         tooltip=["{x}", "{y}"]
     ){render_line}''')
             else:
@@ -825,7 +825,7 @@ def load_data():
             render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             if group:
                 group_label = self._humanize_column_name(group)
-                code_parts.append(f'''    # Bubble: 4D viz with purple ramp by rank + on-top labels
+                code_parts.append(f'''    # Bubble: 4D viz with sequential ramp by rank + on-top labels
     chart_data = chart_data.reset_index(drop=True)
     chart_data["_rank"] = range(len(chart_data))
     _bub_base = alt.Chart(chart_data).encode(
@@ -834,7 +834,7 @@ def load_data():
     )
     c = _bub_base.mark_circle(stroke="#2e3040", strokeWidth=1).encode(
         size=alt.Size("{size_col}:Q", scale=alt.Scale(range=[100, 1500]), legend=None),
-        color=alt.Color("_rank:O", scale=alt.Scale(scheme="purples"), legend=None),
+        color=alt.Color("_rank:O", scale=alt.Scale(scheme="{colors.get("sequential", "blues")}"), legend=None),
         tooltip=["{group}", "{x}", "{y}", "{size_col}"]
     ) + _bub_base.mark_text(dy=-22, fontSize=11, color="#c8cadf").encode(
         text="{group}:N"
@@ -888,7 +888,7 @@ def load_data():
     ).properties(width=600, height=400){render_line}''')
 
         elif chart_type == "pie":
-            # Sorted pie → purple ramp by rank, with a right-side legend showing
+            # Sorted pie → sequential ramp by rank, with a right-side legend showing
             # "NAME  PCT%" labels (Altair pie text inside slices is fragile).
             render_line = '' if has_overlays else '\n    st.altair_chart(c, width="stretch", theme=None)'
             arc_stroke = colors.get("card", "#2e3040")
@@ -903,7 +903,7 @@ def load_data():
         theta=alt.Theta("{y}:Q", stack=True),
         color=alt.Color(
             "_legend_label:N",
-            scale=alt.Scale(domain=_legend_order, scheme="purples"),
+            scale=alt.Scale(domain=_legend_order, scheme="{colors.get("sequential", "blues")}"),
             legend=alt.Legend(title=None, orient="right", labelLimit=240, labelFontSize=11, symbolSize=120)
         ),
         order=alt.Order("_rank:Q", sort="ascending"),

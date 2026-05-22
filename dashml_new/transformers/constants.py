@@ -75,12 +75,31 @@ DESIGN_TOKENS = {
     "pie_label": "#1a1b24",  # dark text for inside-pie labels (readable on light purple slices)
 }
 
-# Light → dark purple intensity ramp for ordinal categorical encoding
-# (used when a bar chart is sorted by y with no explicit group).
-PURPLE_RAMP = [
-    "#e9d8ff", "#d4b9fb", "#bd93f9",
-    "#a378ee", "#8b62d8", "#735ac4",
-]
+# Light → dark 6-stop ramps for ordinal categorical encoding (bar-by-rank,
+# pie slices, bubble color). Keyed by the same names accepted in theme.sequential
+# so a dashboard styled with `sequential: greens` gets a green ramp here as well.
+# When the theme's sequential is unknown, fall back to blues.
+CATEGORICAL_RAMPS = {
+    "blues":   ["#deebf7", "#c6dbef", "#9ecae1", "#6baed6", "#4292c6", "#2171b5"],
+    "greens":  ["#e5f5e0", "#c7e9c0", "#a1d99b", "#74c476", "#41ab5d", "#238b45"],
+    "reds":    ["#fee0d2", "#fcbba1", "#fc9272", "#fb6a4a", "#ef3b2c", "#cb181d"],
+    "oranges": ["#fee6ce", "#fdd0a2", "#fdae6b", "#fd8d3c", "#f16913", "#d94801"],
+    "purples": ["#e9d8ff", "#d4b9fb", "#bd93f9", "#a378ee", "#8b62d8", "#735ac4"],
+    "teals":   ["#b2dfdb", "#80cbc4", "#4db6ac", "#26a69a", "#009688", "#00796b"],
+    "viridis": ["#fde725", "#7ad151", "#22a884", "#2a788e", "#414487", "#440154"],
+    "cividis": ["#fff250", "#a6c466", "#5f917d", "#33588d", "#0e3074", "#002060"],
+}
+
+
+def resolve_categorical_ramp(scheme):
+    """Return the 6-stop categorical ramp matching theme.sequential.
+    Unknown or missing scheme falls back to the blues ramp."""
+    return CATEGORICAL_RAMPS.get((scheme or "blues").lower(), CATEGORICAL_RAMPS["blues"])
+
+
+# Back-compat alias — kept so any external importer continues to work; new
+# code should use resolve_categorical_ramp(theme_sequential) instead.
+PURPLE_RAMP = CATEGORICAL_RAMPS["purples"]
 
 def resolve_metric_format(fmt: str) -> str:
     """Convert human-friendly metric format names to Python/D3 format spec.
