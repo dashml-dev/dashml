@@ -109,8 +109,6 @@ class GrafanaTransformer(Transformer):
             self.warn("'background' color is not supported — Grafana theme is instance-level")
         if style.get("card"):
             self.warn("'card' color is not supported — Grafana theme is instance-level")
-        if style.get("buttons"):
-            self.warn("'buttons' color is not supported — Grafana theme is instance-level")
 
         pages = spec.get("pages", [])
         panels = []

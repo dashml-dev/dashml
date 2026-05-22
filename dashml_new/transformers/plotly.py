@@ -175,9 +175,6 @@ class PlotlyTransformer(Transformer):
 
     def _build_csv_version(self, spec: "NormalizedSpec", title: str, data_spec: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate single HTML file for CSV datasources"""
-        if colors.get("buttons"):
-            self.warn("'buttons' color is not currently used by Plotly transformer")
-
         # Check for unsupported chart types
         all_charts = []
         for page in spec["pages"]:

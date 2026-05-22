@@ -13,7 +13,6 @@ class StyleColors(TypedDict, total=False):
     card: str
     primary: str
     text: str
-    buttons: str
     sequential: str
 
 
@@ -229,7 +228,6 @@ class ResolvedStyle(TypedDict, total=False):
     card: str
     primary: str
     text: str
-    buttons: str
     sequential: str
 
 

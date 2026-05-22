@@ -369,7 +369,6 @@ class ResolvedStyle(TypedDict, total=False):
     card: str
     primary: str
     text: str
-    buttons: str
     sequential: str
 
 class NormalizedSpec(TypedDict, total=False):

@@ -81,8 +81,6 @@ class VegaLiteTransformer(Transformer):
         self.clear_warnings()
 
         style = spec.get("style", {})
-        if style.get("buttons"):
-            self.warn("'buttons' color is not supported in Vega-Lite")
 
         pages = spec.get("pages", [])
         all_charts = []

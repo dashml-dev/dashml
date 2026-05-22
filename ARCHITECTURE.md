@@ -206,7 +206,7 @@ Generates a Grafana dashboard JSON ready to be imported (manually, via the Grafa
 - **SQL**: Generates panels with embedded SQL queries against a Grafana datasource referenced by UID (`--grafana-datasource-uid`). The Grafana instance manages its own datasource credentials — DashML does not bake any credentials into the JSON.
 - **BigQuery**: Same pattern, using Grafana's BigQuery plugin. Datasource credentials live in the Grafana instance.
 
-Box plots are not natively supported in Grafana — they are rendered as a Markdown panel with a "not supported" notice. Style fields `background`, `card`, and `buttons` are ignored because Grafana's theme is configured at the instance level, not per dashboard.
+Box plots are not natively supported in Grafana — they are rendered as a Markdown panel with a "not supported" notice. Style fields `background` and `card` are ignored because Grafana's theme is configured at the instance level, not per dashboard.
 
 ---
 
@@ -239,7 +239,6 @@ Recognized color fields:
 | `background` | page background (HTML body / Plotly paper / Observable canvas) |
 | `card` | chart container and KPI card background |
 | `text` | global text color |
-| `buttons` | accent for filter buttons; if omitted, falls back to `primary` |
 
 Theme reach varies by target. The code-generating transformers (Streamlit, Plotly, Observable Plot, Vega-Lite) honor the full palette: page/card backgrounds, text, single-series accents, and categorical colors derived from `sequential`. Grafana and Superset are externally-themed platforms — page chrome, fonts, axis colors, and multi-series palettes come from the platform instance, not from `.dmls`. The transformer applies `primary` where the platform API permits (fixed-color single-series in Grafana, label colors in Superset); broader theme fidelity would require instance-level configuration and is out of scope.
 

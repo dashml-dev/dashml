@@ -64,9 +64,6 @@ class ObservablePlotTransformer(Transformer):
         """Generate single HTML file for CSV datasources"""
         colors = spec["style"]
 
-        if colors.get("buttons"):
-            self.warn("'buttons' color is not currently used by Observable transformer")
-
         title = spec["title"]
         html_parts = []
         html_parts.append(self._generate_html_head(title, colors))

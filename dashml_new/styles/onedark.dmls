@@ -5,5 +5,4 @@ colors:
   card: "#2c313a"
   primary: "#61afef"
   text: "#abb2bf"
-  buttons: "#98c379"
   sequential: "blues"

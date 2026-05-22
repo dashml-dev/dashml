@@ -337,7 +337,6 @@ class DashMLNormalizer:
             "background": "#0e1117",
             "text": "#fafafa",
             "card": "#262730",
-            "buttons": DEFAULT_PRIMARY_COLOR,
             "sequential": "blues",
         }
 

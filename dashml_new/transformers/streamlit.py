@@ -42,10 +42,6 @@ class StreamlitTransformer(Transformer):
 
             colors = spec["style"]
 
-            # Warn about unsupported color fields
-            if colors.get("buttons"):
-                self.warn("'buttons' color is not supported - Streamlit button styling is limited")
-
             code_parts = []
 
             data_type = spec["data"].get("type", "csv")
