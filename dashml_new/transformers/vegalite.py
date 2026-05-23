@@ -627,9 +627,21 @@ class VegaLiteTransformer(Transformer):
         return enc
 
     def _color_encoding(self, chart: dict, spec: "NormalizedSpec") -> dict:
-        """Build color encoding for group field."""
+        """Build color encoding for group field.
+
+        Uses the theme's sequential scheme as a tonal ramp — same visual
+        language Observable / Streamlit transformers use for stacked /
+        grouped bars (light→dark shades of the theme primary).
+        """
         group = chart.get("group", "")
-        return {"field": group, "type": "nominal"}
+        style = spec.get("style", {})
+        sequential = style.get("sequential", "blues")
+        scheme = SEQUENTIAL_SCHEMES.get(sequential, "blues")
+        return {
+            "field": group,
+            "type": "nominal",
+            "scale": {"scheme": scheme},
+        }
 
     def _apply_limit(self, vl: dict, chart: dict) -> None:
         """Add aggregate + window rank + filter transforms for limit.
@@ -777,21 +789,50 @@ class VegaLiteTransformer(Transformer):
         outer_r = 170
         label_r = 115
 
+        # Aggregate per category FIRST so the text layer renders exactly one
+        # label per slice. Without this, both layers fan over raw rows and
+        # text marks duplicate (one per row) and overlap.
+        if agg == "count":
+            agg_step = {
+                "aggregate": [{"op": "count", "as": "_value"}],
+                "groupby": [x_field],
+            }
+        else:
+            agg_step = {
+                "aggregate": [{"op": agg, "field": y_field, "as": "_value"}],
+                "groupby": [x_field],
+            }
+
         # Compute pct so the text layer can show "<name>\n<NN.N>%" inside the
         # slice — two-line label, same look as Observable's radial-pie helper.
-        pct_transform = [
+        pct_transform: list[dict] = [agg_step]
+
+        limit = chart.get("limit")
+        if limit:
+            sort_order = chart.get("sort_order", "desc")
+            pct_transform.append({
+                "window": [{"op": "rank", "as": "_rank"}],
+                "sort": [{"field": "_value", "order": "ascending" if sort_order == "asc" else "descending"}],
+            })
+            pct_transform.append({"filter": f"datum._rank <= {int(limit)}"})
+
+        pct_transform.extend([
             {
-                "joinaggregate": [{"op": agg, "field": y_field, "as": "_total"}],
+                "joinaggregate": [{"op": "sum", "field": "_value", "as": "_total"}],
             },
             {
-                "calculate": f"datum['{y_field}'] / datum._total * 100",
+                "calculate": "datum._value / datum._total * 100",
                 "as": "_pct",
             },
             {
                 "calculate": f"datum['{x_field}'] + '\\n' + format(datum._pct, '.1f') + '%'",
                 "as": "_label",
             },
-        ]
+        ])
+
+        # Post-aggregation theta — _value is already per-category, so no
+        # encoding-level aggregate; let VL just stack the pre-computed values.
+        value_enc = {"field": "_value", "type": "quantitative"}
 
         arc_layer = {
             "mark": {
@@ -801,12 +842,12 @@ class VegaLiteTransformer(Transformer):
                 "outerRadius": outer_r,
             },
             "encoding": {
-                "theta": {**y_enc, "stack": True},
+                "theta": {**value_enc, "stack": True},
                 "color": color_enc,
-                "order": {"field": y_field, "aggregate": agg, "type": "quantitative", "sort": "descending"},
+                "order": {"field": "_value", "type": "quantitative", "sort": "descending"},
                 "tooltip": [
                     {"field": x_field, "type": "nominal"},
-                    y_enc,
+                    value_enc,
                 ],
             },
         }
@@ -823,17 +864,13 @@ class VegaLiteTransformer(Transformer):
                 "baseline": "middle",
             },
             "encoding": {
-                "theta": {**y_enc, "stack": True},
-                "order": {"field": y_field, "aggregate": agg, "type": "quantitative", "sort": "descending"},
+                "theta": {**value_enc, "stack": True},
+                "order": {"field": "_value", "type": "quantitative", "sort": "descending"},
                 "text": {"field": "_label", "type": "nominal"},
             },
         }
 
-        # Apply limit FIRST (its aggregate transform drops unrelated columns,
-        # so the pct/label calcs need to run on the post-limit row set).
-        vl = {"layer": [arc_layer, label_layer]}
-        self._apply_limit(vl, chart)
-        vl.setdefault("transform", []).extend(pct_transform)
+        vl = {"transform": pct_transform, "layer": [arc_layer, label_layer]}
         return vl
 
     def _build_histogram(self, chart: dict, spec: "NormalizedSpec") -> dict:
@@ -1096,6 +1133,10 @@ class VegaLiteTransformer(Transformer):
         return vl
 
     def _build_box(self, chart: dict, spec: "NormalizedSpec") -> dict:
+        # Single theme color across all boxes — mirrors Observable Plot's
+        # boxY(fill: primary) and Streamlit's mark_boxplot(color=primary).
+        # A per-category color encoding would override mark.color with VL's
+        # default categorical palette, breaking the theme.
         style = spec.get("style", {})
         primary = style.get("primary", DEFAULT_PRIMARY_COLOR)
         return {
@@ -1107,7 +1148,6 @@ class VegaLiteTransformer(Transformer):
                     "type": "quantitative",
                     "scale": {"zero": False},
                 },
-                "color": {"field": chart.get("x", "x"), "type": "nominal", "legend": None},
             },
         }
 
