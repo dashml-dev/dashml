@@ -98,12 +98,17 @@ def _build_db_config(args, data_type: str, silent: bool = False, data_spec: dict
     return None
 
 
-def _register_build_args(parser, *, output_required=False):
+def _register_build_args(parser, *, run_default=False):
     """Register the full set of build arguments on a parser.
 
     Shared by `build` and `watch` so the two subcommands stay in lockstep —
     any flag accepted by `build` is automatically accepted by `watch`, and
     watch can pipe them through to the underlying build on each rebuild.
+
+    Args:
+        run_default: Default value for the --run flag. False for `build`
+            (CI-friendly), True for `watch` (where launching the dashboard
+            is the 99% case). Pass --no-run to opt out.
     """
     parser.add_argument("input", help="Path to .dashml file")
     parser.add_argument(
@@ -113,13 +118,15 @@ def _register_build_args(parser, *, output_required=False):
     )
     parser.add_argument(
         "--output", "-o",
-        required=output_required,
-        help="Output directory" if output_required else "Output file path (default: print to stdout)"
+        default=None,
+        help="Output directory (default: build/<target>)"
     )
     parser.add_argument(
         "--run", "-r",
-        action="store_true",
-        help="Run the dashboard after building (requires --output)"
+        action=argparse.BooleanOptionalAction,
+        default=run_default,
+        help="Run the dashboard after building. Pass --no-run to skip."
+        + (" Defaults to true for watch." if run_default else "")
     )
     parser.add_argument(
         "--superset-url",
@@ -202,6 +209,9 @@ def build_command(args):
     dashml_path = args.input
     target = args.target
     output_path = args.output
+    if output_path is None:
+        output_path = f"build/{target}"
+        args.output = output_path  # reflect on args for any downstream consumers
 
     if not Path(dashml_path).exists():
         print(f"Error: DashML file not found: {dashml_path}", file=sys.stderr)
@@ -478,9 +488,9 @@ def watch_command(args):
         print(f"Error: DashML file not found: {dashml_path}", file=sys.stderr)
         return 1
 
-    if not output_path:
-        print("Error: --output is required for watch mode", file=sys.stderr)
-        return 1
+    if output_path is None:
+        output_path = f"build/{target}"
+        args.output = output_path
 
     # Get transformer
     try:
@@ -589,14 +599,14 @@ Examples:
 
     # Build command
     build_parser = subparsers.add_parser("build", help="Build dashboard from DashML spec")
-    _register_build_args(build_parser, output_required=False)
+    _register_build_args(build_parser, run_default=False)
 
     # List command
     list_parser = subparsers.add_parser("list", help="List available transformers")
 
     # Watch command
     watch_parser = subparsers.add_parser("watch", help="Watch .dashml file and rebuild on changes")
-    _register_build_args(watch_parser, output_required=True)
+    _register_build_args(watch_parser, run_default=True)
 
     # Parse arguments
     args = parser.parse_args()
