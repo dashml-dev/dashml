@@ -50,6 +50,7 @@ class DataSpec(TypedDict, total=False):
     csv_path: str       # for CSV: resolved absolute file path
     sql_schema: str     # for SQL: parsed schema from path
     sql_table: str      # for SQL: parsed table from path
+    bq_project: str     # for BigQuery: parsed project from 3-part path (optional; CLI --bq-project overrides)
     bq_dataset: str     # for BigQuery: parsed dataset from path
     bq_table: str       # for BigQuery: parsed table from path
 

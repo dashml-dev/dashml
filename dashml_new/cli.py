@@ -35,7 +35,7 @@ def register_builtin_transformers():
     TransformerRegistry.register(VegaLiteTransformer)
 
 
-def _build_db_config(args, data_type: str, silent: bool = False):
+def _build_db_config(args, data_type: str, silent: bool = False, data_spec: dict = None):
     """Build database config from CLI args based on data type.
 
     Returns:
@@ -48,10 +48,14 @@ def _build_db_config(args, data_type: str, silent: bool = False):
     provided, are written into a generated .env.example as visible defaults
     to make local-machine setup a one-step copy.
 
-    For BigQuery, --bq-project is REQUIRED at build time because the project
-    ID is embedded into SQL queries as part of the fully-qualified table
-    reference. Project ID is not a secret (public identifier).
-    Credentials path is always read from env at runtime.
+    For BigQuery, the project ID must be known at build time because it is
+    embedded into SQL queries as part of the fully-qualified table reference.
+    It can be supplied two ways:
+      1. CLI flag:  --bq-project flight-delays-482611
+      2. In the spec, as a 3-part path: project.dataset.table
+    The CLI flag wins when both are present (useful for dev/staging/prod
+    overrides without editing the spec). Project ID is not a secret (public
+    identifier). Credentials path is always read from env at runtime.
     """
     if data_type == "sql":
         # All SQL credentials are optional at build time — they live in env at runtime.
@@ -65,16 +69,27 @@ def _build_db_config(args, data_type: str, silent: bool = False):
         }
 
     elif data_type == "bigquery":
-        if not getattr(args, "bq_project", None):
+        # Project lookup order: CLI flag → 3-part path in spec.
+        # The CLI flag wins so the same spec can target multiple environments.
+        project = getattr(args, "bq_project", None)
+        if not project and data_spec:
+            path = data_spec.get("path", "")
+            parts = path.split(".") if path else []
+            if len(parts) == 3:
+                project = parts[0]
+
+        if not project:
             if not silent:
-                print(f"Error: BigQuery datasource requires --bq-project argument", file=sys.stderr)
-                print(f"  (project ID is embedded into SQL queries at build time and is not a secret;", file=sys.stderr)
-                print(f"   credentials are read from DASHML_BQ_CREDENTIALS env var at runtime)", file=sys.stderr)
+                print(f"Error: BigQuery datasource requires a project ID", file=sys.stderr)
+                print(f"  Provide it via --bq-project, or as the first segment of a", file=sys.stderr)
+                print(f"  3-part path in the spec: 'project.dataset.table'.", file=sys.stderr)
+                print(f"  (Project ID is embedded into SQL queries at build time and is", file=sys.stderr)
+                print(f"   not a secret; credentials come from DASHML_BQ_CREDENTIALS at runtime.)", file=sys.stderr)
             return False
 
         return {
             "type": "bigquery",
-            "project": args.bq_project,
+            "project": project,
             # credentials_path retained for backward compat in db_config but no longer
             # baked into generated code — generator always reads from env at runtime.
             "credentials_path": getattr(args, "bq_credentials", None),
@@ -209,13 +224,14 @@ def build_command(args):
 
     # Step 2: Build db_config from CLI args based on data type
     data_type = spec_raw.get("data", {}).get("type", "csv")
+    data_spec = spec_raw.get("data", {})
     # Grafana generates static JSON — no DB connection needed at build time
     if target == "grafana" and data_type in ("sql", "bigquery"):
-        db_config = _build_db_config(args, data_type, silent=True)
+        db_config = _build_db_config(args, data_type, silent=True, data_spec=data_spec)
         if db_config is False:
             db_config = {"type": getattr(args, "db_type", None) or "postgresql"}
     else:
-        db_config = _build_db_config(args, data_type)
+        db_config = _build_db_config(args, data_type, data_spec=data_spec)
         if db_config is False:
             return 1
 
