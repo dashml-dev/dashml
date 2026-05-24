@@ -8,8 +8,14 @@ import subprocess
 import threading
 import json
 import shutil
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from pathlib import Path
 from dashml_new.core import DashMLEngine, ValidationError, DashMLWatcher
+
+try:
+    __version__ = _pkg_version("dashml-lang")
+except PackageNotFoundError:  # editable install before any build
+    __version__ = "0.0.0+unknown"
 from dashml_new.transformers import TransformerRegistry
 from dashml_new.transformers.streamlit import StreamlitTransformer
 from dashml_new.transformers.plotly import PlotlyTransformer
@@ -555,6 +561,12 @@ Examples:
   # List available transformers
   dashml list
         """
+    )
+    parser.add_argument(
+        "--version", "-v",
+        action="version",
+        version=f"dashml {__version__}",
+        help="Print the installed dashml version and exit",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
