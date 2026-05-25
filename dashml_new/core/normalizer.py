@@ -229,9 +229,16 @@ class DashMLNormalizer:
                 if len(parts) == 2:
                     result["bq_dataset"] = parts[0]
                     result["bq_table"] = parts[1]
+                elif len(parts) == 3:
+                    # Fully-qualified BigQuery path: project.dataset.table
+                    # Self-contained spec — no need for --bq-project CLI flag.
+                    result["bq_project"] = parts[0]
+                    result["bq_dataset"] = parts[1]
+                    result["bq_table"] = parts[2]
                 else:
                     raise NormalizerError(
-                        f"Invalid BigQuery path format: {path}. Expected: dataset.table"
+                        f"Invalid BigQuery path format: {path}. "
+                        f"Expected: dataset.table or project.dataset.table"
                     )
 
         return result  # type: ignore

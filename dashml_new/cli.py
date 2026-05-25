@@ -8,8 +8,14 @@ import subprocess
 import threading
 import json
 import shutil
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from pathlib import Path
 from dashml_new.core import DashMLEngine, ValidationError, DashMLWatcher
+
+try:
+    __version__ = _pkg_version("dashml-lang")
+except PackageNotFoundError:  # editable install before any build
+    __version__ = "0.0.0+unknown"
 from dashml_new.transformers import TransformerRegistry
 from dashml_new.transformers.streamlit import StreamlitTransformer
 from dashml_new.transformers.plotly import PlotlyTransformer
@@ -29,7 +35,7 @@ def register_builtin_transformers():
     TransformerRegistry.register(VegaLiteTransformer)
 
 
-def _build_db_config(args, data_type: str, silent: bool = False):
+def _build_db_config(args, data_type: str, silent: bool = False, data_spec: dict = None):
     """Build database config from CLI args based on data type.
 
     Returns:
@@ -42,10 +48,14 @@ def _build_db_config(args, data_type: str, silent: bool = False):
     provided, are written into a generated .env.example as visible defaults
     to make local-machine setup a one-step copy.
 
-    For BigQuery, --bq-project is REQUIRED at build time because the project
-    ID is embedded into SQL queries as part of the fully-qualified table
-    reference. Project ID is not a secret (public identifier).
-    Credentials path is always read from env at runtime.
+    For BigQuery, the project ID must be known at build time because it is
+    embedded into SQL queries as part of the fully-qualified table reference.
+    It can be supplied two ways:
+      1. CLI flag:  --bq-project flight-delays-482611
+      2. In the spec, as a 3-part path: project.dataset.table
+    The CLI flag wins when both are present (useful for dev/staging/prod
+    overrides without editing the spec). Project ID is not a secret (public
+    identifier). Credentials path is always read from env at runtime.
     """
     if data_type == "sql":
         # All SQL credentials are optional at build time — they live in env at runtime.
@@ -59,16 +69,27 @@ def _build_db_config(args, data_type: str, silent: bool = False):
         }
 
     elif data_type == "bigquery":
-        if not getattr(args, "bq_project", None):
+        # Project lookup order: CLI flag → 3-part path in spec.
+        # The CLI flag wins so the same spec can target multiple environments.
+        project = getattr(args, "bq_project", None)
+        if not project and data_spec:
+            path = data_spec.get("path", "")
+            parts = path.split(".") if path else []
+            if len(parts) == 3:
+                project = parts[0]
+
+        if not project:
             if not silent:
-                print(f"Error: BigQuery datasource requires --bq-project argument", file=sys.stderr)
-                print(f"  (project ID is embedded into SQL queries at build time and is not a secret;", file=sys.stderr)
-                print(f"   credentials are read from DASHML_BQ_CREDENTIALS env var at runtime)", file=sys.stderr)
+                print(f"Error: BigQuery datasource requires a project ID", file=sys.stderr)
+                print(f"  Provide it via --bq-project, or as the first segment of a", file=sys.stderr)
+                print(f"  3-part path in the spec: 'project.dataset.table'.", file=sys.stderr)
+                print(f"  (Project ID is embedded into SQL queries at build time and is", file=sys.stderr)
+                print(f"   not a secret; credentials come from DASHML_BQ_CREDENTIALS at runtime.)", file=sys.stderr)
             return False
 
         return {
             "type": "bigquery",
-            "project": args.bq_project,
+            "project": project,
             # credentials_path retained for backward compat in db_config but no longer
             # baked into generated code — generator always reads from env at runtime.
             "credentials_path": getattr(args, "bq_credentials", None),
@@ -77,11 +98,120 @@ def _build_db_config(args, data_type: str, silent: bool = False):
     return None
 
 
+def _register_build_args(parser, *, run_default=False):
+    """Register the full set of build arguments on a parser.
+
+    Shared by `build` and `watch` so the two subcommands stay in lockstep —
+    any flag accepted by `build` is automatically accepted by `watch`, and
+    watch can pipe them through to the underlying build on each rebuild.
+
+    Args:
+        run_default: Default value for the --run flag. False for `build`
+            (CI-friendly), True for `watch` (where launching the dashboard
+            is the 99% case). Pass --no-run to opt out.
+    """
+    parser.add_argument("input", help="Path to .dashml file")
+    parser.add_argument(
+        "--target", "-t",
+        required=True,
+        help="Target platform (e.g., streamlit, plotly)"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default=None,
+        help="Output directory (default: build/<target>)"
+    )
+    parser.add_argument(
+        "--run", "-r",
+        action=argparse.BooleanOptionalAction,
+        default=run_default,
+        help="Run the dashboard after building. Pass --no-run to skip."
+        + (" Defaults to true for watch." if run_default else "")
+    )
+    parser.add_argument(
+        "--superset-url",
+        default="http://localhost:8088",
+        help="Superset instance URL (for superset backend only)"
+    )
+    parser.add_argument("--superset-user", help="Superset username (for superset backend only)")
+    parser.add_argument("--superset-password", help="Superset password (for superset backend only)")
+    parser.add_argument(
+        "--grafana-datasource-uid",
+        help="Grafana datasource UID (for grafana backend; default: placeholder for import wizard)"
+    )
+    parser.add_argument(
+        "--grafana-csv-url",
+        help="URL serving the CSV file (for grafana backend with Infinity plugin)"
+    )
+    parser.add_argument(
+        "--grafana-serve-csv",
+        type=int, nargs="?", const=8888, default=None, metavar="PORT",
+        help="Start a local HTTP server for the CSV file (default port: 8888, for grafana backend with Infinity plugin)"
+    )
+    parser.add_argument(
+        "--grafana-csv-host",
+        default=None, metavar="HOST",
+        help="Hostname Grafana uses to reach the CSV server (default: localhost; use host.docker.internal for Docker)"
+    )
+    parser.add_argument(
+        "--embed-data",
+        action="store_true",
+        help="Embed CSV data inline in the output (for vegalite backend — makes spec self-contained)"
+    )
+    parser.add_argument(
+        "--bare",
+        action="store_true",
+        help="Output bare VL objects [{mark, encoding, transform}] for benchmark evaluation (vegalite backend)"
+    )
+    # Database arguments (for SQL datasources).
+    parser.add_argument(
+        "--db-type", choices=["postgresql", "mysql", "sqlite"],
+        help="Database type (optional; written into .env.example as default for DASHML_DB_TYPE)"
+    )
+    parser.add_argument(
+        "--db-host",
+        help="Database host (optional; written into .env.example as default for DASHML_DB_HOST)"
+    )
+    parser.add_argument(
+        "--db-port", type=int,
+        help="Database port (optional; written into .env.example as default for DASHML_DB_PORT)"
+    )
+    parser.add_argument(
+        "--db-name",
+        help="Database name (optional; written into .env.example as default for DASHML_DB_NAME)"
+    )
+    parser.add_argument(
+        "--db-user",
+        help="Database username (optional; written into .env.example as default for DASHML_DB_USER)"
+    )
+    parser.add_argument(
+        "--db-password",
+        help="Database password (optional; NEVER written to .env.example — supply at runtime via DASHML_DB_PASSWORD)"
+    )
+    # BigQuery arguments
+    parser.add_argument(
+        "--bq-project",
+        help="Google Cloud project ID (required for BigQuery datasources; embedded in SQL queries; not a secret)"
+    )
+    parser.add_argument(
+        "--bq-credentials",
+        help="Path to service account JSON credentials file (optional, written to .env.example as default for DASHML_BQ_CREDENTIALS)"
+    )
+    parser.add_argument(
+        "--emit-env-example",
+        action="store_true",
+        help="Emit .env.example template (blank values) alongside the artifact. Off by default; .gitignore and SECRETS.md are always emitted for SQL/BigQuery targets."
+    )
+
+
 def build_command(args):
     """Handle the build command"""
     dashml_path = args.input
     target = args.target
     output_path = args.output
+    if output_path is None:
+        output_path = f"build/{target}"
+        args.output = output_path  # reflect on args for any downstream consumers
 
     if not Path(dashml_path).exists():
         print(f"Error: DashML file not found: {dashml_path}", file=sys.stderr)
@@ -104,13 +234,14 @@ def build_command(args):
 
     # Step 2: Build db_config from CLI args based on data type
     data_type = spec_raw.get("data", {}).get("type", "csv")
+    data_spec = spec_raw.get("data", {})
     # Grafana generates static JSON — no DB connection needed at build time
     if target == "grafana" and data_type in ("sql", "bigquery"):
-        db_config = _build_db_config(args, data_type, silent=True)
+        db_config = _build_db_config(args, data_type, silent=True, data_spec=data_spec)
         if db_config is False:
             db_config = {"type": getattr(args, "db_type", None) or "postgresql"}
     else:
-        db_config = _build_db_config(args, data_type)
+        db_config = _build_db_config(args, data_type, data_spec=data_spec)
         if db_config is False:
             return 1
 
@@ -357,9 +488,9 @@ def watch_command(args):
         print(f"Error: DashML file not found: {dashml_path}", file=sys.stderr)
         return 1
 
-    if not output_path:
-        print("Error: --output is required for watch mode", file=sys.stderr)
-        return 1
+    if output_path is None:
+        output_path = f"build/{target}"
+        args.output = output_path
 
     # Get transformer
     try:
@@ -375,50 +506,19 @@ def watch_command(args):
         print(f"🚀 Run: {transformer.get_run_command(output_path)}")
     print()
 
+    # Suppress --run on per-rebuild invocations — watch handles the run
+    # itself once, outside the rebuild loop, so subsequent rebuilds shouldn't
+    # try to re-launch the app.
+    args.run = False
+
     def rebuild():
-        """Rebuild the output file"""
-        engine = DashMLEngine()
-
+        """Delegate to build_command so every flag accepted by `build`
+        (--bq-project, --db-*, --emit-env-example, --embed-data, ...) is
+        honored on every rebuild without watch needing to duplicate logic."""
         try:
-            # Load, validate, and normalize (db_config=None for watch/CSV mode)
-            spec = engine.load(dashml_path)
-            print(f"✓ Spec validated")
-
-            # Generate code
-            code = transformer.build(spec)
-            print(f"✓ Code generated ({len(code)} chars)")
-
-            # Display warnings if any
-            warnings = transformer.get_warnings()
-            if warnings:
-                print(f"⚠ Transformer warnings:")
-                for warning in warnings:
-                    print(f"  - {warning}")
-
-            # Write output (directory-based, consistent with build_command)
-            output_dir = Path(output_path)
-            if output_dir.is_file():
-                output_dir.unlink()
-            output_dir.mkdir(parents=True, exist_ok=True)
-            # Clean stale files from previous builds of different type
-            for stale in ("app.py", "index.html"):
-                stale_file = output_dir / stale
-                if stale_file.exists() and stale != transformer.output_filename:
-                    stale_file.unlink()
-            out_file = output_dir / transformer.output_filename
-            out_file.write_text(code, encoding="utf-8")
-            # Copy CSV data file if needed
-            data_type = spec.get("data", {}).get("type", "csv")
-            if data_type == "csv":
-                csv_path = spec.get("data", {}).get("csv_path")
-                if csv_path and Path(csv_path).exists():
-                    shutil.copy2(csv_path, output_dir / Path(csv_path).name)
-            print(f"✓ Written to {out_file}")
-
-        except ValidationError as e:
-            print(f"✗ Validation Error: {e}", file=sys.stderr)
+            build_command(args)
         except Exception as e:
-            print(f"✗ Error: {e}", file=sys.stderr)
+            print(f"✗ Rebuild error: {e}", file=sys.stderr)
 
     # Initial build
     print("Building initial version...")
@@ -488,143 +588,25 @@ Examples:
   dashml list
         """
     )
+    parser.add_argument(
+        "--version", "-v",
+        action="version",
+        version=f"dashml {__version__}",
+        help="Print the installed dashml version and exit",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     # Build command
     build_parser = subparsers.add_parser("build", help="Build dashboard from DashML spec")
-    build_parser.add_argument("input", help="Path to .dashml file")
-    build_parser.add_argument(
-        "--target", "-t",
-        required=True,
-        help="Target platform (e.g., streamlit, plotly)"
-    )
-    build_parser.add_argument(
-        "--output", "-o",
-        help="Output file path (default: print to stdout)"
-    )
-    build_parser.add_argument(
-        "--run", "-r",
-        action="store_true",
-        help="Run the dashboard after building (requires --output)"
-    )
-    build_parser.add_argument(
-        "--superset-url",
-        default="http://localhost:8088",
-        help="Superset instance URL (for superset backend only)"
-    )
-    build_parser.add_argument(
-        "--superset-user",
-        help="Superset username (for superset backend only)"
-    )
-    build_parser.add_argument(
-        "--superset-password",
-        help="Superset password (for superset backend only)"
-    )
-    build_parser.add_argument(
-        "--grafana-datasource-uid",
-        help="Grafana datasource UID (for grafana backend; default: placeholder for import wizard)"
-    )
-    build_parser.add_argument(
-        "--grafana-csv-url",
-        help="URL serving the CSV file (for grafana backend with Infinity plugin)"
-    )
-    build_parser.add_argument(
-        "--grafana-serve-csv",
-        type=int,
-        nargs="?",
-        const=8888,
-        default=None,
-        metavar="PORT",
-        help="Start a local HTTP server for the CSV file (default port: 8888, for grafana backend with Infinity plugin)"
-    )
-    build_parser.add_argument(
-        "--grafana-csv-host",
-        default=None,
-        metavar="HOST",
-        help="Hostname Grafana uses to reach the CSV server (default: localhost; use host.docker.internal for Docker)"
-    )
-    build_parser.add_argument(
-        "--embed-data",
-        action="store_true",
-        help="Embed CSV data inline in the output (for vegalite backend — makes spec self-contained)"
-    )
-    build_parser.add_argument(
-        "--bare",
-        action="store_true",
-        help="Output bare VL objects [{mark, encoding, transform}] for benchmark evaluation (vegalite backend)"
-    )
-
-    # Database arguments (for SQL datasources).
-    # All optional — generated artifact reads credentials from environment
-    # variables (DASHML_DB_*) at runtime. CLI values, when provided, are
-    # written into the generated .env.example as visible defaults.
-    build_parser.add_argument(
-        "--db-type",
-        choices=["postgresql", "mysql", "sqlite"],
-        help="Database type (optional; written into .env.example as default for DASHML_DB_TYPE)"
-    )
-    build_parser.add_argument(
-        "--db-host",
-        help="Database host (optional; written into .env.example as default for DASHML_DB_HOST)"
-    )
-    build_parser.add_argument(
-        "--db-port",
-        type=int,
-        help="Database port (optional; written into .env.example as default for DASHML_DB_PORT)"
-    )
-    build_parser.add_argument(
-        "--db-name",
-        help="Database name (optional; written into .env.example as default for DASHML_DB_NAME)"
-    )
-    build_parser.add_argument(
-        "--db-user",
-        help="Database username (optional; written into .env.example as default for DASHML_DB_USER)"
-    )
-    build_parser.add_argument(
-        "--db-password",
-        help="Database password (optional; NEVER written to .env.example — supply at runtime via DASHML_DB_PASSWORD)"
-    )
-
-    # BigQuery arguments (for BigQuery datasources)
-    # --bq-project is required (project ID is embedded in SQL queries at build time).
-    # --bq-credentials is no longer used at build time — credentials are always
-    # read from DASHML_BQ_CREDENTIALS env var at runtime.
-    build_parser.add_argument(
-        "--bq-project",
-        help="Google Cloud project ID (required for BigQuery datasources; embedded in SQL queries; not a secret)"
-    )
-    build_parser.add_argument(
-        "--bq-credentials",
-        help="Path to service account JSON credentials file (optional, written to .env.example as default for DASHML_BQ_CREDENTIALS)"
-    )
-    build_parser.add_argument(
-        "--emit-env-example",
-        action="store_true",
-        help="Emit .env.example template (blank values) alongside the artifact. Off by default; .gitignore and SECRETS.md are always emitted for SQL/BigQuery targets."
-    )
+    _register_build_args(build_parser, run_default=False)
 
     # List command
     list_parser = subparsers.add_parser("list", help="List available transformers")
 
     # Watch command
     watch_parser = subparsers.add_parser("watch", help="Watch .dashml file and rebuild on changes")
-    watch_parser.add_argument("input", help="Path to .dashml file")
-    watch_parser.add_argument(
-        "--target", "-t",
-        required=True,
-        help="Target platform (e.g., streamlit, plotly)"
-    )
-    watch_parser.add_argument(
-        "--output", "-o",
-        required=True,
-        help="Output file path"
-    )
-    watch_parser.add_argument(
-        "--run", "-r",
-        action="store_true",
-        help="Run the dashboard after building (watch continues in background)"
-    )
+    _register_build_args(watch_parser, run_default=True)
 
     # Parse arguments
     args = parser.parse_args()
